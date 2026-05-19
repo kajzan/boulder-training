@@ -415,7 +415,10 @@ function getDefaultCycle(name) {
 }
 
 function toDateStr(d) {
-  return d.toISOString().split('T')[0];
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 function parseDate(str) {
@@ -486,9 +489,18 @@ function intensityLabel(current, target) {
 
 function getCurrentWeekIndex(cycle) {
   const start = parseDate(cycle.startDate);
+  const dow = start.getDay();
+  const daysToMon = dow === 0 ? -6 : 1 - dow;
+  const startMonday = new Date(start);
+  startMonday.setDate(startMonday.getDate() + daysToMon);
+  startMonday.setHours(0,0,0,0);
+
   const today = new Date();
-  const diff = Math.floor((today - start) / (1000 * 60 * 60 * 24 * 7));
-  return Math.max(0, Math.min(11, diff));
+  today.setHours(0,0,0,0);
+
+  const diffDays = Math.floor((today - startMonday) / (1000 * 60 * 60 * 24));
+  const weekIdx = Math.floor(diffDays / 7);
+  return Math.max(0, Math.min(11, weekIdx));
 }
 
 function formatDateRange(d1, d2) {
@@ -792,12 +804,13 @@ function renderPlan() {
     ${cycle.exercises.length === 0
       ? `<div class="empty"><div class="empty-icon">💪</div><div>Noch keine Übungen.<br>Füge deine erste Übung hinzu!</div></div>`
       : cycle.exercises.map(ex => `
-        <div class="exercise-item">
+        <div class="exercise-item" onclick="openEditExerciseModal('${ex.id}')" style="cursor:pointer">
           <div style="flex:1">
             <div class="exercise-name">${ex.name}</div>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:2px">Tippen zum Bearbeiten</div>
           </div>
           <div class="exercise-int">×${ex.intensity}</div>
-          <button class="del-btn" onclick="deleteExercise('${ex.id}')">×</button>
+          <button class="del-btn" onclick="event.stopPropagation(); deleteExercise('${ex.id}')">×</button>
         </div>
       `).join('')
     }
@@ -805,17 +818,20 @@ function renderPlan() {
     <div class="divider"></div>
     <div class="section-hdr"><h2>Wochenziele</h2></div>
     <div class="card-title">Intensitätsziel pro Woche (1–12)</div>
-    ${Array.from({length:12}, (_,i) => `
+    ${Array.from({length:12}, (_,i) => {
+      const wd = getWeekDates(cycle, i);
+      return `
       <div class="exercise-item" style="padding:10px 14px">
         <div style="flex:1">
-          <div style="font-size:13px;color:var(--text-muted)">Woche ${i+1}</div>
+          <div style="font-size:13px">Woche ${i+1}</div>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:2px">${formatDateRange(wd[0], wd[6])}</div>
         </div>
         <input type="number" step="0.5" min="0"
           style="width:80px;text-align:right;padding:6px 10px"
           value="${cycle.weekTargets[i] || 0}"
           onchange="updateWeekTarget(${i}, this.value)">
       </div>
-    `).join('')}
+    `}).join('')}
   `;
 }
 
@@ -848,6 +864,46 @@ function addExercise() {
   }
   const cycle = getActiveCycle();
   cycle.exercises.push({ id: Date.now().toString(), name, intensity });
+  saveData();
+  closeModal();
+  renderPlan();
+}
+
+function openEditExerciseModal(exId) {
+  const cycle = getActiveCycle();
+  const ex = cycle.exercises.find(e => e.id === exId);
+  if (!ex) return;
+  const content = `
+    <div class="modal-title">Übung bearbeiten</div>
+    <div class="field">
+      <label>Name der Übung</label>
+      <input type="text" id="editExName" value="${ex.name.replace(/"/g, '&quot;')}">
+    </div>
+    <div class="field">
+      <label>Intensitätswert</label>
+      <input type="number" id="editExInt" step="0.5" min="0" value="${ex.intensity}">
+    </div>
+    <div class="row" style="margin-top:4px">
+      <button class="btn btn-ghost" onclick="closeModal()">Abbrechen</button>
+      <button class="btn btn-primary" onclick="saveExerciseEdit('${exId}')">Speichern</button>
+    </div>
+  `;
+  openModal(content);
+  setTimeout(() => document.getElementById('editExName')?.focus(), 300);
+}
+
+function saveExerciseEdit(exId) {
+  const name = document.getElementById('editExName')?.value?.trim();
+  const intensity = parseFloat(document.getElementById('editExInt')?.value);
+  if (!name || isNaN(intensity) || intensity < 0) {
+    alert('Bitte Name und gültigen Intensitätswert eingeben.');
+    return;
+  }
+  const cycle = getActiveCycle();
+  const ex = cycle.exercises.find(e => e.id === exId);
+  if (!ex) return;
+  ex.name = name;
+  ex.intensity = intensity;
   saveData();
   closeModal();
   renderPlan();
@@ -965,14 +1021,17 @@ function renderSettings() {
     </button>
 
     ${appData.cycles.length > 0 ? `
-      <div class="card-title" style="margin-top:8px">Zyklus wechseln</div>
+      <div class="card-title" style="margin-top:8px">Zyklus wechseln / löschen</div>
       ${appData.cycles.map(c => `
-        <div class="week-row ${c.id === appData.activeCycleId ? 'current-week' : ''}" onclick="setActiveCycle('${c.id}')">
-          <div class="week-row-left">
+        <div class="week-row ${c.id === appData.activeCycleId ? 'current-week' : ''}">
+          <div class="week-row-left" onclick="setActiveCycle('${c.id}')" style="cursor:pointer">
             <div class="week-row-name">${c.name}</div>
             <div class="week-row-date">${parseDate(c.startDate).toLocaleDateString('de-DE')}</div>
           </div>
-          ${c.id === appData.activeCycleId ? '<span class="intensity-badge int-green-dark" style="font-size:11px">Aktiv</span>' : ''}
+          <div style="display:flex;align-items:center;gap:6px">
+            ${c.id === appData.activeCycleId ? '<span class="intensity-badge int-green-dark" style="font-size:11px">Aktiv</span>' : ''}
+            <button class="del-btn" onclick="deleteCycle('${c.id}')" title="Zyklus löschen">🗑</button>
+          </div>
         </div>
       `).join('')}
     ` : ''}
@@ -987,6 +1046,18 @@ function renderSettings() {
 }
 
 function openNewCycleModal() {
+  const otherCycles = appData.cycles;
+  const copyOptions = otherCycles.length > 0
+    ? `<div class="field">
+        <label>Von vorhandenem Zyklus kopieren (optional)</label>
+        <select id="copyFromCycle">
+          <option value="">– Leer starten –</option>
+          ${otherCycles.map(c => `<option value="${c.id}">${c.name} (${c.exercises.length} Übungen)</option>`).join('')}
+        </select>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px">Übungen und Wochenziele werden übernommen.</div>
+      </div>`
+    : '';
+
   const content = `
     <div class="modal-title">Neuen Zyklus starten</div>
     <div class="field">
@@ -997,6 +1068,7 @@ function openNewCycleModal() {
       <label>Startdatum</label>
       <input type="date" id="newCycleDate" value="${toDateStr(new Date())}">
     </div>
+    ${copyOptions}
     <div class="row" style="margin-top:4px">
       <button class="btn btn-ghost" onclick="closeModal()">Abbrechen</button>
       <button class="btn btn-primary" onclick="createCycle()">Starten</button>
@@ -1008,9 +1080,24 @@ function openNewCycleModal() {
 function createCycle() {
   const name = document.getElementById('newCycleName')?.value?.trim();
   const date = document.getElementById('newCycleDate')?.value;
+  const copyFromId = document.getElementById('copyFromCycle')?.value;
   if (!name) { alert('Bitte einen Namen eingeben.'); return; }
   const cycle = getDefaultCycle(name);
   if (date) cycle.startDate = date;
+
+  // Copy exercises and week targets from selected cycle
+  if (copyFromId) {
+    const src = appData.cycles.find(c => c.id === copyFromId);
+    if (src) {
+      cycle.exercises = src.exercises.map(ex => ({
+        id: Date.now().toString() + Math.random().toString(36).slice(2,7),
+        name: ex.name,
+        intensity: ex.intensity
+      }));
+      cycle.weekTargets = [...src.weekTargets];
+    }
+  }
+
   appData.cycles.push(cycle);
   appData.activeCycleId = cycle.id;
   saveData();
@@ -1020,6 +1107,18 @@ function createCycle() {
 
 function setActiveCycle(id) {
   appData.activeCycleId = id;
+  saveData();
+  renderSettings();
+}
+
+function deleteCycle(id) {
+  const cycle = appData.cycles.find(c => c.id === id);
+  if (!cycle) return;
+  if (!confirm(`Zyklus "${cycle.name}" wirklich endgültig löschen?\n\nAlle zugehörigen Trainingsdaten gehen verloren.`)) return;
+  appData.cycles = appData.cycles.filter(c => c.id !== id);
+  if (appData.activeCycleId === id) {
+    appData.activeCycleId = appData.cycles.length > 0 ? appData.cycles[appData.cycles.length - 1].id : null;
+  }
   saveData();
   renderSettings();
 }
