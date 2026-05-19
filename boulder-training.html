@@ -1,0 +1,1088 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Boulder">
+<title>Boulder Training</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&display=swap');
+
+  :root {
+    --bg: #0f0f0f;
+    --surface: #1a1a1a;
+    --surface2: #242424;
+    --border: #2e2e2e;
+    --text: #f0f0f0;
+    --text-muted: #888;
+    --text-dim: #555;
+    --accent: #c8ff00;
+    --accent-dim: rgba(200,255,0,0.12);
+
+    --blue: #4a9eff;
+    --blue-bg: rgba(74,158,255,0.12);
+    --green-light: #7ddf6e;
+    --green-light-bg: rgba(125,223,110,0.12);
+    --green-dark: #2ecc71;
+    --green-dark-bg: rgba(46,204,113,0.15);
+    --red: #ff5252;
+    --red-bg: rgba(255,82,82,0.12);
+
+    --radius: 14px;
+    --radius-sm: 8px;
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    min-height: -webkit-fill-available;
+    overflow-x: hidden;
+  }
+
+  /* ── NAV ── */
+  .nav {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    background: rgba(15,15,15,0.92);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 20px;
+    padding-top: max(12px, env(safe-area-inset-top));
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .nav-title { font-family: 'DM Mono', monospace; font-size: 15px; color: var(--accent); letter-spacing: 0.05em; }
+  .nav-sub { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
+
+  /* ── TABS ── */
+  .tabs {
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 100;
+    background: rgba(15,15,15,0.95);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-top: 1px solid var(--border);
+    display: flex;
+    padding-bottom: var(--safe-bottom);
+  }
+  .tab-btn {
+    flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px;
+    padding: 10px 4px; background: none; border: none; color: var(--text-dim);
+    font-family: 'DM Sans', sans-serif; font-size: 10px; cursor: pointer;
+    transition: color 0.2s;
+  }
+  .tab-btn.active { color: var(--accent); }
+  .tab-btn svg { width: 22px; height: 22px; }
+
+  /* ── MAIN CONTENT ── */
+  .main {
+    padding-top: 70px; padding-bottom: calc(65px + var(--safe-bottom));
+    padding-left: 16px; padding-right: 16px;
+    min-height: 100vh;
+  }
+
+  /* ── VIEWS ── */
+  .view { display: none; }
+  .view.active { display: block; }
+
+  /* ── CARDS ── */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    margin-bottom: 12px;
+  }
+  .card-title {
+    font-size: 11px; font-weight: 500; text-transform: uppercase;
+    letter-spacing: 0.1em; color: var(--text-muted); margin-bottom: 12px;
+  }
+
+  /* ── BUTTONS ── */
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    padding: 10px 18px; border-radius: var(--radius-sm); border: none;
+    font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 500;
+    cursor: pointer; transition: all 0.15s; white-space: nowrap;
+  }
+  .btn-primary { background: var(--accent); color: #000; }
+  .btn-primary:active { opacity: 0.8; transform: scale(0.97); }
+  .btn-ghost { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+  .btn-ghost:active { opacity: 0.7; }
+  .btn-danger { background: var(--red-bg); color: var(--red); border: 1px solid rgba(255,82,82,0.2); }
+  .btn-sm { padding: 6px 12px; font-size: 13px; }
+  .btn-full { width: 100%; }
+
+  /* ── INPUTS ── */
+  input, select, textarea {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 15px;
+    padding: 11px 14px;
+    width: 100%;
+    outline: none;
+    -webkit-appearance: none;
+    transition: border-color 0.2s;
+  }
+  input:focus, select:focus { border-color: var(--accent); }
+  input::placeholder { color: var(--text-dim); }
+  select option { background: var(--surface2); }
+  label { font-size: 12px; color: var(--text-muted); display: block; margin-bottom: 5px; }
+  .field { margin-bottom: 12px; }
+
+  /* ── INTENSITY BADGE ── */
+  .intensity-badge {
+    display: inline-flex; align-items: center; justify-content: center;
+    padding: 4px 10px; border-radius: 20px;
+    font-family: 'DM Mono', monospace; font-size: 13px; font-weight: 500;
+  }
+  .int-blue { background: var(--blue-bg); color: var(--blue); border: 1px solid rgba(74,158,255,0.25); }
+  .int-green-light { background: var(--green-light-bg); color: var(--green-light); border: 1px solid rgba(125,223,110,0.25); }
+  .int-green-dark { background: var(--green-dark-bg); color: var(--green-dark); border: 1px solid rgba(46,204,113,0.3); }
+  .int-red { background: var(--red-bg); color: var(--red); border: 1px solid rgba(255,82,82,0.25); }
+
+  /* ── WEEK GRID ── */
+  .week-grid {
+    display: grid; grid-template-columns: repeat(7, 1fr);
+    gap: 4px; margin-bottom: 8px;
+  }
+  .day-col { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+  .day-label { font-size: 9px; font-weight: 500; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.05em; }
+  .day-dot {
+    width: 32px; height: 32px; border-radius: 50%;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 9px; font-family: 'DM Mono', monospace; color: var(--text-muted);
+    cursor: pointer; transition: all 0.15s;
+    position: relative;
+  }
+  .day-dot.has-session { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); }
+  .day-dot:active { transform: scale(0.9); }
+
+  /* ── EXERCISE LIST ── */
+  .exercise-item {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 14px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    margin-bottom: 8px;
+  }
+  .exercise-name { font-size: 14px; font-weight: 500; flex: 1; }
+  .exercise-int {
+    font-family: 'DM Mono', monospace; font-size: 13px;
+    color: var(--accent); margin: 0 10px; white-space: nowrap;
+  }
+  .del-btn {
+    width: 28px; height: 28px; border-radius: 50%;
+    background: none; border: none;
+    color: var(--text-dim); cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; transition: color 0.15s;
+  }
+  .del-btn:active { color: var(--red); }
+
+  /* ── PROGRESS BAR ── */
+  .progress-bar-wrap {
+    height: 6px; background: var(--surface2); border-radius: 3px; overflow: hidden;
+    margin-top: 8px;
+  }
+  .progress-bar-fill {
+    height: 100%; border-radius: 3px; transition: width 0.4s ease;
+  }
+
+  /* ── WEEK OVERVIEW ROW ── */
+  .week-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 13px 14px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    margin-bottom: 8px;
+    cursor: pointer;
+    transition: background 0.15s;
+    background: var(--surface2);
+  }
+  .week-row:active { background: var(--surface); }
+  .week-row.current-week { border-color: var(--accent); }
+  .week-row-left { flex: 1; }
+  .week-row-num { font-family: 'DM Mono', monospace; font-size: 12px; color: var(--text-muted); }
+  .week-row-date { font-size: 13px; color: var(--text-muted); }
+  .week-row-name { font-size: 14px; font-weight: 500; }
+
+  /* ── MODAL ── */
+  .modal-overlay {
+    position: fixed; inset: 0; z-index: 200;
+    background: rgba(0,0,0,0.75);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    display: flex; align-items: flex-end;
+    opacity: 0; pointer-events: none; transition: opacity 0.25s;
+  }
+  .modal-overlay.open { opacity: 1; pointer-events: all; }
+  .modal {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 20px 20px 0 0;
+    padding: 20px;
+    padding-bottom: calc(20px + var(--safe-bottom));
+    width: 100%;
+    max-height: 90vh;
+    overflow-y: auto;
+    transform: translateY(100%);
+    transition: transform 0.3s cubic-bezier(0.32,0.72,0,1);
+  }
+  .modal-overlay.open .modal { transform: translateY(0); }
+  .modal-handle {
+    width: 36px; height: 4px; background: var(--border);
+    border-radius: 2px; margin: 0 auto 16px;
+  }
+  .modal-title { font-size: 17px; font-weight: 600; margin-bottom: 16px; }
+
+  /* ── SECTION HEADER ── */
+  .section-hdr {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 10px; margin-top: 20px;
+  }
+  .section-hdr:first-child { margin-top: 0; }
+  .section-hdr h2 { font-size: 18px; font-weight: 600; }
+
+  /* ── STAT ROW ── */
+  .stats-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+  .stat-card {
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); padding: 12px;
+  }
+  .stat-val { font-family: 'DM Mono', monospace; font-size: 22px; color: var(--accent); }
+  .stat-lbl { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+  /* ── EMPTY STATE ── */
+  .empty {
+    text-align: center; padding: 40px 20px;
+    color: var(--text-muted); font-size: 14px; line-height: 1.6;
+  }
+  .empty-icon { font-size: 36px; margin-bottom: 12px; }
+
+  /* ── CYCLE HISTORY ── */
+  .cycle-card {
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); padding: 14px; margin-bottom: 10px;
+    cursor: pointer;
+  }
+  .cycle-card-hdr { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+  .cycle-card-title { font-weight: 600; font-size: 15px; }
+  .cycle-dates { font-size: 12px; color: var(--text-muted); }
+
+  /* ── DAY EXERCISES ── */
+  .day-exercise-item {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    margin-bottom: 6px;
+  }
+
+  /* ── TOGGLE CHECKBOX ── */
+  .check-row { display: flex; align-items: center; gap: 10px; padding: 4px 0; cursor: pointer; }
+  .check-box {
+    width: 22px; height: 22px; border-radius: 6px;
+    border: 2px solid var(--border); background: var(--surface2);
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0; transition: all 0.15s;
+  }
+  .check-box.checked { background: var(--accent); border-color: var(--accent); }
+  .check-label { font-size: 14px; }
+
+  /* ── HELPERS ── */
+  .divider { height: 1px; background: var(--border); margin: 16px 0; }
+  .row { display: flex; gap: 10px; }
+  .row > * { flex: 1; }
+  .text-muted { color: var(--text-muted); font-size: 13px; }
+  .mt-8 { margin-top: 8px; }
+  .mb-0 { margin-bottom: 0 !important; }
+
+  /* Scrollbar hidden */
+  ::-webkit-scrollbar { display: none; }
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav class="nav">
+  <div>
+    <div class="nav-title">⬟ BOULDER</div>
+    <div class="nav-sub" id="navSub">Trainingszyklus</div>
+  </div>
+  <div id="navRight"></div>
+</nav>
+
+<!-- MAIN -->
+<main class="main">
+  <!-- DASHBOARD -->
+  <div class="view active" id="view-dashboard">
+    <div id="dashContent"></div>
+  </div>
+
+  <!-- PLAN -->
+  <div class="view" id="view-plan">
+    <div id="planContent"></div>
+  </div>
+
+  <!-- VERLAUF -->
+  <div class="view" id="view-history">
+    <div id="historyContent"></div>
+  </div>
+
+  <!-- EINSTELLUNGEN -->
+  <div class="view" id="view-settings">
+    <div id="settingsContent"></div>
+  </div>
+</main>
+
+<!-- TABS -->
+<nav class="tabs">
+  <button class="tab-btn active" onclick="switchView('dashboard')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="8" height="8" rx="2"/><rect x="13" y="3" width="8" height="8" rx="2"/><rect x="3" y="13" width="8" height="8" rx="2"/><rect x="13" y="13" width="8" height="8" rx="2"/></svg>
+    Übersicht
+  </button>
+  <button class="tab-btn" onclick="switchView('plan')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+    Trainingsplan
+  </button>
+  <button class="tab-btn" onclick="switchView('history')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+    Verlauf
+  </button>
+  <button class="tab-btn" onclick="switchView('settings')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+    Einstellungen
+  </button>
+</nav>
+
+<!-- MODAL -->
+<div class="modal-overlay" id="modalOverlay" onclick="closeModalOnBg(event)">
+  <div class="modal" id="modalBox">
+    <div class="modal-handle"></div>
+    <div id="modalContent"></div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════
+// DATA LAYER
+// ═══════════════════════════════════════════════
+const STORE_KEY = 'boulderApp_v2';
+
+function loadData() {
+  try {
+    const raw = localStorage.getItem(STORE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch(e) {}
+  return getDefaultData();
+}
+
+function saveData() {
+  localStorage.setItem(STORE_KEY, JSON.stringify(appData));
+}
+
+function getDefaultData() {
+  return {
+    cycles: [],
+    activeCycleId: null
+  };
+}
+
+function getDefaultCycle(name) {
+  const now = new Date();
+  return {
+    id: Date.now().toString(),
+    name: name || 'Zyklus 1',
+    startDate: toDateStr(now),
+    exercises: [], // [{id, name, intensity}]
+    weekTargets: Array(12).fill(0), // [9,10,11,...] per week
+    sessions: {}, // { "YYYY-MM-DD": [exerciseId, ...] }
+    notes: {}
+  };
+}
+
+function toDateStr(d) {
+  return d.toISOString().split('T')[0];
+}
+
+function parseDate(str) {
+  return new Date(str + 'T00:00:00');
+}
+
+let appData = loadData();
+
+// ═══════════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════════
+const DAYS_DE = ['Mo','Di','Mi','Do','Fr','Sa','So'];
+const DAYS_FULL = ['Montag','Dienstag','Mittwoch','Donnerstag','Freitag','Samstag','Sonntag'];
+const MONTHS_DE = ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
+
+function getActiveCycle() {
+  if (!appData.activeCycleId) return null;
+  return appData.cycles.find(c => c.id === appData.activeCycleId) || null;
+}
+
+function getWeekDates(cycle, weekIndex) {
+  const start = parseDate(cycle.startDate);
+  // align to Monday
+  const dow = start.getDay(); // 0=Sun
+  const daysToMon = dow === 0 ? -6 : 1 - dow;
+  const monday = new Date(start);
+  monday.setDate(monday.getDate() + daysToMon + weekIndex * 7);
+  const days = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(monday);
+    d.setDate(d.getDate() + i);
+    days.push(toDateStr(d));
+  }
+  return days;
+}
+
+function getWeekIntensity(cycle, weekIndex) {
+  const days = getWeekDates(cycle, weekIndex);
+  let total = 0;
+  days.forEach(day => {
+    const exIds = cycle.sessions[day] || [];
+    exIds.forEach(eid => {
+      const ex = cycle.exercises.find(e => e.id === eid);
+      if (ex) total += parseFloat(ex.intensity) || 0;
+    });
+  });
+  return Math.round(total * 10) / 10;
+}
+
+function intensityClass(current, target) {
+  if (target === 0) return 'int-blue';
+  const diff = current - target;
+  if (current === 0 && target > 0) return 'int-blue';
+  if (diff > 1) return 'int-red';
+  if (Math.abs(diff) <= 1) return 'int-green-dark';
+  if (current > 0 && diff < -1 && current >= target * 0.5) return 'int-green-light';
+  return 'int-blue';
+}
+
+function intensityLabel(current, target) {
+  if (target === 0) return '–';
+  const diff = current - target;
+  if (diff > 1) return '↑ überschritten';
+  if (Math.abs(diff) <= 1) return '✓ erreicht';
+  if (current > 0 && current >= target * 0.5) return '↗ fast erreicht';
+  return '↓ noch offen';
+}
+
+function getCurrentWeekIndex(cycle) {
+  const start = parseDate(cycle.startDate);
+  const today = new Date();
+  const diff = Math.floor((today - start) / (1000 * 60 * 60 * 24 * 7));
+  return Math.max(0, Math.min(11, diff));
+}
+
+function formatDateRange(d1, d2) {
+  const a = parseDate(d1), b = parseDate(d2);
+  return `${a.getDate()}. ${MONTHS_DE[a.getMonth()]} – ${b.getDate()}. ${MONTHS_DE[b.getMonth()]} ${b.getFullYear()}`;
+}
+
+// ═══════════════════════════════════════════════
+// VIEW ROUTING
+// ═══════════════════════════════════════════════
+let currentView = 'dashboard';
+
+function switchView(name) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach((b, i) => {
+    b.classList.toggle('active', ['dashboard','plan','history','settings'][i] === name);
+  });
+  document.getElementById('view-' + name).classList.add('active');
+  currentView = name;
+  render();
+}
+
+function render() {
+  if (currentView === 'dashboard') renderDashboard();
+  if (currentView === 'plan') renderPlan();
+  if (currentView === 'history') renderHistory();
+  if (currentView === 'settings') renderSettings();
+}
+
+// ═══════════════════════════════════════════════
+// DASHBOARD
+// ═══════════════════════════════════════════════
+function renderDashboard() {
+  const el = document.getElementById('dashContent');
+  const cycle = getActiveCycle();
+
+  if (!cycle) {
+    el.innerHTML = `
+      <div class="empty">
+        <div class="empty-icon">🧗</div>
+        <div>Noch kein aktiver Trainingszyklus.<br>Erstelle deinen ersten Zyklus in den <strong>Einstellungen</strong>.</div>
+        <br>
+        <button class="btn btn-primary" onclick="switchView('settings')">→ Einstellungen</button>
+      </div>`;
+    document.getElementById('navSub').textContent = 'Kein aktiver Zyklus';
+    return;
+  }
+
+  const weekIdx = getCurrentWeekIndex(cycle);
+  const weekDays = getWeekDates(cycle, weekIdx);
+  const weekInt = getWeekIntensity(cycle, weekIdx);
+  const target = cycle.weekTargets[weekIdx] || 0;
+  const iClass = intensityClass(weekInt, target);
+  const today = toDateStr(new Date());
+  const todayDow = (new Date().getDay() + 6) % 7; // 0=Mon
+
+  document.getElementById('navSub').textContent = cycle.name + ' · Woche ' + (weekIdx + 1);
+
+  // Stats
+  let totalSessions = 0;
+  for (let i = 0; i <= weekIdx; i++) {
+    const days = getWeekDates(cycle, i);
+    days.forEach(d => { if ((cycle.sessions[d] || []).length > 0) totalSessions++; });
+  }
+
+  const pct = target > 0 ? Math.min(100, Math.round(weekInt / target * 100)) : 0;
+  let barColor = iClass === 'int-blue' ? 'var(--blue)' : iClass === 'int-green-light' ? 'var(--green-light)' : iClass === 'int-green-dark' ? 'var(--green-dark)' : 'var(--red)';
+
+  el.innerHTML = `
+    <div class="section-hdr"><h2>Diese Woche</h2><span class="text-muted">KW${getKW(new Date())}</span></div>
+
+    <div class="card mb-0">
+      <div class="card-title">Woche ${weekIdx+1} von 12 · Intensität</div>
+      <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:6px">
+        <span style="font-family:'DM Mono',monospace;font-size:32px;color:var(--accent)">${weekInt}</span>
+        <span class="text-muted">/ ${target} Ziel</span>
+        <span class="intensity-badge ${iClass}" style="margin-left:auto">${intensityLabel(weekInt, target)}</span>
+      </div>
+      <div class="progress-bar-wrap">
+        <div class="progress-bar-fill" style="width:${pct}%;background:${barColor}"></div>
+      </div>
+    </div>
+
+    <div class="stats-row" style="margin-top:10px">
+      <div class="stat-card">
+        <div class="stat-val">${weekIdx+1}<span style="font-size:13px;color:var(--text-muted)">/12</span></div>
+        <div class="stat-lbl">Aktuelle Woche</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-val">${totalSessions}</div>
+        <div class="stat-lbl">Trainingstage gesamt</div>
+      </div>
+    </div>
+
+    <div class="section-hdr" style="margin-top:8px"><h2>Wochentage</h2></div>
+    <div class="card">
+      <div class="week-grid">
+        ${DAYS_DE.map((d, i) => {
+          const dateStr = weekDays[i];
+          const exIds = cycle.sessions[dateStr] || [];
+          const isToday = dateStr === today;
+          return `<div class="day-col">
+            <div class="day-label" style="${isToday ? 'color:var(--accent)' : ''}">${d}</div>
+            <div class="day-dot ${exIds.length > 0 ? 'has-session' : ''}"
+                 style="${isToday ? 'border-color:var(--accent);' : ''}"
+                 onclick="openDayModal('${dateStr}')">
+              ${exIds.length > 0 ? exIds.length : ''}
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+      <div style="text-align:center;font-size:12px;color:var(--text-muted);margin-top:4px">${formatDateRange(weekDays[0], weekDays[6])}</div>
+    </div>
+
+    <div class="section-hdr"><h2>Alle 12 Wochen</h2></div>
+    ${Array.from({length:12}, (_,i) => {
+      const wint = getWeekIntensity(cycle, i);
+      const wtgt = cycle.weekTargets[i] || 0;
+      const wc = intensityClass(wint, wtgt);
+      const wd = getWeekDates(cycle, i);
+      const isCurrent = i === weekIdx;
+      return `<div class="week-row ${isCurrent ? 'current-week' : ''}" onclick="openWeekModal(${i})">
+        <div class="week-row-left">
+          <div class="week-row-num">Woche ${i+1}${isCurrent ? ' · Aktuell' : ''}</div>
+          <div class="week-row-date">${formatDateRange(wd[0], wd[6])}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-family:'DM Mono',monospace;font-size:14px;color:var(--text-muted)">${wint}/${wtgt}</span>
+          <span class="intensity-badge ${wc}" style="font-size:11px;padding:3px 8px">${
+            wc==='int-blue'?'↓':wc==='int-green-light'?'↗':wc==='int-green-dark'?'✓':'↑'
+          }</span>
+        </div>
+      </div>`;
+    }).join('')}
+  `;
+}
+
+function getKW(date) {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(),0,1));
+  return Math.ceil((((d - yearStart) / 86400000) + 1)/7);
+}
+
+// ═══════════════════════════════════════════════
+// DAY MODAL
+// ═══════════════════════════════════════════════
+function openDayModal(dateStr) {
+  const cycle = getActiveCycle();
+  if (!cycle) return;
+  const d = parseDate(dateStr);
+  const dow = (d.getDay() + 6) % 7;
+  const title = DAYS_FULL[dow] + ', ' + d.getDate() + '. ' + MONTHS_DE[d.getMonth()];
+  const selected = new Set(cycle.sessions[dateStr] || []);
+
+  function buildContent() {
+    const exList = cycle.exercises.length === 0
+      ? `<div class="empty" style="padding:20px 0"><div>Noch keine Übungen im Plan.<br>Gehe zu <strong>Trainingsplan</strong>.</div></div>`
+      : cycle.exercises.map(ex => {
+          const checked = selected.has(ex.id);
+          return `<label class="check-row" onclick="toggleDayEx('${dateStr}','${ex.id}',this)">
+            <div class="check-box ${checked ? 'checked' : ''}" id="chk-${ex.id}">
+              ${checked ? '<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>' : ''}
+            </div>
+            <div class="flex-1">
+              <div class="check-label">${ex.name}</div>
+              <div style="font-size:11px;color:var(--text-muted);font-family:'DM Mono',monospace">Intensität: ${ex.intensity}</div>
+            </div>
+          </label>`;
+        }).join('');
+
+    const dayInt = [...selected].reduce((sum, eid) => {
+      const ex = cycle.exercises.find(e => e.id === eid);
+      return sum + (ex ? (parseFloat(ex.intensity)||0) : 0);
+    }, 0);
+
+    return `
+      <div class="modal-title">${title}</div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">
+        <span class="text-muted">Tages-Intensität:</span>
+        <span style="font-family:'DM Mono',monospace;font-size:18px;color:var(--accent)">${Math.round(dayInt*10)/10}</span>
+      </div>
+      <div class="card-title">Übungen abhaken</div>
+      ${exList}
+      <div class="divider"></div>
+      <button class="btn btn-ghost btn-full" onclick="closeModal()">Fertig</button>
+    `;
+  }
+
+  openModal(buildContent());
+}
+
+function toggleDayEx(dateStr, exId, labelEl) {
+  const cycle = getActiveCycle();
+  if (!cycle) return;
+  if (!cycle.sessions[dateStr]) cycle.sessions[dateStr] = [];
+  const idx = cycle.sessions[dateStr].indexOf(exId);
+  if (idx >= 0) {
+    cycle.sessions[dateStr].splice(idx, 1);
+  } else {
+    cycle.sessions[dateStr].push(exId);
+  }
+  saveData();
+
+  // update checkbox UI
+  const chk = labelEl.querySelector('.check-box');
+  const isNowChecked = cycle.sessions[dateStr].includes(exId);
+  chk.className = 'check-box' + (isNowChecked ? ' checked' : '');
+  chk.innerHTML = isNowChecked ? '<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>' : '';
+
+  // update intensity display
+  const cycle2 = getActiveCycle();
+  const sel = cycle2.sessions[dateStr] || [];
+  const dayInt = sel.reduce((sum, eid) => {
+    const ex = cycle2.exercises.find(e => e.id === eid);
+    return sum + (ex ? (parseFloat(ex.intensity)||0) : 0);
+  }, 0);
+  const intEl = document.querySelector('.modal .flex-1 ~ *') ;
+  // just re-render modal content for simplicity
+  const d = parseDate(dateStr);
+  const dow = (d.getDay() + 6) % 7;
+  const title = DAYS_FULL[dow] + ', ' + d.getDate() + '. ' + MONTHS_DE[d.getMonth()];
+  // partial update of intensity display
+  const spans = document.querySelectorAll('#modalContent span');
+  spans.forEach(s => {
+    if (s.style.fontFamily && s.style.fontFamily.includes('DM Mono') && s.style.fontSize === '18px') {
+      s.textContent = Math.round(dayInt*10)/10;
+    }
+  });
+
+  if (currentView === 'dashboard') renderDashboard();
+}
+
+// ═══════════════════════════════════════════════
+// WEEK MODAL
+// ═══════════════════════════════════════════════
+function openWeekModal(weekIdx) {
+  const cycle = getActiveCycle();
+  if (!cycle) return;
+  const days = getWeekDates(cycle, weekIdx);
+  const target = cycle.weekTargets[weekIdx] || 0;
+  const wInt = getWeekIntensity(cycle, weekIdx);
+  const iClass = intensityClass(wInt, target);
+
+  const content = `
+    <div class="modal-title">Woche ${weekIdx+1}</div>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
+      <span class="intensity-badge ${iClass}">${wInt} / ${target}</span>
+      <span class="text-muted">${intensityLabel(wInt, target)}</span>
+    </div>
+    <div style="margin-bottom:8px"><span class="text-muted">${formatDateRange(days[0], days[6])}</span></div>
+    <div class="divider"></div>
+    ${days.map((dateStr, i) => {
+      const exIds = cycle.sessions[dateStr] || [];
+      const dayInt = exIds.reduce((s, eid) => {
+        const ex = cycle.exercises.find(e => e.id === eid);
+        return s + (ex ? parseFloat(ex.intensity)||0 : 0);
+      }, 0);
+      const d = parseDate(dateStr);
+      return `<div style="margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <strong style="font-size:13px">${DAYS_FULL[i]}, ${d.getDate()}. ${MONTHS_DE[d.getMonth()]}</strong>
+          ${exIds.length > 0 ? `<span style="font-family:'DM Mono',monospace;font-size:12px;color:var(--accent)">${Math.round(dayInt*10)/10}</span>` : ''}
+        </div>
+        ${exIds.length === 0
+          ? `<div style="font-size:13px;color:var(--text-dim);padding-left:4px">– kein Training</div>`
+          : exIds.map(eid => {
+              const ex = cycle.exercises.find(e => e.id === eid);
+              return ex ? `<div class="day-exercise-item">
+                <span style="font-size:13px">${ex.name}</span>
+                <span style="font-family:'DM Mono',monospace;font-size:12px;color:var(--text-muted)">${ex.intensity}</span>
+              </div>` : '';
+            }).join('')
+        }
+      </div>`;
+    }).join('')}
+    <button class="btn btn-ghost btn-full" onclick="closeModal()">Schließen</button>
+  `;
+  openModal(content);
+}
+
+// ═══════════════════════════════════════════════
+// PLAN VIEW
+// ═══════════════════════════════════════════════
+function renderPlan() {
+  const el = document.getElementById('planContent');
+  const cycle = getActiveCycle();
+
+  if (!cycle) {
+    el.innerHTML = `<div class="empty"><div class="empty-icon">📋</div><div>Kein aktiver Zyklus.<br>Erstelle einen in den <strong>Einstellungen</strong>.</div></div>`;
+    return;
+  }
+
+  el.innerHTML = `
+    <div class="section-hdr" style="margin-top:0">
+      <h2>Übungen</h2>
+      <button class="btn btn-primary btn-sm" onclick="openAddExerciseModal()">+ Hinzufügen</button>
+    </div>
+
+    ${cycle.exercises.length === 0
+      ? `<div class="empty"><div class="empty-icon">💪</div><div>Noch keine Übungen.<br>Füge deine erste Übung hinzu!</div></div>`
+      : cycle.exercises.map(ex => `
+        <div class="exercise-item">
+          <div style="flex:1">
+            <div class="exercise-name">${ex.name}</div>
+          </div>
+          <div class="exercise-int">×${ex.intensity}</div>
+          <button class="del-btn" onclick="deleteExercise('${ex.id}')">×</button>
+        </div>
+      `).join('')
+    }
+
+    <div class="divider"></div>
+    <div class="section-hdr"><h2>Wochenziele</h2></div>
+    <div class="card-title">Intensitätsziel pro Woche (1–12)</div>
+    ${Array.from({length:12}, (_,i) => `
+      <div class="exercise-item" style="padding:10px 14px">
+        <div style="flex:1">
+          <div style="font-size:13px;color:var(--text-muted)">Woche ${i+1}</div>
+        </div>
+        <input type="number" step="0.5" min="0"
+          style="width:80px;text-align:right;padding:6px 10px"
+          value="${cycle.weekTargets[i] || 0}"
+          onchange="updateWeekTarget(${i}, this.value)">
+      </div>
+    `).join('')}
+  `;
+}
+
+function openAddExerciseModal() {
+  const content = `
+    <div class="modal-title">Übung hinzufügen</div>
+    <div class="field">
+      <label>Name der Übung</label>
+      <input type="text" id="newExName" placeholder="z.B. Kilterboard Session">
+    </div>
+    <div class="field">
+      <label>Intensitätswert</label>
+      <input type="number" id="newExInt" step="0.5" min="0" placeholder="z.B. 2">
+    </div>
+    <div class="row" style="margin-top:4px">
+      <button class="btn btn-ghost" onclick="closeModal()">Abbrechen</button>
+      <button class="btn btn-primary" onclick="addExercise()">Hinzufügen</button>
+    </div>
+  `;
+  openModal(content);
+  setTimeout(() => document.getElementById('newExName')?.focus(), 300);
+}
+
+function addExercise() {
+  const name = document.getElementById('newExName')?.value?.trim();
+  const intensity = parseFloat(document.getElementById('newExInt')?.value);
+  if (!name || isNaN(intensity) || intensity < 0) {
+    alert('Bitte Name und gültigen Intensitätswert eingeben.');
+    return;
+  }
+  const cycle = getActiveCycle();
+  cycle.exercises.push({ id: Date.now().toString(), name, intensity });
+  saveData();
+  closeModal();
+  renderPlan();
+}
+
+function deleteExercise(exId) {
+  if (!confirm('Übung wirklich löschen?')) return;
+  const cycle = getActiveCycle();
+  cycle.exercises = cycle.exercises.filter(e => e.id !== exId);
+  // also remove from sessions
+  Object.keys(cycle.sessions).forEach(day => {
+    cycle.sessions[day] = cycle.sessions[day].filter(id => id !== exId);
+  });
+  saveData();
+  renderPlan();
+}
+
+function updateWeekTarget(weekIdx, val) {
+  const cycle = getActiveCycle();
+  cycle.weekTargets[weekIdx] = parseFloat(val) || 0;
+  saveData();
+  if (currentView === 'dashboard') renderDashboard();
+}
+
+// ═══════════════════════════════════════════════
+// HISTORY VIEW
+// ═══════════════════════════════════════════════
+function renderHistory() {
+  const el = document.getElementById('historyContent');
+  if (appData.cycles.length === 0) {
+    el.innerHTML = `<div class="empty"><div class="empty-icon">📊</div><div>Noch keine Trainingszyklen vorhanden.</div></div>`;
+    return;
+  }
+
+  const sorted = [...appData.cycles].sort((a,b) => b.startDate.localeCompare(a.startDate));
+  el.innerHTML = `<div class="section-hdr" style="margin-top:0"><h2>Alle Zyklen</h2></div>` +
+    sorted.map(cycle => {
+      const endDate = new Date(parseDate(cycle.startDate).getTime() + 12*7*24*3600*1000 - 86400000);
+      const totalInt = Array.from({length:12}, (_,i) => getWeekIntensity(cycle, i)).reduce((a,b)=>a+b,0);
+      const sessionDays = Object.values(cycle.sessions).filter(s => s.length > 0).length;
+      const isActive = cycle.id === appData.activeCycleId;
+      return `<div class="cycle-card" onclick="openCycleDetail('${cycle.id}')">
+        <div class="cycle-card-hdr">
+          <div class="cycle-card-title">${cycle.name}</div>
+          ${isActive ? '<span class="intensity-badge int-green-dark" style="font-size:11px">Aktiv</span>' : ''}
+        </div>
+        <div class="cycle-dates">${formatDateRange(cycle.startDate, toDateStr(endDate))}</div>
+        <div style="display:flex;gap:16px;margin-top:8px">
+          <span class="text-muted">${Math.round(totalInt*10)/10} Gesamt-Int.</span>
+          <span class="text-muted">${sessionDays} Trainingstage</span>
+          <span class="text-muted">${cycle.exercises.length} Übungen</span>
+        </div>
+      </div>`;
+    }).join('');
+}
+
+function openCycleDetail(cycleId) {
+  const cycle = appData.cycles.find(c => c.id === cycleId);
+  if (!cycle) return;
+
+  const content = `
+    <div class="modal-title">${cycle.name}</div>
+    <div class="text-muted" style="margin-bottom:16px">Gestartet: ${parseDate(cycle.startDate).toLocaleDateString('de-DE')}</div>
+
+    <div class="card-title">Wochenübersicht</div>
+    ${Array.from({length:12}, (_,i) => {
+      const wint = getWeekIntensity(cycle, i);
+      const wtgt = cycle.weekTargets[i] || 0;
+      const wc = intensityClass(wint, wtgt);
+      const days = getWeekDates(cycle, i);
+      return `<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">
+        <span style="font-size:13px">Woche ${i+1}</span>
+        <span style="font-size:12px;color:var(--text-muted)">${formatDateRange(days[0],days[6])}</span>
+        <span class="intensity-badge ${wc}" style="font-size:11px;padding:2px 8px">${wint}/${wtgt}</span>
+      </div>`;
+    }).join('')}
+
+    <div class="divider"></div>
+    <div class="card-title">Übungen in diesem Zyklus</div>
+    ${cycle.exercises.map(ex => `
+      <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">
+        <span style="font-size:14px">${ex.name}</span>
+        <span style="font-family:'DM Mono',monospace;font-size:13px;color:var(--accent)">×${ex.intensity}</span>
+      </div>
+    `).join('')}
+
+    <div class="divider"></div>
+    <button class="btn btn-ghost btn-full" onclick="closeModal()">Schließen</button>
+  `;
+  openModal(content);
+}
+
+// ═══════════════════════════════════════════════
+// SETTINGS VIEW
+// ═══════════════════════════════════════════════
+function renderSettings() {
+  const el = document.getElementById('settingsContent');
+  const cycle = getActiveCycle();
+  el.innerHTML = `
+    <div class="section-hdr" style="margin-top:0"><h2>Zyklus</h2></div>
+
+    <div class="card">
+      <div class="card-title">Aktiver Zyklus</div>
+      ${cycle
+        ? `<div style="font-weight:600;font-size:15px;margin-bottom:4px">${cycle.name}</div>
+           <div class="text-muted">Gestartet: ${parseDate(cycle.startDate).toLocaleDateString('de-DE')}</div>
+           <div class="divider"></div>
+           <button class="btn btn-danger btn-sm" onclick="confirmEndCycle()">Zyklus abschließen</button>`
+        : `<div class="text-muted">Kein aktiver Zyklus.</div>`
+      }
+    </div>
+
+    <button class="btn btn-primary btn-full" style="margin-bottom:12px" onclick="openNewCycleModal()">
+      + Neuen Zyklus starten
+    </button>
+
+    ${appData.cycles.length > 0 ? `
+      <div class="card-title" style="margin-top:8px">Zyklus wechseln</div>
+      ${appData.cycles.map(c => `
+        <div class="week-row ${c.id === appData.activeCycleId ? 'current-week' : ''}" onclick="setActiveCycle('${c.id}')">
+          <div class="week-row-left">
+            <div class="week-row-name">${c.name}</div>
+            <div class="week-row-date">${parseDate(c.startDate).toLocaleDateString('de-DE')}</div>
+          </div>
+          ${c.id === appData.activeCycleId ? '<span class="intensity-badge int-green-dark" style="font-size:11px">Aktiv</span>' : ''}
+        </div>
+      `).join('')}
+    ` : ''}
+
+    <div class="divider"></div>
+    <div class="section-hdr"><h2>Daten</h2></div>
+    <button class="btn btn-ghost btn-full" style="margin-bottom:10px" onclick="exportData()">Daten exportieren</button>
+    <button class="btn btn-ghost btn-full" onclick="importDataPrompt()">Daten importieren</button>
+    <div style="height:10px"></div>
+    <div class="text-muted" style="font-size:11px;text-align:center">Boulder Training App · Alle Daten lokal gespeichert</div>
+  `;
+}
+
+function openNewCycleModal() {
+  const content = `
+    <div class="modal-title">Neuen Zyklus starten</div>
+    <div class="field">
+      <label>Name des Zyklus</label>
+      <input type="text" id="newCycleName" placeholder="z.B. Frühjahr 2025">
+    </div>
+    <div class="field">
+      <label>Startdatum</label>
+      <input type="date" id="newCycleDate" value="${toDateStr(new Date())}">
+    </div>
+    <div class="row" style="margin-top:4px">
+      <button class="btn btn-ghost" onclick="closeModal()">Abbrechen</button>
+      <button class="btn btn-primary" onclick="createCycle()">Starten</button>
+    </div>
+  `;
+  openModal(content);
+}
+
+function createCycle() {
+  const name = document.getElementById('newCycleName')?.value?.trim();
+  const date = document.getElementById('newCycleDate')?.value;
+  if (!name) { alert('Bitte einen Namen eingeben.'); return; }
+  const cycle = getDefaultCycle(name);
+  if (date) cycle.startDate = date;
+  appData.cycles.push(cycle);
+  appData.activeCycleId = cycle.id;
+  saveData();
+  closeModal();
+  renderSettings();
+}
+
+function setActiveCycle(id) {
+  appData.activeCycleId = id;
+  saveData();
+  renderSettings();
+}
+
+function confirmEndCycle() {
+  if (!confirm('Zyklus wirklich abschließen? Du kannst danach einen neuen starten. Die Daten bleiben erhalten.')) return;
+  appData.activeCycleId = null;
+  saveData();
+  renderSettings();
+}
+
+function exportData() {
+  const json = JSON.stringify(appData, null, 2);
+  const blob = new Blob([json], {type: 'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'boulder-backup.json'; a.click();
+}
+
+function importDataPrompt() {
+  const input = document.createElement('input');
+  input.type = 'file'; input.accept = '.json';
+  input.onchange = e => {
+    const file = e.target.files[0];
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        const imported = JSON.parse(ev.target.result);
+        if (imported.cycles && Array.isArray(imported.cycles)) {
+          appData = imported;
+          saveData();
+          alert('Import erfolgreich!');
+          render();
+        } else { alert('Ungültige Datei.'); }
+      } catch { alert('Fehler beim Importieren.'); }
+    };
+    reader.readAsText(file);
+  };
+  input.click();
+}
+
+// ═══════════════════════════════════════════════
+// MODAL
+// ═══════════════════════════════════════════════
+function openModal(content) {
+  document.getElementById('modalContent').innerHTML = content;
+  document.getElementById('modalOverlay').classList.add('open');
+}
+
+function closeModal() {
+  document.getElementById('modalOverlay').classList.remove('open');
+  if (currentView === 'dashboard') renderDashboard();
+  if (currentView === 'history') renderHistory();
+}
+
+function closeModalOnBg(e) {
+  if (e.target === document.getElementById('modalOverlay')) closeModal();
+}
+
+// ═══════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════
+render();
+</script>
+</body>
+</html>
