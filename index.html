@@ -401,17 +401,35 @@ function getDefaultData() {
   };
 }
 
-function getDefaultCycle(name) {
+function getDefaultCycle(name, weeks) {
   const now = new Date();
+  const w = parseInt(weeks) > 0 ? parseInt(weeks) : 12;
   return {
     id: Date.now().toString(),
     name: name || 'Zyklus 1',
     startDate: toDateStr(now),
+    weeks: w,
     exercises: [], // [{id, name, intensity}]
-    weekTargets: Array(12).fill(0), // [9,10,11,...] per week
+    weekTargets: Array(w).fill(0), // [9,10,11,...] per week
     sessions: {}, // { "YYYY-MM-DD": [exerciseId, ...] }
     notes: {}
   };
+}
+
+// Migration: ensure all existing cycles have a 'weeks' property
+function migrateCycles() {
+  let changed = false;
+  appData.cycles.forEach(c => {
+    if (typeof c.weeks !== 'number' || c.weeks < 1) {
+      c.weeks = 12;
+      changed = true;
+    }
+    // Ensure weekTargets matches weeks length
+    if (!Array.isArray(c.weekTargets)) c.weekTargets = [];
+    while (c.weekTargets.length < c.weeks) c.weekTargets.push(0);
+    if (c.weekTargets.length > c.weeks) c.weekTargets = c.weekTargets.slice(0, c.weeks);
+  });
+  if (changed) saveData();
 }
 
 function toDateStr(d) {
@@ -441,15 +459,11 @@ function getActiveCycle() {
 
 function getWeekDates(cycle, weekIndex) {
   const start = parseDate(cycle.startDate);
-  // align to Monday
-  const dow = start.getDay(); // 0=Sun
-  const daysToMon = dow === 0 ? -6 : 1 - dow;
-  const monday = new Date(start);
-  monday.setDate(monday.getDate() + daysToMon + weekIndex * 7);
+  start.setHours(0,0,0,0);
   const days = [];
   for (let i = 0; i < 7; i++) {
-    const d = new Date(monday);
-    d.setDate(d.getDate() + i);
+    const d = new Date(start);
+    d.setDate(d.getDate() + weekIndex * 7 + i);
     days.push(toDateStr(d));
   }
   return days;
@@ -489,18 +503,13 @@ function intensityLabel(current, target) {
 
 function getCurrentWeekIndex(cycle) {
   const start = parseDate(cycle.startDate);
-  const dow = start.getDay();
-  const daysToMon = dow === 0 ? -6 : 1 - dow;
-  const startMonday = new Date(start);
-  startMonday.setDate(startMonday.getDate() + daysToMon);
-  startMonday.setHours(0,0,0,0);
-
+  start.setHours(0,0,0,0);
   const today = new Date();
   today.setHours(0,0,0,0);
-
-  const diffDays = Math.floor((today - startMonday) / (1000 * 60 * 60 * 24));
+  const diffDays = Math.floor((today - start) / (1000 * 60 * 60 * 24));
   const weekIdx = Math.floor(diffDays / 7);
-  return Math.max(0, Math.min(11, weekIdx));
+  const maxW = (cycle.weeks || 12) - 1;
+  return Math.max(0, Math.min(maxW, weekIdx));
 }
 
 function formatDateRange(d1, d2) {
@@ -530,6 +539,108 @@ function render() {
   if (currentView === 'settings') renderSettings();
 }
 
+function niceYStep(maxVal) {
+  if (maxVal <= 0) return 1;
+  // Prefer steps that produce clean integer ticks
+  const candidates = [0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000];
+  let best = null;
+  let bestDiff = Infinity;
+  for (const s of candidates) {
+    const intervals = Math.ceil(maxVal / s);
+    if (intervals < 2 || intervals > 7) continue;
+    const diff = Math.abs(intervals - 5);
+    if (diff < bestDiff) { bestDiff = diff; best = s; }
+  }
+  return best !== null ? best : 1;
+}
+
+function renderIntensityChart(cycle) {
+  const W = cycle.weeks || 12;
+  const targets = [];
+  const actuals = [];
+  for (let i = 0; i < W; i++) {
+    targets.push(cycle.weekTargets[i] || 0);
+    actuals.push(getWeekIntensity(cycle, i));
+  }
+  const currentWeek = getCurrentWeekIndex(cycle);
+
+  // Determine Y scale with nicely rounded steps
+  const rawMax = Math.max(1, ...targets, ...actuals) * 1.1;
+  const step = niceYStep(rawMax);
+  const niceMax = Math.ceil(rawMax / step) * step;
+  const numSteps = Math.round(niceMax / step);
+
+  // SVG dimensions (responsive via viewBox)
+  const w = 320, h = 180;
+  const padL = 28, padR = 12, padT = 16, padB = 30;
+  const chartW = w - padL - padR;
+  const chartH = h - padT - padB;
+  const stepX = W > 1 ? chartW / (W - 1) : 0;
+
+  const xFor = i => padL + i * stepX;
+  const yFor = v => padT + chartH - (v / niceMax) * chartH;
+
+  // Format Y label: drop trailing .0
+  const fmtY = v => {
+    if (v === Math.floor(v)) return v.toString();
+    return v.toFixed(1).replace(/\.0$/, '');
+  };
+
+  // Y axis grid lines with nice step values
+  const gridLines = [];
+  for (let g = 0; g <= numSteps; g++) {
+    const yVal = step * g;
+    const yPx = yFor(yVal);
+    gridLines.push(`<line x1="${padL}" y1="${yPx}" x2="${w-padR}" y2="${yPx}" stroke="var(--border)" stroke-width="0.5"/>`);
+    gridLines.push(`<text x="${padL - 4}" y="${yPx + 3}" font-size="9" fill="var(--text-dim)" text-anchor="end" font-family="DM Mono, monospace">${fmtY(yVal)}</text>`);
+  }
+
+  // X axis labels (show every Nth week)
+  const xLabels = [];
+  const stepLabel = W <= 6 ? 1 : W <= 12 ? 2 : Math.ceil(W / 6);
+  for (let i = 0; i < W; i++) {
+    if (i === 0 || i === W - 1 || i % stepLabel === 0) {
+      xLabels.push(`<text x="${xFor(i)}" y="${h - 14}" font-size="9" fill="var(--text-dim)" text-anchor="middle" font-family="DM Mono, monospace">${i+1}</text>`);
+    }
+  }
+
+  // Target line (accent dashed)
+  const targetPath = targets.map((v, i) => `${i === 0 ? 'M' : 'L'} ${xFor(i)} ${yFor(v)}`).join(' ');
+  const targetDots = targets.map((v, i) => `<circle cx="${xFor(i)}" cy="${yFor(v)}" r="2.5" fill="var(--accent)"/>`).join('');
+
+  // Actual line (green) - only up to current week
+  const actualPoints = actuals.slice(0, currentWeek + 1);
+  const actualPath = actualPoints.map((v, i) => `${i === 0 ? 'M' : 'L'} ${xFor(i)} ${yFor(v)}`).join(' ');
+  const actualDots = actualPoints.map((v, i) => `<circle cx="${xFor(i)}" cy="${yFor(v)}" r="3" fill="var(--green-dark)" stroke="var(--bg)" stroke-width="1.5"/>`).join('');
+
+  // Current week marker
+  const cwX = xFor(currentWeek);
+  const currentMarker = `<line x1="${cwX}" y1="${padT}" x2="${cwX}" y2="${h - padB}" stroke="var(--accent)" stroke-width="0.5" stroke-dasharray="2,3" opacity="0.5"/>`;
+
+  return `
+    <div class="card">
+      <div class="card-title">Intensitätsverlauf</div>
+      <svg viewBox="0 0 ${w} ${h}" style="width:100%;height:auto;display:block" preserveAspectRatio="xMidYMid meet">
+        ${gridLines.join('')}
+        ${currentMarker}
+        <path d="${targetPath}" stroke="var(--accent)" stroke-width="1.5" fill="none" stroke-dasharray="4,3" opacity="0.85"/>
+        ${targetDots}
+        ${actualPath ? `<path d="${actualPath}" stroke="var(--green-dark)" stroke-width="2" fill="none"/>` : ''}
+        ${actualDots}
+        ${xLabels.join('')}
+      </svg>
+      <div style="display:flex;gap:14px;font-size:11px;margin-top:6px;justify-content:center;flex-wrap:wrap">
+        <span style="display:inline-flex;align-items:center;gap:4px;color:var(--text-muted)">
+          <span style="width:14px;height:2px;background:var(--accent);display:inline-block"></span> Ziel
+        </span>
+        <span style="display:inline-flex;align-items:center;gap:4px;color:var(--text-muted)">
+          <span style="width:14px;height:2px;background:var(--green-dark);display:inline-block"></span> Ist
+        </span>
+      </div>
+    </div>
+  `;
+}
+
 // ═══════════════════════════════════════════════
 // DASHBOARD
 // ═══════════════════════════════════════════════
@@ -549,31 +660,45 @@ function renderDashboard() {
     return;
   }
 
+  const totalWeeks = cycle.weeks || 12;
   const weekIdx = getCurrentWeekIndex(cycle);
   const weekDays = getWeekDates(cycle, weekIdx);
   const weekInt = getWeekIntensity(cycle, weekIdx);
   const target = cycle.weekTargets[weekIdx] || 0;
   const iClass = intensityClass(weekInt, target);
   const today = toDateStr(new Date());
-  const todayDow = (new Date().getDay() + 6) % 7; // 0=Mon
 
   document.getElementById('navSub').textContent = cycle.name + ' · Woche ' + (weekIdx + 1);
 
-  // Stats
-  let totalSessions = 0;
-  for (let i = 0; i <= weekIdx; i++) {
+  // Stats: count completed exercise sessions across cycle
+  let completedExercises = 0;
+  let trainingDays = 0;
+  for (let i = 0; i < totalWeeks; i++) {
     const days = getWeekDates(cycle, i);
-    days.forEach(d => { if ((cycle.sessions[d] || []).length > 0) totalSessions++; });
+    days.forEach(d => {
+      const sess = cycle.sessions[d] || [];
+      if (sess.length > 0) {
+        trainingDays++;
+        completedExercises += sess.length;
+      }
+    });
   }
 
   const pct = target > 0 ? Math.min(100, Math.round(weekInt / target * 100)) : 0;
   let barColor = iClass === 'int-blue' ? 'var(--blue)' : iClass === 'int-green-light' ? 'var(--green-light)' : iClass === 'int-green-dark' ? 'var(--green-dark)' : 'var(--red)';
 
+  // Dynamic day labels (actual weekday of each day in the week)
+  const dayLabelsShort = weekDays.map(d => {
+    const dt = parseDate(d);
+    const dow = (dt.getDay() + 6) % 7; // 0=Mon
+    return DAYS_DE[dow];
+  });
+
   el.innerHTML = `
     <div class="section-hdr"><h2>Diese Woche</h2><span class="text-muted">KW${getKW(new Date())}</span></div>
 
     <div class="card mb-0">
-      <div class="card-title">Woche ${weekIdx+1} von 12 · Intensität</div>
+      <div class="card-title">Woche ${weekIdx+1} von ${totalWeeks} · Intensität</div>
       <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:6px">
         <span style="font-family:'DM Mono',monospace;font-size:32px;color:var(--accent)">${weekInt}</span>
         <span class="text-muted">/ ${target} Ziel</span>
@@ -586,19 +711,21 @@ function renderDashboard() {
 
     <div class="stats-row" style="margin-top:10px">
       <div class="stat-card">
-        <div class="stat-val">${weekIdx+1}<span style="font-size:13px;color:var(--text-muted)">/12</span></div>
+        <div class="stat-val">${weekIdx+1}<span style="font-size:13px;color:var(--text-muted)">/${totalWeeks}</span></div>
         <div class="stat-lbl">Aktuelle Woche</div>
       </div>
       <div class="stat-card">
-        <div class="stat-val">${totalSessions}</div>
+        <div class="stat-val">${trainingDays}</div>
         <div class="stat-lbl">Trainingstage gesamt</div>
       </div>
     </div>
 
-    <div class="section-hdr" style="margin-top:8px"><h2>Wochentage</h2></div>
+    ${renderIntensityChart(cycle)}
+
+    <div class="section-hdr" style="margin-top:8px"><h2>Diese Trainingswoche</h2></div>
     <div class="card">
       <div class="week-grid">
-        ${DAYS_DE.map((d, i) => {
+        ${dayLabelsShort.map((d, i) => {
           const dateStr = weekDays[i];
           const exIds = cycle.sessions[dateStr] || [];
           const isToday = dateStr === today;
@@ -615,8 +742,8 @@ function renderDashboard() {
       <div style="text-align:center;font-size:12px;color:var(--text-muted);margin-top:4px">${formatDateRange(weekDays[0], weekDays[6])}</div>
     </div>
 
-    <div class="section-hdr"><h2>Alle 12 Wochen</h2></div>
-    ${Array.from({length:12}, (_,i) => {
+    <div class="section-hdr"><h2>Alle ${totalWeeks} Wochen</h2></div>
+    ${Array.from({length: totalWeeks}, (_,i) => {
       const wint = getWeekIntensity(cycle, i);
       const wtgt = cycle.weekTargets[i] || 0;
       const wc = intensityClass(wint, wtgt);
@@ -649,7 +776,7 @@ function getKW(date) {
 // ═══════════════════════════════════════════════
 // DAY MODAL
 // ═══════════════════════════════════════════════
-function openDayModal(dateStr) {
+function openDayModal(dateStr, returnToWeek) {
   const cycle = getActiveCycle();
   if (!cycle) return;
   const d = parseDate(dateStr);
@@ -678,6 +805,10 @@ function openDayModal(dateStr) {
       return sum + (ex ? (parseFloat(ex.intensity)||0) : 0);
     }, 0);
 
+    const finishBtn = (returnToWeek !== undefined && returnToWeek !== null)
+      ? `<button class="btn btn-ghost btn-full" onclick="closeModal();setTimeout(()=>openWeekModal(${returnToWeek}),250)">Fertig · zurück zur Woche</button>`
+      : `<button class="btn btn-ghost btn-full" onclick="closeModal()">Fertig</button>`;
+
     return `
       <div class="modal-title">${title}</div>
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">
@@ -687,7 +818,7 @@ function openDayModal(dateStr) {
       <div class="card-title">Übungen abhaken</div>
       ${exList}
       <div class="divider"></div>
-      <button class="btn btn-ghost btn-full" onclick="closeModal()">Fertig</button>
+      ${finishBtn}
     `;
   }
 
@@ -753,7 +884,8 @@ function openWeekModal(weekIdx) {
       <span class="text-muted">${intensityLabel(wInt, target)}</span>
     </div>
     <div style="margin-bottom:8px"><span class="text-muted">${formatDateRange(days[0], days[6])}</span></div>
-    <div class="divider"></div>
+    <div style="font-size:11px;color:var(--text-dim);margin-bottom:12px">Tippe auf einen Tag, um Übungen einzutragen oder zu bearbeiten.</div>
+    <div class="divider" style="margin-top:0"></div>
     ${days.map((dateStr, i) => {
       const exIds = cycle.sessions[dateStr] || [];
       const dayInt = exIds.reduce((s, eid) => {
@@ -761,18 +893,21 @@ function openWeekModal(weekIdx) {
         return s + (ex ? parseFloat(ex.intensity)||0 : 0);
       }, 0);
       const d = parseDate(dateStr);
-      return `<div style="margin-bottom:10px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-          <strong style="font-size:13px">${DAYS_FULL[i]}, ${d.getDate()}. ${MONTHS_DE[d.getMonth()]}</strong>
-          ${exIds.length > 0 ? `<span style="font-family:'DM Mono',monospace;font-size:12px;color:var(--accent)">${Math.round(dayInt*10)/10}</span>` : ''}
+      const dow = (d.getDay() + 6) % 7;
+      return `<div style="margin-bottom:10px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;cursor:pointer" onclick="closeModal();setTimeout(()=>openDayModal('${dateStr}', ${weekIdx}),250)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:${exIds.length>0?'6px':'0'}">
+          <strong style="font-size:13px">${DAYS_FULL[dow]}, ${d.getDate()}. ${MONTHS_DE[d.getMonth()]}</strong>
+          <span style="font-family:'DM Mono',monospace;font-size:12px;color:${exIds.length>0?'var(--accent)':'var(--text-dim)'}">
+            ${exIds.length > 0 ? Math.round(dayInt*10)/10 : '+ eintragen'}
+          </span>
         </div>
         ${exIds.length === 0
-          ? `<div style="font-size:13px;color:var(--text-dim);padding-left:4px">– kein Training</div>`
+          ? ''
           : exIds.map(eid => {
               const ex = cycle.exercises.find(e => e.id === eid);
-              return ex ? `<div class="day-exercise-item">
-                <span style="font-size:13px">${ex.name}</span>
-                <span style="font-family:'DM Mono',monospace;font-size:12px;color:var(--text-muted)">${ex.intensity}</span>
+              return ex ? `<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12px">
+                <span>${ex.name}</span>
+                <span style="font-family:'DM Mono',monospace;color:var(--text-muted)">${ex.intensity}</span>
               </div>` : '';
             }).join('')
         }
@@ -817,8 +952,8 @@ function renderPlan() {
 
     <div class="divider"></div>
     <div class="section-hdr"><h2>Wochenziele</h2></div>
-    <div class="card-title">Intensitätsziel pro Woche (1–12)</div>
-    ${Array.from({length:12}, (_,i) => {
+    <div class="card-title">Intensitätsziel pro Woche (1–${cycle.weeks || 12})</div>
+    ${Array.from({length: cycle.weeks || 12}, (_,i) => {
       const wd = getWeekDates(cycle, i);
       return `
       <div class="exercise-item" style="padding:10px 14px">
@@ -941,20 +1076,28 @@ function renderHistory() {
   const sorted = [...appData.cycles].sort((a,b) => b.startDate.localeCompare(a.startDate));
   el.innerHTML = `<div class="section-hdr" style="margin-top:0"><h2>Alle Zyklen</h2></div>` +
     sorted.map(cycle => {
-      const endDate = new Date(parseDate(cycle.startDate).getTime() + 12*7*24*3600*1000 - 86400000);
-      const totalInt = Array.from({length:12}, (_,i) => getWeekIntensity(cycle, i)).reduce((a,b)=>a+b,0);
-      const sessionDays = Object.values(cycle.sessions).filter(s => s.length > 0).length;
+      const wks = cycle.weeks || 12;
+      const endDate = new Date(parseDate(cycle.startDate).getTime() + wks*7*24*3600*1000 - 86400000);
+      const totalInt = Array.from({length: wks}, (_,i) => getWeekIntensity(cycle, i)).reduce((a,b)=>a+b,0);
+      let sessionDays = 0;
+      let completedExercises = 0;
+      Object.values(cycle.sessions).forEach(s => {
+        if (s.length > 0) {
+          sessionDays++;
+          completedExercises += s.length;
+        }
+      });
       const isActive = cycle.id === appData.activeCycleId;
       return `<div class="cycle-card" onclick="openCycleDetail('${cycle.id}')">
         <div class="cycle-card-hdr">
           <div class="cycle-card-title">${cycle.name}</div>
           ${isActive ? '<span class="intensity-badge int-green-dark" style="font-size:11px">Aktiv</span>' : ''}
         </div>
-        <div class="cycle-dates">${formatDateRange(cycle.startDate, toDateStr(endDate))}</div>
-        <div style="display:flex;gap:16px;margin-top:8px">
+        <div class="cycle-dates">${formatDateRange(cycle.startDate, toDateStr(endDate))} · ${wks} Wochen</div>
+        <div style="display:flex;gap:16px;margin-top:8px;flex-wrap:wrap">
           <span class="text-muted">${Math.round(totalInt*10)/10} Gesamt-Int.</span>
           <span class="text-muted">${sessionDays} Trainingstage</span>
-          <span class="text-muted">${cycle.exercises.length} Übungen</span>
+          <span class="text-muted">${completedExercises} Übungen absolviert</span>
         </div>
       </div>`;
     }).join('');
@@ -969,7 +1112,7 @@ function openCycleDetail(cycleId) {
     <div class="text-muted" style="margin-bottom:16px">Gestartet: ${parseDate(cycle.startDate).toLocaleDateString('de-DE')}</div>
 
     <div class="card-title">Wochenübersicht</div>
-    ${Array.from({length:12}, (_,i) => {
+    ${Array.from({length: cycle.weeks || 12}, (_,i) => {
       const wint = getWeekIntensity(cycle, i);
       const wtgt = cycle.weekTargets[i] || 0;
       const wc = intensityClass(wint, wtgt);
@@ -1050,11 +1193,11 @@ function openNewCycleModal() {
   const copyOptions = otherCycles.length > 0
     ? `<div class="field">
         <label>Von vorhandenem Zyklus kopieren (optional)</label>
-        <select id="copyFromCycle">
+        <select id="copyFromCycle" onchange="onCopySelect()">
           <option value="">– Leer starten –</option>
-          ${otherCycles.map(c => `<option value="${c.id}">${c.name} (${c.exercises.length} Übungen)</option>`).join('')}
+          ${otherCycles.map(c => `<option value="${c.id}">${c.name} (${c.exercises.length} Übungen, ${c.weeks||12} Wo.)</option>`).join('')}
         </select>
-        <div style="font-size:11px;color:var(--text-muted);margin-top:4px">Übungen und Wochenziele werden übernommen.</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px">Übungen, Wochenziele und Wochenanzahl werden übernommen.</div>
       </div>`
     : '';
 
@@ -1065,8 +1208,12 @@ function openNewCycleModal() {
       <input type="text" id="newCycleName" placeholder="z.B. Frühjahr 2025">
     </div>
     <div class="field">
-      <label>Startdatum</label>
+      <label>Startdatum (beliebiger Wochentag)</label>
       <input type="date" id="newCycleDate" value="${toDateStr(new Date())}">
+    </div>
+    <div class="field">
+      <label>Anzahl Wochen (1–52)</label>
+      <input type="number" id="newCycleWeeks" min="1" max="52" step="1" value="12">
     </div>
     ${copyOptions}
     <div class="row" style="margin-top:4px">
@@ -1077,12 +1224,25 @@ function openNewCycleModal() {
   openModal(content);
 }
 
+function onCopySelect() {
+  const sel = document.getElementById('copyFromCycle');
+  const id = sel?.value;
+  if (!id) return;
+  const src = appData.cycles.find(c => c.id === id);
+  if (src) {
+    const wInput = document.getElementById('newCycleWeeks');
+    if (wInput) wInput.value = src.weeks || 12;
+  }
+}
+
 function createCycle() {
   const name = document.getElementById('newCycleName')?.value?.trim();
   const date = document.getElementById('newCycleDate')?.value;
+  const weeksRaw = document.getElementById('newCycleWeeks')?.value;
+  const weeks = Math.max(1, Math.min(52, parseInt(weeksRaw) || 12));
   const copyFromId = document.getElementById('copyFromCycle')?.value;
   if (!name) { alert('Bitte einen Namen eingeben.'); return; }
-  const cycle = getDefaultCycle(name);
+  const cycle = getDefaultCycle(name, weeks);
   if (date) cycle.startDate = date;
 
   // Copy exercises and week targets from selected cycle
@@ -1094,7 +1254,9 @@ function createCycle() {
         name: ex.name,
         intensity: ex.intensity
       }));
-      cycle.weekTargets = [...src.weekTargets];
+      // Copy week targets, truncating or padding as needed
+      const srcTargets = src.weekTargets || [];
+      cycle.weekTargets = Array(weeks).fill(0).map((_, i) => srcTargets[i] || 0);
     }
   }
 
@@ -1181,6 +1343,7 @@ function closeModalOnBg(e) {
 // ═══════════════════════════════════════════════
 // INIT
 // ═══════════════════════════════════════════════
+migrateCycles();
 render();
 </script>
 </body>
