@@ -743,6 +743,16 @@ function renderIntensityChart(cycle) {
   const targetPath = targets.map((v, i) => `${i === 0 ? 'M' : 'L'} ${xFor(i)} ${yFor(v)}`).join(' ');
   const targetDots = targets.map((v, i) => `<circle cx="${xFor(i)}" cy="${yFor(v)}" r="2.5" fill="var(--accent)"/>`).join('');
 
+  // Interactive tooltip: transparent touch targets + floating tooltip group
+  const chartId = 'intChart';
+  const touchTargets = Array.from({length: W}, (_, i) => {
+    const cx = xFor(i);
+    const tx = padL + i * stepX;
+    const topY = yFor(Math.max(targets[i], actuals[i], 0.01));
+    return `<rect x="${tx.toFixed(1)}" y="${padT}" width="${stepX.toFixed(1)}" height="${chartH}" fill="transparent" data-wk="${i}" data-act="${actuals[i]}" data-tgt="${targets[i]}" data-cx="${cx.toFixed(1)}" data-ty="${topY.toFixed(1)}" onclick="showChartTooltip(this,'${chartId}')"/>`;
+  });
+  const tipGroup = `<g id="${chartId}_tip" style="display:none" pointer-events="none"><rect id="${chartId}_bg" x="0" y="0" width="72" height="30" rx="3" fill="#0a0a0a" opacity="0.85"/><text id="${chartId}_ta" x="0" y="0" font-size="8.5" fill="#fff" font-family="DM Mono,monospace"></text><text id="${chartId}_tt" x="0" y="0" font-size="8.5" fill="var(--accent)" font-family="DM Mono,monospace"></text></g>`;
+
   // Current week marker
   const cwX = xFor(currentWeek);
   const currentMarker = `<line x1="${cwX}" y1="${padT}" x2="${cwX}" y2="${h - padB}" stroke="var(--accent)" stroke-width="0.5" stroke-dasharray="2,3" opacity="0.4"/>`;
@@ -774,13 +784,15 @@ function renderIntensityChart(cycle) {
   return `
     <div class="card">
       <div class="card-title">Intensitätsverlauf</div>
-      <svg viewBox="0 0 ${w} ${h}" style="width:100%;height:auto;display:block" preserveAspectRatio="xMidYMid meet">
+      <svg id="${chartId}" viewBox="0 0 ${w} ${h}" style="width:100%;height:auto;display:block" preserveAspectRatio="xMidYMid meet">
         ${gridLines.join('')}
         ${currentMarker}
         ${bars.join('')}
         <path d="${targetPath}" stroke="var(--accent)" stroke-width="1.5" fill="none" stroke-dasharray="4,3" opacity="0.95"/>
         ${targetDots}
         ${xLabels.join('')}
+        ${touchTargets.join('')}
+        ${tipGroup}
       </svg>
       <div style="display:flex;gap:10px 14px;font-size:11px;margin-top:6px;justify-content:center;flex-wrap:wrap">
         ${targetLegend}
@@ -788,6 +800,37 @@ function renderIntensityChart(cycle) {
       </div>
     </div>
   `;
+}
+
+// ═══════════════════════════════════════════════
+// CHART TOOLTIP
+// ═══════════════════════════════════════════════
+function showChartTooltip(el, id) {
+  const tip = document.getElementById(id + '_tip');
+  if (!tip) return;
+  const wk = el.getAttribute('data-wk');
+  // Toggle off if same bar tapped again
+  if (tip.getAttribute('data-active') === wk && tip.style.display !== 'none') {
+    tip.style.display = 'none'; return;
+  }
+  tip.setAttribute('data-active', wk);
+  const act = parseFloat(el.getAttribute('data-act'));
+  const tgt = parseFloat(el.getAttribute('data-tgt'));
+  const cx  = parseFloat(el.getAttribute('data-cx'));
+  const ty0 = parseFloat(el.getAttribute('data-ty'));
+  const fmt = v => (v === Math.floor(v)) ? v.toString() : v.toFixed(1).replace(/\.0$/, '');
+  const bg  = document.getElementById(id + '_bg');
+  const ta  = document.getElementById(id + '_ta');
+  const tt  = document.getElementById(id + '_tt');
+  const TW = 72, TH = 30, P = 5;
+  const tx = Math.max(P, Math.min(320 - TW - P, cx - TW / 2));
+  const ty = Math.max(P, ty0 - TH - 6);
+  bg.setAttribute('x', tx); bg.setAttribute('y', ty);
+  ta.textContent = 'Ist:  ' + fmt(act);
+  ta.setAttribute('x', tx + P); ta.setAttribute('y', ty + 12);
+  tt.textContent = 'Ziel: ' + fmt(tgt);
+  tt.setAttribute('x', tx + P); tt.setAttribute('y', ty + 24);
+  tip.style.display = 'block';
 }
 
 // ═══════════════════════════════════════════════
@@ -1300,6 +1343,17 @@ function renderHistory() {
         }
       });
       const isActive = cycle.id === appData.activeCycleId;
+      // % of planned intensity achieved across completed weeks only
+      const todayStr = toDateStr(new Date());
+      let compTgtSum = 0, compActSum = 0;
+      for (let i = 0; i < wks; i++) {
+        const wDays = getWeekDates(cycle, i);
+        if (wDays[6] < todayStr) {
+          compTgtSum += (cycle.weekTargets[i] || 0);
+          compActSum += getWeekIntensity(cycle, i);
+        }
+      }
+      const pctStr = compTgtSum > 0 ? Math.round(compActSum / compTgtSum * 100) + '% Ziel' : null;
       return `<div class="cycle-card" onclick="openCycleDetail('${cycle.id}')">
         <div class="cycle-card-hdr">
           <div class="cycle-card-title">${cycle.name}</div>
@@ -1310,6 +1364,7 @@ function renderHistory() {
           <span class="text-muted">${Math.round(totalInt*10)/10} Gesamt-Int.</span>
           <span class="text-muted">${sessionDays} Trainingstage</span>
           <span class="text-muted">${completedExercises} Übungen absolviert</span>
+          ${pctStr ? `<span class="text-muted">${pctStr} erreicht</span>` : ''}
         </div>
       </div>`;
     }).join('');
