@@ -689,9 +689,9 @@ function renderIntensityChart(cycle) {
   const padL = 28, padR = 12, padT = 16, padB = 30;
   const chartW = w - padL - padR;
   const chartH = h - padT - padB;
-  const stepX = W > 1 ? chartW / (W - 1) : 0;
+  const stepX = chartW / Math.max(W, 1);
 
-  const xFor = i => W > 1 ? padL + i * stepX : padL + chartW / 2;
+  const xFor = i => padL + (i + 0.5) * stepX;
   const yFor = v => padT + chartH - (v / niceMax) * chartH;
   const yZero = yFor(0);
 
