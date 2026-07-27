@@ -544,9 +544,14 @@ function getWeekCategoryBreakdown(cycle, weekIndex) {
   return out;
 }
 
-// ── HTML attribute escape ──
-function escAttr(s) {
-  return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+// ── HTML escape (safe for text content and quoted attribute values) ──
+function esc(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 // ── Build tappable chips of existing categories ──
@@ -559,11 +564,11 @@ function buildCategoryChips(inputId) {
   <div style="display:flex;flex-wrap:wrap;gap:6px">
     ${allCats.map(cat => {
       const color = categoryColor(cat, allCats);
-      return `<button type="button" data-target="${inputId}" data-cat="${escAttr(cat)}"
+      return `<button type="button" data-target="${inputId}" data-cat="${esc(cat)}"
         onclick="document.getElementById(this.dataset.target).value=this.dataset.cat"
         style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:5px 10px;font-size:12px;color:var(--text);display:inline-flex;align-items:center;gap:5px;cursor:pointer;font-family:inherit">
         <span style="color:${color};font-size:13px;line-height:1">●</span>
-        ${cat}
+        ${esc(cat)}
       </button>`;
     }).join('')}
   </div>`;
@@ -776,7 +781,7 @@ function renderIntensityChart(cycle) {
     legendCats = usedCats.map(cat => {
       const color = categoryColor(cat, allCats);
       return `<span style="display:inline-flex;align-items:center;gap:4px;color:var(--text-muted)">
-        <span style="width:10px;height:10px;background:${color};display:inline-block;border-radius:2px"></span> ${cat}
+        <span style="width:10px;height:10px;background:${color};display:inline-block;border-radius:2px"></span> ${esc(cat)}
       </span>`;
     }).join('');
   }
@@ -1004,9 +1009,9 @@ function buildDayModalContent(dateStr, returnToWeek) {
               ${checked ? '<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>' : ''}
             </div>
             <div style="flex:1;min-width:0">
-              <div class="check-label" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${ex.name}</div>
+              <div class="check-label" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(ex.name)}</div>
               <div style="font-size:11px;color:var(--text-muted);font-family:'DM Mono',monospace;display:flex;align-items:center;gap:5px">
-                ${cat ? `<span style="color:${catColor};font-size:13px;line-height:1">●</span><span style="font-family:'DM Sans',sans-serif">${cat}</span><span style="color:var(--text-dim)">·</span>` : ''}
+                ${cat ? `<span style="color:${catColor};font-size:13px;line-height:1">●</span><span style="font-family:'DM Sans',sans-serif">${esc(cat)}</span><span style="color:var(--text-dim)">·</span>` : ''}
                 <span>Std: ${ex.intensity}</span>
                 ${ov !== null ? `<span style="color:var(--accent)">→ ${ov}</span>` : ''}
               </div>
@@ -1125,7 +1130,7 @@ function openWeekModal(weekIdx) {
               return `<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12px">
                 <span style="display:flex;align-items:center;gap:5px">
                   ${cat ? `<span style="color:${catColor};font-size:11px;line-height:1">●</span>` : ''}
-                  <span>${ex.name}</span>
+                  <span>${esc(ex.name)}</span>
                 </span>
                 <span style="font-family:'DM Mono',monospace;color:var(--text-muted)">
                   ${ov !== null ? `<span style="color:var(--accent)">${eff}</span> <span style="color:var(--text-dim);font-size:10px">(Std: ${ex.intensity})</span>` : eff}
@@ -1168,9 +1173,9 @@ function renderPlan() {
             return `
             <div class="exercise-item" onclick="openEditExerciseModal('${ex.id}')" style="cursor:pointer">
               <div style="flex:1;min-width:0">
-                <div class="exercise-name">${ex.name}</div>
+                <div class="exercise-name">${esc(ex.name)}</div>
                 <div style="font-size:11px;color:var(--text-muted);margin-top:2px;display:flex;align-items:center;gap:5px">
-                  ${cat ? `<span style="color:${catColor};font-size:14px;line-height:1">●</span><span>${cat}</span><span style="color:var(--text-dim)">·</span>` : ''}
+                  ${cat ? `<span style="color:${catColor};font-size:14px;line-height:1">●</span><span>${esc(cat)}</span><span style="color:var(--text-dim)">·</span>` : ''}
                   <span>Tippen zum Bearbeiten</span>
                 </div>
               </div>
@@ -1205,7 +1210,7 @@ function openAddExerciseModal() {
   const cycle = getActiveCycle();
   const allCats = getAllCategoriesInCycle(cycle).filter(c => c !== 'Sonstige');
   const datalist = allCats.length > 0
-    ? `<datalist id="catList">${allCats.map(c => `<option value="${escAttr(c)}">`).join('')}</datalist>`
+    ? `<datalist id="catList">${allCats.map(c => `<option value="${esc(c)}">`).join('')}</datalist>`
     : '';
   const content = `
     <div class="modal-title">Übung hinzufügen</div>
@@ -1253,17 +1258,17 @@ function openEditExerciseModal(exId) {
   if (!ex) return;
   const allCats = getAllCategoriesInCycle(cycle).filter(c => c !== 'Sonstige');
   const datalist = allCats.length > 0
-    ? `<datalist id="catListEdit">${allCats.map(c => `<option value="${escAttr(c)}">`).join('')}</datalist>`
+    ? `<datalist id="catListEdit">${allCats.map(c => `<option value="${esc(c)}">`).join('')}</datalist>`
     : '';
   const content = `
     <div class="modal-title">Übung bearbeiten</div>
     <div class="field">
       <label>Name der Übung</label>
-      <input type="text" id="editExName" value="${escAttr(ex.name)}">
+      <input type="text" id="editExName" value="${esc(ex.name)}">
     </div>
     <div class="field">
       <label>Kategorie (optional)</label>
-      <input type="text" id="editExCat" value="${escAttr(ex.category || '')}" placeholder="z.B. Krafttraining" list="catListEdit">
+      <input type="text" id="editExCat" value="${esc(ex.category || '')}" placeholder="z.B. Krafttraining" list="catListEdit">
       ${datalist}
       ${buildCategoryChips('editExCat')}
     </div>
@@ -1356,7 +1361,7 @@ function renderHistory() {
       const pctStr = compTgtSum > 0 ? Math.round(compActSum / compTgtSum * 100) + '% Ziel' : null;
       return `<div class="cycle-card" onclick="openCycleDetail('${cycle.id}')">
         <div class="cycle-card-hdr">
-          <div class="cycle-card-title">${cycle.name}</div>
+          <div class="cycle-card-title">${esc(cycle.name)}</div>
           ${isActive ? '<span class="intensity-badge int-green-dark" style="font-size:11px">Aktiv</span>' : ''}
         </div>
         <div class="cycle-dates">${formatDateRange(cycle.startDate, toDateStr(endDate))} · ${wks} Wochen</div>
@@ -1375,7 +1380,7 @@ function openCycleDetail(cycleId) {
   if (!cycle) return;
 
   const content = `
-    <div class="modal-title">${cycle.name}</div>
+    <div class="modal-title">${esc(cycle.name)}</div>
     <div class="text-muted" style="margin-bottom:16px">Gestartet: ${parseDate(cycle.startDate).toLocaleDateString('de-DE')}</div>
 
     <div class="card-title">Wochenübersicht</div>
@@ -1401,7 +1406,7 @@ function openCycleDetail(cycleId) {
         return `<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">
           <span style="display:flex;align-items:center;gap:6px;font-size:14px">
             ${cat ? `<span style="color:${catColor};font-size:12px;line-height:1">●</span>` : ''}
-            <span>${ex.name}${cat ? ` <span style="color:var(--text-dim);font-size:11px">· ${cat}</span>` : ''}</span>
+            <span>${esc(ex.name)}${cat ? ` <span style="color:var(--text-dim);font-size:11px">· ${esc(cat)}</span>` : ''}</span>
           </span>
           <span style="font-family:'DM Mono',monospace;font-size:13px;color:var(--accent)">×${ex.intensity}</span>
         </div>`;
@@ -1426,7 +1431,7 @@ function renderSettings() {
     <div class="card">
       <div class="card-title">Aktiver Zyklus</div>
       ${cycle
-        ? `<div style="font-weight:600;font-size:15px;margin-bottom:4px">${cycle.name}</div>
+        ? `<div style="font-weight:600;font-size:15px;margin-bottom:4px">${esc(cycle.name)}</div>
            <div class="text-muted">Gestartet: ${parseDate(cycle.startDate).toLocaleDateString('de-DE')}</div>
            <div class="divider"></div>
            <button class="btn btn-danger btn-sm" onclick="confirmEndCycle()">Zyklus abschließen</button>`
@@ -1443,7 +1448,7 @@ function renderSettings() {
       ${appData.cycles.map(c => `
         <div class="week-row ${c.id === appData.activeCycleId ? 'current-week' : ''}">
           <div class="week-row-left" onclick="setActiveCycle('${c.id}')" style="cursor:pointer">
-            <div class="week-row-name">${c.name}</div>
+            <div class="week-row-name">${esc(c.name)}</div>
             <div class="week-row-date">${parseDate(c.startDate).toLocaleDateString('de-DE')}</div>
           </div>
           <div style="display:flex;align-items:center;gap:6px">
@@ -1470,7 +1475,7 @@ function openNewCycleModal() {
         <label>Von vorhandenem Zyklus kopieren (optional)</label>
         <select id="copyFromCycle" onchange="onCopySelect()">
           <option value="">– Leer starten –</option>
-          ${otherCycles.map(c => `<option value="${c.id}">${c.name} (${c.exercises.length} Übungen, ${c.weeks||12} Wo.)</option>`).join('')}
+          ${otherCycles.map(c => `<option value="${c.id}">${esc(c.name)} (${c.exercises.length} Übungen, ${c.weeks||12} Wo.)</option>`).join('')}
         </select>
         <div style="font-size:11px;color:var(--text-muted);margin-top:4px">Übungen, Wochenziele und Wochenanzahl werden übernommen.</div>
       </div>`
@@ -1527,6 +1532,7 @@ function createCycle() {
       cycle.exercises = src.exercises.map(ex => ({
         id: Date.now().toString() + Math.random().toString(36).slice(2,7),
         name: ex.name,
+        category: ex.category || '',
         intensity: ex.intensity
       }));
       // Copy week targets, truncating or padding as needed
