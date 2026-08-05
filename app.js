@@ -1258,8 +1258,31 @@ const SCALES = {
 const TEST_KINDS = {
   number: 'Zahl – kg, Wdh., cm, km …',
   time:   'Zeit – Sekunden oder mm:ss',
-  scale:  'Skala – Klettergrade'
+  scale:  'Skala – ein Grad',
+  counts: 'Anzahl je Grad – z.B. 12 Siebener, 5 Achter'
 };
+
+// 'counts' speichert statt einer Zahl ein Objekt { Skalenindex: Anzahl },
+// z.B. { "6": 12, "7": 5 } für zwölf Siebener und fünf Achter in der Halle.
+// Verglichen wird über die Gesamtzahl der Routen.
+function isCounts(test) {
+  return test && test.kind === 'counts';
+}
+
+function countsTotal(value) {
+  if (!value || typeof value !== 'object') return 0;
+  return Object.keys(value).reduce((s, k) => s + (parseFloat(value[k]) || 0), 0);
+}
+
+function formatCounts(test, value) {
+  const steps = testScale(test).steps;
+  const parts = Object.keys(value || {})
+    .map(k => ({ i: parseInt(k, 10), n: parseFloat(value[k]) || 0 }))
+    .filter(x => x.n > 0 && steps[x.i] !== undefined)
+    .sort((a, b) => a.i - b.i)
+    .map(x => x.n + '× ' + steps[x.i]);
+  return parts.length ? parts.join(' · ') : '–';
+}
 
 function migrateAssessments() {
   let changed = false;
@@ -1274,6 +1297,7 @@ function migrateAssessments() {
   });
   appData.assessments.forEach(a => {
     if (!Array.isArray(a.results)) { a.results = []; changed = true; }
+    if (a.isInterim === undefined) { a.isInterim = false; changed = true; }
   });
   if (changed) saveData();
 }
@@ -1283,8 +1307,14 @@ function getTest(testId) {
 }
 
 function testScale(test) {
-  if (!test || test.kind !== 'scale') return null;
+  if (!test || (test.kind !== 'scale' && test.kind !== 'counts')) return null;
   return SCALES[test.scaleId] || SCALES.font;
+}
+
+// Die Zahl, mit der gerechnet und gezeichnet wird. Bei 'counts' ist das die
+// Gesamtzahl der Routen, sonst der Wert selbst.
+function testNumericValue(test, value) {
+  return isCounts(test) ? countsTotal(value) : value;
 }
 
 function anyTestUsesBodyweight() {
@@ -1313,7 +1343,9 @@ function fmtNum(v) {
 }
 
 function formatTestValue(test, value) {
-  if (value === null || value === undefined || isNaN(value)) return '–';
+  if (value === null || value === undefined) return '–';
+  if (isCounts(test)) return formatCounts(test, value);
+  if (isNaN(value)) return '–';
   if (test.kind === 'time') return formatSeconds(value);
   if (test.kind === 'scale') {
     const steps = testScale(test).steps;
@@ -1347,6 +1379,17 @@ function parseTestValue(test, raw) {
 // überschätzt – +5 kg auf +10 kg sind eben keine "+100 %".
 function compareMeasurements(test, prev, curr) {
   if (!prev || !curr) return null;
+
+  if (isCounts(test)) {
+    const a = countsTotal(prev.value), b = countsTotal(curr.value);
+    const d = b - a;
+    const res = { diff: d, better: d === 0 ? null : (test.higherIsBetter ? d > 0 : d < 0) };
+    res.absText = (d > 0 ? '+' : '') + d + (Math.abs(d) === 1 ? ' Route' : ' Routen');
+    res.detail = a + ' → ' + b + ' Routen gesamt';
+    if (a !== 0) res.pctText = (b - a > 0 ? '+' : '') + fmtNum((b - a) / Math.abs(a) * 100) + ' %';
+    return res;
+  }
+
   const diff = curr.value - prev.value;
   const out = { diff, better: diff === 0 ? null : (test.higherIsBetter ? diff > 0 : diff < 0) };
 
@@ -1408,7 +1451,8 @@ function renderAssessment() {
         const d = parseDate(a.date);
         return `<div class="week-row" onclick="openAssessmentModal('${a.id}')">
           <div class="week-row-left">
-            <div class="week-row-name">${esc(a.label || 'Messung')}</div>
+            <div class="week-row-name">${esc(a.label || 'Messung')}${
+              a.isInterim ? ` <span class="intensity-badge int-blue" style="font-size:10px;padding:1px 7px;vertical-align:1px">Zwischenstand</span>` : ''}</div>
             <div class="week-row-date">${d.toLocaleDateString('de-DE')}${
               cycle ? ' · ' + esc(cycle.name) : ''}</div>
           </div>
@@ -1424,7 +1468,8 @@ function renderAssessment() {
         const catColor = cat ? categoryColor(cat, allCats) : '#888';
         const series = getTestSeries(t.id);
         const latest = series.length > 0 ? series[series.length - 1] : null;
-        let kindText = t.kind === 'scale' ? testScale(t).name
+        let kindText = isCounts(t) ? testScale(t).name + ' · Anzahl je Grad'
+                     : t.kind === 'scale' ? testScale(t).name
                      : t.kind === 'time' ? 'Zeit'
                      : (t.unit || 'Zahl');
         if (!t.higherIsBetter) kindText += ' · weniger ist besser';
@@ -1463,30 +1508,40 @@ function renderAssessment() {
 }
 
 // ── Erinnerung auf der Übersicht, sobald die letzte Zykluswoche läuft ──
+// Zwischenstände lösen die Erinnerung bewusst nicht ab: Wer mitten im Zyklus
+// misst, soll trotzdem am Ende noch einmal erinnert werden.
 function getAssessmentReminder() {
   const cycle = getActiveCycle();
-  if (!cycle || appData.tests.length === 0) return null;
-  if (appData.assessments.some(a => a.cycleId === cycle.id)) return null;
+  if (!cycle) return null;
   const end = getCycleEndDate(cycle);
   const daysLeft = Math.round((parseDate(end) - parseDate(toDateStr(new Date()))) / 86400000);
   if (daysLeft > 7) return null;
-  return { end, daysLeft };
+  const closed = appData.assessments.some(a => a.cycleId === cycle.id && !a.isInterim);
+  if (closed) return null;
+  return { end, daysLeft, needsTests: appData.tests.length === 0 };
 }
 
 function renderAssessmentReminder() {
   const r = getAssessmentReminder();
   if (!r) return '';
-  const text = r.daysLeft < 0 ? 'Der Zyklus ist beendet.'
+  const when = r.daysLeft < 0 ? 'Der Zyklus ist beendet.'
              : r.daysLeft === 0 ? 'Der Zyklus endet heute.'
              : `Der Zyklus endet in ${r.daysLeft} ${r.daysLeft === 1 ? 'Tag' : 'Tagen'}.`;
+  // Ohne Tests wäre der Knopf eine Sackgasse – dann zuerst dorthin führen.
+  const text = r.needsTests
+    ? when + ' Lege Tests an, um deinen Stand zu messen.'
+    : when + ' Zeit, deinen Stand zu messen.';
+  const action = r.needsTests
+    ? `<button class="btn btn-primary btn-sm" onclick="switchView('assessment');setTimeout(openTestModal,50)">Tests anlegen</button>`
+    : `<button class="btn btn-primary btn-sm" onclick="switchView('assessment');setTimeout(openAssessmentModal,50)">Messen</button>`;
   return `
     <div class="card" style="border-color:var(--accent);background:var(--accent-dim)">
       <div style="display:flex;align-items:center;gap:10px">
         <div style="flex:1">
           <div style="font-weight:600;font-size:14px;margin-bottom:2px">Assessment fällig</div>
-          <div style="font-size:12px;color:var(--text-muted)">${text} Zeit, deinen Stand zu messen.</div>
+          <div style="font-size:12px;color:var(--text-muted)">${text}</div>
         </div>
-        <button class="btn btn-primary btn-sm" onclick="switchView('assessment');setTimeout(openAssessmentModal,50)">Messen</button>
+        ${action}
       </div>
     </div>`;
 }
@@ -1582,7 +1637,7 @@ function onTestKindChange() {
   const scaleField = document.getElementById('testScaleField');
   const bwRow = document.getElementById('testBwRow');
   if (unitField) unitField.style.display = kind === 'number' ? '' : 'none';
-  if (scaleField) scaleField.style.display = kind === 'scale' ? '' : 'none';
+  if (scaleField) scaleField.style.display = (kind === 'scale' || kind === 'counts') ? '' : 'none';
   if (bwRow) {
     const show = kind === 'number';
     bwRow.style.display = show ? '' : 'none';
@@ -1602,7 +1657,7 @@ function saveTest(testId) {
     name,
     kind,
     unit: kind === 'number' ? (document.getElementById('testUnit')?.value?.trim() || '') : '',
-    scaleId: kind === 'scale' ? document.getElementById('testScale').value : undefined,
+    scaleId: (kind === 'scale' || kind === 'counts') ? document.getElementById('testScale').value : undefined,
     category: document.getElementById('testCat')?.value?.trim() || '',
     higherIsBetter: isChecked('testHigher'),
     usesBodyweight: kind === 'number' && isChecked('testBw')
@@ -1659,6 +1714,25 @@ function openAssessmentModal(assessmentId) {
     const r = a ? a.results.find(x => x.testId === t.id) : null;
     const val = r && r.value !== null && r.value !== undefined ? r.value : '';
     let field;
+    if (isCounts(t)) {
+      // Ein kompaktes Feld je Grad – die Halle hat neun, das passt in ein Raster.
+      const steps = testScale(t).steps;
+      const cur = (r && r.value) || {};
+      return `<div class="day-exercise-item" style="flex-direction:column;align-items:stretch;gap:8px">
+        <div>
+          <div style="font-size:14px">${esc(t.name)}</div>
+          <div style="font-size:11px;color:var(--text-muted)">${esc(testScale(t).name)} · Anzahl je Grad</div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:6px">
+          ${steps.map((s, i) => `<div>
+            <div style="font-size:10px;color:var(--text-muted);text-align:center;margin-bottom:2px">${esc(s)}</div>
+            <input type="number" min="0" step="1" id="res_${t.id}_${i}"
+              value="${cur[i] ? cur[i] : ''}" placeholder="0"
+              style="text-align:center;padding:6px 4px;font-size:14px">
+          </div>`).join('')}
+        </div>
+      </div>`;
+    }
     if (t.kind === 'scale') {
       const steps = testScale(t).steps;
       field = `<select id="res_${t.id}" style="width:120px;flex-shrink:0">
@@ -1703,6 +1777,13 @@ function openAssessmentModal(assessmentId) {
       </select>
     </div>
     ${bwField}
+    <div class="check-row" onclick="toggleCheck('assInterim')">
+      <div class="check-box ${a && a.isInterim ? 'checked' : ''}" id="assInterim" data-on="${a && a.isInterim ? '1' : '0'}">
+        ${a && a.isInterim ? CHECK_SVG : ''}
+      </div>
+      <div class="check-label">Zwischenstand</div>
+    </div>
+    <div style="font-size:11px;color:var(--text-dim);margin:2px 0 4px 32px">Für Messungen mitten im Zyklus. Die Erinnerung am Zyklusende bleibt dann bestehen.</div>
     <div class="divider"></div>
     <div class="card-title">Ergebnisse</div>
     <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">Leer lassen, was du nicht gemessen hast.</div>
@@ -1735,6 +1816,15 @@ function saveAssessment(assessmentId) {
 
   const results = [];
   appData.tests.forEach(t => {
+    if (isCounts(t)) {
+      const counts = {};
+      testScale(t).steps.forEach((s, i) => {
+        const n = parseInt(document.getElementById(`res_${t.id}_${i}`)?.value, 10);
+        if (!isNaN(n) && n > 0) counts[i] = n;
+      });
+      if (Object.keys(counts).length > 0) results.push({ testId: t.id, value: counts });
+      return;
+    }
     const raw = document.getElementById('res_' + t.id)?.value;
     const value = parseTestValue(t, raw);
     if (value === null) return;
@@ -1742,7 +1832,8 @@ function saveAssessment(assessmentId) {
   });
 
   const existing = assessmentId ? appData.assessments.find(x => x.id === assessmentId) : null;
-  const payload = { date, label, cycleId, bodyweight: isNaN(bodyweight) ? 0 : bodyweight, results };
+  const payload = { date, label, cycleId, bodyweight: isNaN(bodyweight) ? 0 : bodyweight,
+                    isInterim: isChecked('assInterim'), results };
   if (existing) {
     Object.assign(existing, payload);
   } else {
@@ -1761,6 +1852,153 @@ function deleteAssessment(assessmentId) {
   saveData();
   closeModal();
   renderAssessment();
+}
+
+// ═══════════════════════════════════════════════
+// ASSESSMENTS – VERLAUFSDIAGRAMM
+// ═══════════════════════════════════════════════
+// Liniendiagramm über die Zeit. Die X-Achse ist zeitproportional, nicht nach
+// Messung durchnummeriert: Eine Pause von drei Monaten soll auch wie eine
+// Pause aussehen.
+function renderTestChart(test, series) {
+  if (series.length < 2) return '';
+
+  const vals = series.map(p => testNumericValue(test, p.value));
+  const times = series.map(p => parseDate(p.date).getTime());
+  const tMin = times[0], tMax = times[times.length - 1];
+  const span = Math.max(1, tMax - tMin);
+
+  const w = 320, h = 170;
+  const padL = 34, padR = 12, padT = 14, padB = 26;
+  const chartW = w - padL - padR;
+  const chartH = h - padT - padB;
+
+  // Y-Bereich mit etwas Luft; bei Skalen ganzzahlig, sonst mit runden Schritten
+  const lo = Math.min(...vals), hi = Math.max(...vals);
+  let yMin, yMax, step;
+  if (test.kind === 'scale') {
+    yMin = Math.max(0, Math.floor(lo) - 1);
+    yMax = Math.ceil(hi) + 1;
+    step = Math.max(1, Math.round((yMax - yMin) / 4));
+  } else {
+    const pad = (hi - lo) * 0.15 || Math.abs(hi) * 0.1 || 1;
+    yMin = lo - pad; yMax = hi + pad;
+    if (yMin > 0 && yMin < (yMax - yMin)) yMin = 0;   // Nulllinie zeigen, wo sinnvoll
+    step = niceYStep(yMax - yMin);
+    yMin = Math.floor(yMin / step) * step;
+    yMax = Math.ceil(yMax / step) * step;
+  }
+  if (yMax === yMin) yMax = yMin + (step || 1);
+
+  const xFor = t => padL + ((t - tMin) / span) * chartW;
+  const yFor = v => padT + chartH - ((v - yMin) / (yMax - yMin)) * chartH;
+
+  const yLabel = v => test.kind === 'scale'
+    ? (testScale(test).steps[Math.round(v)] || '')
+    : test.kind === 'time' ? formatSeconds(v)
+    : fmtNum(v);
+
+  const grid = [];
+  for (let v = yMin; v <= yMax + 1e-9; v += step) {
+    const y = yFor(v);
+    grid.push(`<line x1="${padL}" y1="${y.toFixed(1)}" x2="${w - padR}" y2="${y.toFixed(1)}" stroke="var(--border)" stroke-width="0.5"/>`);
+    const lbl = yLabel(v);
+    if (lbl !== '') {
+      grid.push(`<text x="${padL - 4}" y="${(y + 3).toFixed(1)}" font-size="8.5" fill="var(--text-dim)" text-anchor="end" font-family="DM Mono, monospace">${esc(lbl)}</text>`);
+    }
+  }
+
+  const path = series.map((p, i) =>
+    `${i === 0 ? 'M' : 'L'} ${xFor(times[i]).toFixed(1)} ${yFor(vals[i]).toFixed(1)}`).join(' ');
+  const dots = series.map((p, i) =>
+    `<circle cx="${xFor(times[i]).toFixed(1)}" cy="${yFor(vals[i]).toFixed(1)}" r="3" fill="var(--accent)"/>`).join('');
+
+  // Nur erste und letzte Messung datieren – dazwischen wird es auf dem Handy zu eng
+  const dLbl = d => { const x = parseDate(d); return x.getDate() + '.' + (x.getMonth() + 1) + '.'; };
+  const xLabels = `
+    <text x="${padL}" y="${h - 8}" font-size="8.5" fill="var(--text-dim)" text-anchor="start" font-family="DM Mono, monospace">${dLbl(series[0].date)}</text>
+    <text x="${w - padR}" y="${h - 8}" font-size="8.5" fill="var(--text-dim)" text-anchor="end" font-family="DM Mono, monospace">${dLbl(series[series.length - 1].date)}</text>`;
+
+  return `
+    <div class="card">
+      <div class="card-title">Verlauf</div>
+      <svg viewBox="0 0 ${w} ${h}" style="width:100%;height:auto;display:block" preserveAspectRatio="xMidYMid meet">
+        ${grid.join('')}
+        <path d="${path}" stroke="var(--accent)" stroke-width="2" fill="none" stroke-linejoin="round" stroke-linecap="round"/>
+        ${dots}
+        ${xLabels}
+      </svg>
+    </div>`;
+}
+
+// ═══════════════════════════════════════════════
+// ASSESSMENTS – TRAINING GEGEN LEISTUNG
+// ═══════════════════════════════════════════════
+// Summiert das Intensitätsvolumen eines Zyklus für eine Kategorie. Der
+// Abgleich ignoriert Groß-/Kleinschreibung und Leerzeichen, damit "Finger"
+// und "finger" nicht als zwei Dinge auseinanderfallen.
+function getCycleCategoryTotal(cycle, category) {
+  const want = (category || '').trim().toLowerCase();
+  if (!want) return 0;
+  let total = 0;
+  for (let i = 0; i < (cycle.weeks || 12); i++) {
+    const bd = getWeekCategoryBreakdown(cycle, i);
+    Object.keys(bd).forEach(cat => {
+      if (cat.trim().toLowerCase() === want) total += bd[cat];
+    });
+  }
+  return Math.round(total * 10) / 10;
+}
+
+// Stellt je Zyklus das Trainingsvolumen der verknüpften Kategorie neben die
+// Leistungsveränderung. Zwischenstände bleiben außen vor – verglichen werden
+// Zyklusabschlüsse.
+function renderVolumeVsPerformance(test) {
+  const cat = (test.category || '').trim();
+  if (!cat) return '';
+
+  const points = appData.assessments
+    .filter(a => a.cycleId && !a.isInterim && a.results.some(r => r.testId === test.id))
+    .map(a => {
+      const cycle = appData.cycles.find(c => c.id === a.cycleId);
+      if (!cycle) return null;
+      const r = a.results.find(x => x.testId === test.id);
+      return { cycle, date: a.date, value: r.value,
+               volume: getCycleCategoryTotal(cycle, cat), bodyweight: a.bodyweight || 0 };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  if (points.length === 0) return '';
+
+  const rows = points.map((p, i) => {
+    const cmp = i > 0 ? compareMeasurements(test, points[i - 1], p) : null;
+    const color = !cmp || cmp.better === null ? 'var(--text-muted)'
+                : cmp.better ? 'var(--green-dark)' : 'var(--red)';
+    return `<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border)">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.cycle.name)}</div>
+        <div style="font-size:11px;color:var(--text-muted)">${fmtNum(p.volume)} Punkte ${esc(cat)}</div>
+      </div>
+      <div style="text-align:right;flex-shrink:0">
+        <div style="font-family:'DM Mono',monospace;font-size:13px;color:var(--accent)">${formatTestValue(test, p.value)}</div>
+        <div style="font-family:'DM Mono',monospace;font-size:11px;color:${color}">${
+          cmp ? esc(cmp.pctText || cmp.absText) : '—'}</div>
+      </div>
+    </div>`;
+  }).join('');
+
+  return `
+    <div class="divider"></div>
+    <div class="card-title">Training gegen Leistung</div>
+    <div style="font-size:11px;color:var(--text-dim);margin-bottom:6px">
+      Trainingsvolumen der Kategorie „${esc(cat)}" je Zyklus, daneben die Veränderung in diesem Test.
+    </div>
+    ${rows}
+    <div style="font-size:11px;color:var(--text-dim);margin-top:8px;line-height:1.5">
+      Das zeigt einen Zusammenhang, keine Ursache. Schlaf, Ernährung, Deload und
+      Alltagsstress hängen mit drin und tauchen hier nicht auf.
+    </div>`;
 }
 
 // ═══════════════════════════════════════════════
@@ -1811,14 +2049,18 @@ function openTestProgressModal(testId) {
         </div>
       </div>` : '';
 
-    body = summary + `<div class="card-title">Einzelne Messungen</div>` + rows;
+    body = summary + renderTestChart(t, series)
+         + `<div class="card-title">Einzelne Messungen</div>` + rows
+         + renderVolumeVsPerformance(t);
   }
 
   const cat = (t.category && t.category.trim()) ? t.category.trim() : '';
   openModal(`
     <div class="modal-title">${esc(t.name)}</div>
     <div class="text-muted" style="margin-bottom:14px">
-      ${t.kind === 'scale' ? esc(testScale(t).name) : esc(t.unit || 'Zeit')}${
+      ${isCounts(t) ? esc(testScale(t).name) + ' · Anzahl je Grad'
+        : t.kind === 'scale' ? esc(testScale(t).name)
+        : esc(t.unit || 'Zeit')}${
         cat ? ' · Kategorie ' + esc(cat) : ''}${
         t.higherIsBetter ? '' : ' · weniger ist besser'}
     </div>
