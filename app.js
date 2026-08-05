@@ -1456,8 +1456,11 @@ function renderAssessment() {
             <div class="week-row-date">${d.toLocaleDateString('de-DE')}${
               cycle ? ' · ' + esc(cycle.name) : ''}</div>
           </div>
-          <span style="font-family:'DM Mono',monospace;font-size:13px;color:var(--text-muted)">${
-            a.results.length} ${a.results.length === 1 ? 'Wert' : 'Werte'}</span>
+          <div style="display:flex;align-items:center;gap:4px;flex-shrink:0">
+            <span style="font-family:'DM Mono',monospace;font-size:13px;color:var(--text-muted)">${
+              a.results.length} ${a.results.length === 1 ? 'Wert' : 'Werte'}</span>
+            <button class="del-btn" onclick="event.stopPropagation(); deleteAssessment('${a.id}')" title="Messung löschen">×</button>
+          </div>
         </div>`;
       }).join('');
 
@@ -1483,6 +1486,7 @@ function renderAssessment() {
             </div>
           </div>
           <div class="exercise-int">${latest ? formatTestValue(t, latest.value) : '–'}</div>
+          <button class="del-btn" onclick="event.stopPropagation(); deleteTest('${t.id}')" title="Test löschen">×</button>
         </div>`;
       }).join('');
 
@@ -1847,7 +1851,8 @@ function saveAssessment(assessmentId) {
 function deleteAssessment(assessmentId) {
   const a = appData.assessments.find(x => x.id === assessmentId);
   if (!a) return;
-  if (!confirm('Messung wirklich löschen?')) return;
+  const what = a.label ? `„${a.label}"` : 'diese Messung';
+  if (!confirm(`Messung ${what} wirklich löschen?`)) return;
   appData.assessments = appData.assessments.filter(x => x.id !== assessmentId);
   saveData();
   closeModal();

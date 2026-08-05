@@ -152,6 +152,36 @@ saveAssessment(null);
 eq('leer gelassene Messung legt keinen Wert an', getTestSeries(hang.id).length, 2);
 
 // ═══════════════════════════════════════════════
+group('Loeschen');
+// ═══════════════════════════════════════════════
+const nBefore = appData.assessments.length;
+deleteAssessment(appData.assessments[nBefore - 1].id);
+eq('Messung wird entfernt', appData.assessments.length, nBefore - 1);
+deleteAssessment('gibtsnicht');
+eq('unbekannte ID richtet nichts an', appData.assessments.length, nBefore - 1);
+
+// Der Loeschknopf gehoert in die Zeile, nicht nur ans Ende des Dialogs: der
+// Dialog ist laenger als der Bildschirm, sein Knopf steht hinter "Speichern"
+// und ist damit praktisch unauffindbar.
+renderAssessment();
+const listHtml = el('assessmentContent').innerHTML;
+eq('Loeschknopf in jeder Messungszeile',
+  (listHtml.match(/deleteAssessment\(/g) || []).length, appData.assessments.length);
+eq('Loeschknopf in jeder Testzeile',
+  (listHtml.match(/deleteTest\(/g) || []).length, appData.tests.length);
+check('Loeschen oeffnet nicht zugleich den Bearbeiten-Dialog',
+  listHtml.includes('event.stopPropagation(); deleteAssessment') &&
+  listHtml.includes('event.stopPropagation(); deleteTest'));
+
+// Einen Zwischenstand loeschen muss genauso gehen wie jede andere Messung
+appData.assessments.push({ id: 'zw', date: '2026-05-15', label: 'Zwischenstand',
+                           cycleId: null, bodyweight: 0, isInterim: true, results: [] });
+const nWithInterim = appData.assessments.length;
+deleteAssessment('zw');
+eq('Zwischenstand laesst sich loeschen', appData.assessments.length, nWithInterim - 1);
+check('und ist danach wirklich weg', !appData.assessments.some(a => a.id === 'zw'));
+
+// ═══════════════════════════════════════════════
 group('Assessment – Uebergang in den naechsten Zyklus');
 // ═══════════════════════════════════════════════
 // Tests liegen bewusst auf oberster Ebene statt im Zyklus. Damit gelten sie
