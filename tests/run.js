@@ -152,6 +152,34 @@ saveAssessment(null);
 eq('leer gelassene Messung legt keinen Wert an', getTestSeries(hang.id).length, 2);
 
 // ═══════════════════════════════════════════════
+group('Assessment – Uebergang in den naechsten Zyklus');
+// ═══════════════════════════════════════════════
+// Tests liegen bewusst auf oberster Ebene statt im Zyklus. Damit gelten sie
+// automatisch auch im naechsten Zyklus, und die Messhistorie ueberlebt selbst
+// das Loeschen eines Zyklus.
+const testsBefore = appData.tests.map(t => t.id);
+const historyBefore = getTestSeries(hang.id).length;
+
+el('newCycleName').value = 'Folgezyklus';
+el('newCycleWeeks').value = '4';
+el('copyFromCycle').value = copy.id;
+createCycle();
+
+eq('Tests gelten im neuen Zyklus unveraendert weiter',
+  appData.tests.map(t => t.id), testsBefore);
+eq('Messhistorie bleibt vollstaendig', getTestSeries(hang.id).length, historyBefore);
+check('der neue Zyklus ist aktiv', getActiveCycle().name === 'Folgezyklus');
+check('eine neue Messung laesst sich dem neuen Zyklus zuordnen',
+  appData.cycles.some(c => c.id === getActiveCycle().id));
+
+// Auch das Loeschen eines Zyklus darf die Benchmark-Historie nicht anfassen
+const doomed = getActiveCycle().id;
+deleteCycle(doomed);
+eq('Messhistorie ueberlebt das Loeschen eines Zyklus',
+  getTestSeries(hang.id).length, historyBefore);
+check('Tests ueberleben das Loeschen ebenfalls', appData.tests.length === testsBefore.length);
+
+// ═══════════════════════════════════════════════
 group('Assessment – Migration');
 // ═══════════════════════════════════════════════
 delete appData.tests;
@@ -220,5 +248,97 @@ appData.assessments = [];
 const endsIn30 = new Date(today); endsIn30.setDate(endsIn30.getDate() + 30 - 4 * 7 + 1);
 cyc.startDate = toDateStr(endsIn30);
 check('schweigt, solange der Zyklus laeuft', getAssessmentReminder() === null);
+
+// Zwischenstaende duerfen die Abschluss-Erinnerung nicht abloesen
+cyc.startDate = toDateStr(endsIn3);
+appData.assessments = [{ id: 'z', date: '2026-01-01', cycleId: cyc.id, isInterim: true, results: [] }];
+check('Zwischenstand loest die Erinnerung nicht ab', getAssessmentReminder() !== null);
+appData.assessments = [{ id: 'z', date: '2026-01-01', cycleId: cyc.id, isInterim: false, results: [] }];
+check('Abschlussmessung loest sie ab', getAssessmentReminder() === null);
+
+// Ohne Tests soll die Erinnerung trotzdem kommen, aber woanders hinfuehren
+appData.assessments = [];
+const savedTests = appData.tests;
+appData.tests = [];
+const noTests = getAssessmentReminder();
+check('erinnert auch ohne angelegte Tests', noTests !== null);
+check('und weist auf das Anlegen hin', noTests && noTests.needsTests === true);
+appData.tests = savedTests;
+check('mit Tests kein Hinweis aufs Anlegen', getAssessmentReminder().needsTests === false);
+
+// ═══════════════════════════════════════════════
+group('Routenzaehlung nach Grad');
+// ═══════════════════════════════════════════════
+const tCounts = { kind: 'counts', scaleId: 'gym', higherIsBetter: true };
+// Hallenskala: Index 6 = "7", Index 7 = "8", Index 8 = "9"
+eq('Gesamtzahl der Routen', countsTotal({ 6: 12, 7: 5, 8: 1 }), 18);
+eq('leere Zaehlung ergibt null Routen', countsTotal({}), 0);
+eq('Aufschluesselung lesbar', formatTestValue(tCounts, { 6: 12, 7: 5, 8: 1 }), '12× 7 · 5× 8 · 1× 9');
+eq('Nullwerte tauchen nicht auf', formatTestValue(tCounts, { 6: 3, 7: 0 }), '3× 7');
+eq('gar nichts erfasst', formatTestValue(tCounts, {}), '–');
+eq('Aufschluesselung ist nach Grad sortiert',
+  formatTestValue(tCounts, { 8: 1, 6: 12 }), '12× 7 · 1× 9');
+
+const cCmp = compareMeasurements(tCounts, { value: { 6: 12, 7: 5 } }, { value: { 6: 14, 7: 6, 8: 1 } });
+eq('Zuwachs in Routen', cCmp.absText, '+4 Routen');
+eq('Gesamtzahlen benannt', cCmp.detail, '17 → 21 Routen gesamt');
+eq('Prozent auf der Gesamtzahl', cCmp.pctText, '+23,53 %');
+const oneRoute = compareMeasurements(tCounts, { value: { 6: 1 } }, { value: { 6: 2 } });
+eq('Einzahl bei einer Route', oneRoute.absText, '+1 Route');
+check('Rueckgang wird als solcher gewertet',
+  compareMeasurements(tCounts, { value: { 6: 5 } }, { value: { 6: 3 } }).better === false);
+
+// ═══════════════════════════════════════════════
+group('Trainingsvolumen gegen Leistung');
+// ═══════════════════════════════════════════════
+const volCycle = getDefaultCycle('Volumen-Zyklus', 2);
+volCycle.exercises = [
+  { id: 'f1', name: 'Hangboard', category: 'Finger', intensity: 3 },
+  { id: 'k1', name: 'Klettern', category: 'Basis', intensity: 2 }
+];
+const vDays = getWeekDates(volCycle, 0);
+volCycle.sessions[vDays[0]] = [{ exId: 'f1' }, { exId: 'k1' }];
+volCycle.sessions[vDays[1]] = [{ exId: 'f1' }];
+eq('Volumen einer Kategorie ueber den Zyklus', getCycleCategoryTotal(volCycle, 'Finger'), 6);
+eq('andere Kategorie getrennt gezaehlt', getCycleCategoryTotal(volCycle, 'Basis'), 2);
+eq('Schreibweise egal', getCycleCategoryTotal(volCycle, '  fInGeR '), 6);
+eq('unbekannte Kategorie ergibt null', getCycleCategoryTotal(volCycle, 'Ausdauer'), 0);
+eq('leere Kategorie ergibt null', getCycleCategoryTotal(volCycle, ''), 0);
+
+// ═══════════════════════════════════════════════
+group('Verlaufsdiagramm');
+// ═══════════════════════════════════════════════
+const chartTest = { id: 'ct', name: 'Chart', kind: 'number', unit: 'kg',
+                    higherIsBetter: true, usesBodyweight: false, category: '' };
+eq('kein Diagramm bei einem einzelnen Punkt',
+  renderTestChart(chartTest, [{ date: '2026-01-01', value: 5 }]), '');
+const chartSvg = renderTestChart(chartTest, [
+  { date: '2026-01-01', value: 5 },
+  { date: '2026-02-01', value: 8 },
+  { date: '2026-06-01', value: 9 }
+]);
+check('Diagramm enthaelt eine Linie', chartSvg.includes('<path'));
+check('Diagramm enthaelt drei Punkte', (chartSvg.match(/<circle/g) || []).length === 3);
+check('Start- und Enddatum beschriftet',
+  chartSvg.includes('1.1.') && chartSvg.includes('1.6.'), chartSvg.slice(0, 100));
+
+// X-Achse ist zeitproportional: der Punkt nach einem Monat muss deutlich
+// linker liegen als die Mitte, weil danach vier Monate Pause folgen.
+const xs = [...chartSvg.matchAll(/<circle cx="([\d.]+)"/g)].map(m => parseFloat(m[1]));
+check('X-Achse bildet echte Zeitabstaende ab',
+  xs[1] - xs[0] < (xs[2] - xs[0]) / 2, JSON.stringify(xs));
+
+// Skalentests beschriften die Y-Achse mit Graden statt mit Zahlen
+const scaleSvg = renderTestChart({ kind: 'scale', scaleId: 'font', higherIsBetter: true },
+  [{ date: '2026-01-01', value: 6 }, { date: '2026-03-01', value: 9 }]);
+check('Y-Achse zeigt bei Skalen Grade', scaleSvg.includes('6B') || scaleSvg.includes('7A'),
+  scaleSvg.slice(0, 300));
+
+// Zaehltests werden ueber ihre Gesamtzahl gezeichnet
+const countSvg = renderTestChart(tCounts, [
+  { date: '2026-01-01', value: { 6: 5 } },
+  { date: '2026-03-01', value: { 6: 8, 7: 2 } }
+]);
+check('Zaehltests lassen sich zeichnen', countSvg.includes('<path'));
 
 done();
