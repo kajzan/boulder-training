@@ -236,7 +236,8 @@ function intensityLabel(current, target) {
   const diff = current - target;
   if (diff > 1) return '↑ überschritten';
   if (Math.abs(diff) <= 1) return '✓ erreicht';
-  if (current > 0 && current >= target * 0.5) return '↗ fast erreicht';
+  // Schräg nach unten: der Wert liegt unter dem Ziel, wenn auch nur knapp.
+  if (current > 0 && current >= target * 0.5) return '↘ fast erreicht';
   return '↓ noch offen';
 }
 
@@ -579,7 +580,7 @@ function renderDashboard() {
         <div style="display:flex;align-items:center;gap:8px">
           <span style="font-family:'DM Mono',monospace;font-size:14px;color:var(--text-muted)">${wint}/${wtgt}</span>
           <span class="intensity-badge ${wc}" style="font-size:11px;padding:3px 8px">${
-            wc==='int-blue'?'↓':wc==='int-green-light'?'↗':wc==='int-green-dark'?'✓':'↑'
+            wc==='int-blue'?'↓':wc==='int-green-light'?'↘':wc==='int-green-dark'?'✓':'↑'
           }</span>
         </div>
       </div>`;
@@ -1297,7 +1298,6 @@ function migrateAssessments() {
   });
   appData.assessments.forEach(a => {
     if (!Array.isArray(a.results)) { a.results = []; changed = true; }
-    if (a.isInterim === undefined) { a.isInterim = false; changed = true; }
   });
   if (changed) saveData();
 }
@@ -1416,6 +1416,62 @@ function compareMeasurements(test, prev, curr) {
   return out;
 }
 
+// ── Trainingsvolumen in einem Zeitraum ──
+// Summiert die Intensität je Kategorie zwischen zwei Daten, über ALLE Zyklen
+// hinweg. Der Zeitraum ergibt sich aus den Messungen und darf deshalb
+// Zyklusgrenzen überschreiten – ein Assessment ist ein freier Zeitpunkt und
+// kein Anhängsel des Zyklus.
+// fromDate ist exklusiv, toDate inklusive: der Tag der letzten Messung zählt
+// zum vorigen Zeitraum und wird nicht doppelt gezählt.
+function getCategoryVolume(fromDate, toDate) {
+  const out = {};
+  appData.cycles.forEach(cycle => {
+    Object.keys(cycle.sessions || {}).forEach(day => {
+      if (fromDate && day <= fromDate) return;
+      if (toDate && day > toDate) return;
+      (cycle.sessions[day] || []).forEach(entry => {
+        const ex = (cycle.exercises || []).find(e => e.id === entryId(entry));
+        if (!ex) return;
+        const cat = (ex.category && ex.category.trim()) ? ex.category.trim() : 'Sonstige';
+        out[cat] = (out[cat] || 0) + getEffectiveIntensity(cycle, entry);
+      });
+    });
+  });
+  Object.keys(out).forEach(k => { out[k] = Math.round(out[k] * 10) / 10; });
+  return out;
+}
+
+// Volumen einer einzelnen Kategorie; ignoriert Groß-/Kleinschreibung und
+// Leerzeichen, damit "Finger" und "finger" nicht auseinanderfallen.
+function getCategoryVolumeFor(fromDate, toDate, category) {
+  const want = (category || '').trim().toLowerCase();
+  if (!want) return 0;
+  const vol = getCategoryVolume(fromDate, toDate);
+  let total = 0;
+  Object.keys(vol).forEach(cat => {
+    if (cat.trim().toLowerCase() === want) total += vol[cat];
+  });
+  return Math.round(total * 10) / 10;
+}
+
+// Die letzte Messung vor einem Datum – definiert den Beginn des Zeitraums.
+function getPreviousAssessment(dateStr, excludeId) {
+  return appData.assessments
+    .filter(a => a.id !== excludeId && a.date < dateStr)
+    .sort((a, b) => b.date.localeCompare(a.date))[0] || null;
+}
+
+// Der Zyklus, in den ein Datum fällt – dient als Startpunkt, solange es noch
+// keine frühere Messung gibt.
+function findCycleForDate(dateStr) {
+  return appData.cycles.find(c =>
+    dateStr >= c.startDate && dateStr <= getCycleEndDate(c)) || null;
+}
+
+function daysBetween(fromDate, toDate) {
+  return Math.round((parseDate(toDate) - parseDate(fromDate)) / 86400000);
+}
+
 // Alle Messpunkte eines Tests, chronologisch, inkl. Körpergewicht des Messtags.
 function getTestSeries(testId) {
   const test = getTest(testId);
@@ -1451,8 +1507,7 @@ function renderAssessment() {
         const d = parseDate(a.date);
         return `<div class="week-row" onclick="openAssessmentModal('${a.id}')">
           <div class="week-row-left">
-            <div class="week-row-name">${esc(a.label || 'Messung')}${
-              a.isInterim ? ` <span class="intensity-badge int-blue" style="font-size:10px;padding:1px 7px;vertical-align:1px">Zwischenstand</span>` : ''}</div>
+            <div class="week-row-name">${esc(a.label || 'Messung')}</div>
             <div class="week-row-date">${d.toLocaleDateString('de-DE')}${
               cycle ? ' · ' + esc(cycle.name) : ''}</div>
           </div>
@@ -1512,16 +1567,20 @@ function renderAssessment() {
 }
 
 // ── Erinnerung auf der Übersicht, sobald die letzte Zykluswoche läuft ──
-// Zwischenstände lösen die Erinnerung bewusst nicht ab: Wer mitten im Zyklus
-// misst, soll trotzdem am Ende noch einmal erinnert werden.
+// Erledigt ist sie, wenn im Zeitfenster der letzten Woche (oder danach)
+// überhaupt gemessen wurde – unabhängig davon, ob die Messung einem Zyklus
+// zugeordnet wurde. Messungen früher im Zyklus lösen sie nicht ab: Wer in
+// Woche sechs misst, soll am Ende trotzdem erinnert werden.
 function getAssessmentReminder() {
   const cycle = getActiveCycle();
   if (!cycle) return null;
   const end = getCycleEndDate(cycle);
-  const daysLeft = Math.round((parseDate(end) - parseDate(toDateStr(new Date()))) / 86400000);
+  const daysLeft = daysBetween(toDateStr(new Date()), end);
   if (daysLeft > 7) return null;
-  const closed = appData.assessments.some(a => a.cycleId === cycle.id && !a.isInterim);
-  if (closed) return null;
+  const ws = parseDate(end);
+  ws.setDate(ws.getDate() - 6);
+  const windowStart = toDateStr(ws);
+  if (appData.assessments.some(a => a.date >= windowStart)) return null;
   return { end, daysLeft, needsTests: appData.tests.length === 0 };
 }
 
@@ -1695,6 +1754,74 @@ function newId() {
 }
 
 // ═══════════════════════════════════════════════
+// ASSESSMENTS – TRAINING SEIT DER LETZTEN MESSUNG
+// ═══════════════════════════════════════════════
+// Zeigt beim Eintragen, was im Zeitraum bis zu diesem Messtag tatsächlich
+// trainiert wurde – aufgeschlüsselt nach Kategorie. Damit steht die Zahl, die
+// man gleich einträgt, direkt neben dem Training, das zu ihr geführt hat.
+function buildVolumeSince(dateStr, excludeId) {
+  if (!dateStr) return '';
+  const prev = getPreviousAssessment(dateStr, excludeId);
+  let from, quelle;
+  if (prev) {
+    from = prev.date;
+    quelle = 'seit der Messung „' + esc(prev.label || 'ohne Bezeichnung') + '"';
+  } else {
+    const cyc = findCycleForDate(dateStr);
+    if (!cyc) return `<div style="font-size:12px;color:var(--text-muted)">Erste Messung – ab hier wird gezählt.</div>`;
+    from = cyc.startDate;
+    quelle = 'seit Beginn von „' + esc(cyc.name) + '"';
+  }
+
+  const tage = daysBetween(from, dateStr);
+  if (tage <= 0) {
+    return `<div style="font-size:12px;color:var(--text-muted)">Kein Zeitraum – es gibt bereits eine Messung an diesem Tag oder danach.</div>`;
+  }
+
+  const vol = getCategoryVolume(from, dateStr);
+  const cats = Object.keys(vol).filter(c => vol[c] > 0).sort((a, b) => vol[b] - vol[a]);
+  const kopf = `<div style="font-size:11px;color:var(--text-muted);margin-bottom:8px">${
+    quelle} · ${tage} ${tage === 1 ? 'Tag' : 'Tage'} (ab ${parseDate(from).toLocaleDateString('de-DE')})</div>`;
+
+  if (cats.length === 0) {
+    return kopf + `<div style="font-size:12px;color:var(--text-muted)">In diesem Zeitraum ist kein Training eingetragen.</div>`;
+  }
+
+  const max = Math.max(...cats.map(c => vol[c]));
+  const allCats = getAllCategoriesInCycle(getActiveCycle() || { exercises: [] });
+  const gesamt = Math.round(cats.reduce((s, c) => s + vol[c], 0) * 10) / 10;
+
+  return kopf + cats.map(cat => {
+    const color = categoryColor(cat, allCats);
+    const breite = Math.max(3, Math.round(vol[cat] / max * 100));
+    return `<div style="margin-bottom:7px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:3px">
+        <span style="font-size:13px;display:flex;align-items:center;gap:6px;min-width:0">
+          <span style="color:${color};font-size:13px;line-height:1;flex-shrink:0">●</span>
+          <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(cat)}</span>
+        </span>
+        <span style="font-family:'DM Mono',monospace;font-size:13px;color:var(--accent);flex-shrink:0">${fmtNum(vol[cat])}</span>
+      </div>
+      <div class="progress-bar-wrap" style="margin-top:0;height:4px">
+        <div class="progress-bar-fill" style="width:${breite}%;background:${color}"></div>
+      </div>
+    </div>`;
+  }).join('') + `<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-muted);margin-top:8px;padding-top:6px;border-top:1px solid var(--border)">
+      <span>Gesamt</span><span style="font-family:'DM Mono',monospace">${fmtNum(gesamt)}</span>
+    </div>`;
+}
+
+// Wird beim Ändern des Datums aufgerufen – der Zeitraum verschiebt sich mit.
+function refreshVolumeSince() {
+  const box = document.getElementById('assVolume');
+  if (!box) return;
+  box.innerHTML = buildVolumeSince(
+    document.getElementById('assDate')?.value,
+    box.dataset.editing || null
+  );
+}
+
+// ═══════════════════════════════════════════════
 // ASSESSMENTS – MESSUNG ERFASSEN
 // ═══════════════════════════════════════════════
 function openAssessmentModal(assessmentId) {
@@ -1704,9 +1831,10 @@ function openAssessmentModal(assessmentId) {
   }
   const a = assessmentId ? appData.assessments.find(x => x.id === assessmentId) : null;
   const cycle = getActiveCycle();
-  // Voreinstellung ist das Zyklusende – der übliche Zeitpunkt für ein Assessment.
-  const defDate = cycle ? getCycleEndDate(cycle) : toDateStr(new Date());
-  const defLabel = cycle ? 'Nach ' + cycle.name : '';
+  // Voreinstellung ist heute. Eine Messung ist ein freier Zeitpunkt – das
+  // Zyklusende ist nur einer von vielen sinnvollen, nicht der einzige.
+  const defDate = toDateStr(new Date());
+  const defLabel = '';
 
   const bwField = anyTestUsesBodyweight() ? `
     <div class="field">
@@ -1764,14 +1892,14 @@ function openAssessmentModal(assessmentId) {
     <div class="modal-title">${a ? 'Messung bearbeiten' : 'Neue Messung'}</div>
     <div class="field">
       <label>Datum</label>
-      <input type="date" id="assDate" value="${a ? a.date : defDate}">
+      <input type="date" id="assDate" value="${a ? a.date : defDate}" onchange="refreshVolumeSince()">
     </div>
     <div class="field">
       <label>Bezeichnung</label>
-      <input type="text" id="assLabel" value="${a ? esc(a.label || '') : esc(defLabel)}" placeholder="z.B. Nach Zyklus 1">
+      <input type="text" id="assLabel" value="${a ? esc(a.label || '') : esc(defLabel)}" placeholder="z.B. Start Zyklus, Woche 8, Nach dem Urlaub">
     </div>
     <div class="field">
-      <label>Gehört zu Zyklus</label>
+      <label>Gehört zu Zyklus (optional)</label>
       <select id="assCycle">
         <option value="">– kein Bezug –</option>
         ${appData.cycles.map(c => {
@@ -1781,13 +1909,12 @@ function openAssessmentModal(assessmentId) {
       </select>
     </div>
     ${bwField}
-    <div class="check-row" onclick="toggleCheck('assInterim')">
-      <div class="check-box ${a && a.isInterim ? 'checked' : ''}" id="assInterim" data-on="${a && a.isInterim ? '1' : '0'}">
-        ${a && a.isInterim ? CHECK_SVG : ''}
-      </div>
-      <div class="check-label">Zwischenstand</div>
+
+    <div class="card" style="margin-top:4px">
+      <div class="card-title">Training seit der letzten Messung</div>
+      <div id="assVolume" data-editing="${a ? a.id : ''}">${buildVolumeSince(a ? a.date : defDate, a ? a.id : null)}</div>
     </div>
-    <div style="font-size:11px;color:var(--text-dim);margin:2px 0 4px 32px">Für Messungen mitten im Zyklus. Die Erinnerung am Zyklusende bleibt dann bestehen.</div>
+
     <div class="divider"></div>
     <div class="card-title">Ergebnisse</div>
     <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">Leer lassen, was du nicht gemessen hast.</div>
@@ -1836,8 +1963,7 @@ function saveAssessment(assessmentId) {
   });
 
   const existing = assessmentId ? appData.assessments.find(x => x.id === assessmentId) : null;
-  const payload = { date, label, cycleId, bodyweight: isNaN(bodyweight) ? 0 : bodyweight,
-                    isInterim: isChecked('assInterim'), results };
+  const payload = { date, label, cycleId, bodyweight: isNaN(bodyweight) ? 0 : bodyweight, results };
   if (existing) {
     Object.assign(existing, payload);
   } else {
@@ -1939,56 +2065,33 @@ function renderTestChart(test, series) {
 // ═══════════════════════════════════════════════
 // ASSESSMENTS – TRAINING GEGEN LEISTUNG
 // ═══════════════════════════════════════════════
-// Summiert das Intensitätsvolumen eines Zyklus für eine Kategorie. Der
-// Abgleich ignoriert Groß-/Kleinschreibung und Leerzeichen, damit "Finger"
-// und "finger" nicht als zwei Dinge auseinanderfallen.
-function getCycleCategoryTotal(cycle, category) {
-  const want = (category || '').trim().toLowerCase();
-  if (!want) return 0;
-  let total = 0;
-  for (let i = 0; i < (cycle.weeks || 12); i++) {
-    const bd = getWeekCategoryBreakdown(cycle, i);
-    Object.keys(bd).forEach(cat => {
-      if (cat.trim().toLowerCase() === want) total += bd[cat];
-    });
-  }
-  return Math.round(total * 10) / 10;
-}
-
 // Stellt je Zyklus das Trainingsvolumen der verknüpften Kategorie neben die
 // Leistungsveränderung. Zwischenstände bleiben außen vor – verglichen werden
 // Zyklusabschlüsse.
 function renderVolumeVsPerformance(test) {
   const cat = (test.category || '').trim();
   if (!cat) return '';
+  const series = getTestSeries(test.id);
+  if (series.length < 2) return '';
 
-  const points = appData.assessments
-    .filter(a => a.cycleId && !a.isInterim && a.results.some(r => r.testId === test.id))
-    .map(a => {
-      const cycle = appData.cycles.find(c => c.id === a.cycleId);
-      if (!cycle) return null;
-      const r = a.results.find(x => x.testId === test.id);
-      return { cycle, date: a.date, value: r.value,
-               volume: getCycleCategoryTotal(cycle, cat), bodyweight: a.bodyweight || 0 };
-    })
-    .filter(Boolean)
-    .sort((a, b) => a.date.localeCompare(b.date));
-
-  if (points.length === 0) return '';
-
-  const rows = points.map((p, i) => {
-    const cmp = i > 0 ? compareMeasurements(test, points[i - 1], p) : null;
+  // Je Abschnitt zwischen zwei Messungen: was wurde trainiert, was kam dabei
+  // heraus. Die Abschnitte kommen aus den Messungen selbst und dürfen
+  // Zyklusgrenzen überschreiten.
+  const rows = series.slice(1).map((p, i) => {
+    const prev = series[i];
+    const cmp = compareMeasurements(test, prev, p);
+    const vol = getCategoryVolumeFor(prev.date, p.date, cat);
+    const tage = daysBetween(prev.date, p.date);
     const color = !cmp || cmp.better === null ? 'var(--text-muted)'
                 : cmp.better ? 'var(--green-dark)' : 'var(--red)';
-    return `<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border)">
+    return `<div style="display:flex;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid var(--border)">
       <div style="flex:1;min-width:0">
-        <div style="font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.cycle.name)}</div>
-        <div style="font-size:11px;color:var(--text-muted)">${fmtNum(p.volume)} Punkte ${esc(cat)}</div>
+        <div style="font-size:13px">${parseDate(prev.date).toLocaleDateString('de-DE')} → ${parseDate(p.date).toLocaleDateString('de-DE')}</div>
+        <div style="font-size:11px;color:var(--text-muted)">${tage} ${tage === 1 ? 'Tag' : 'Tage'} · ${fmtNum(vol)} Punkte ${esc(cat)}</div>
       </div>
       <div style="text-align:right;flex-shrink:0">
         <div style="font-family:'DM Mono',monospace;font-size:13px;color:var(--accent)">${formatTestValue(test, p.value)}</div>
-        <div style="font-family:'DM Mono',monospace;font-size:11px;color:${color}">${
-          cmp ? esc(cmp.pctText || cmp.absText) : '—'}</div>
+        <div style="font-family:'DM Mono',monospace;font-size:11px;color:${color}">${esc(cmp.absText)}</div>
       </div>
     </div>`;
   }).join('');
@@ -1997,7 +2100,8 @@ function renderVolumeVsPerformance(test) {
     <div class="divider"></div>
     <div class="card-title">Training gegen Leistung</div>
     <div style="font-size:11px;color:var(--text-dim);margin-bottom:6px">
-      Trainingsvolumen der Kategorie „${esc(cat)}" je Zyklus, daneben die Veränderung in diesem Test.
+      Trainingsvolumen der Kategorie „${esc(cat)}" im jeweiligen Zeitraum zwischen zwei
+      Messungen, daneben die Veränderung in diesem Test.
     </div>
     ${rows}
     <div style="font-size:11px;color:var(--text-dim);margin-top:8px;line-height:1.5">

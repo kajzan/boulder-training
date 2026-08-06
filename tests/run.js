@@ -174,11 +174,11 @@ check('Loeschen oeffnet nicht zugleich den Bearbeiten-Dialog',
   listHtml.includes('event.stopPropagation(); deleteTest'));
 
 // Einen Zwischenstand loeschen muss genauso gehen wie jede andere Messung
-appData.assessments.push({ id: 'zw', date: '2026-05-15', label: 'Zwischenstand',
-                           cycleId: null, bodyweight: 0, isInterim: true, results: [] });
-const nWithInterim = appData.assessments.length;
+appData.assessments.push({ id: 'zw', date: '2026-05-15', label: 'Woche 6',
+                           cycleId: null, bodyweight: 0, results: [] });
+const nWithExtra = appData.assessments.length;
 deleteAssessment('zw');
-eq('Zwischenstand laesst sich loeschen', appData.assessments.length, nWithInterim - 1);
+eq('Messung mitten im Zyklus laesst sich loeschen', appData.assessments.length, nWithExtra - 1);
 check('und ist danach wirklich weg', !appData.assessments.some(a => a.id === 'zw'));
 
 // ═══════════════════════════════════════════════
@@ -271,20 +271,26 @@ cyc.startDate = toDateStr(endsIn3);
 cyc.weeks = 4;
 check('meldet sich in der letzten Woche', getAssessmentReminder() !== null);
 
-appData.assessments = [{ id: 'x', date: '2026-01-01', cycleId: cyc.id, results: [] }];
-check('schweigt, wenn schon gemessen wurde', getAssessmentReminder() === null);
-
 appData.assessments = [];
 const endsIn30 = new Date(today); endsIn30.setDate(endsIn30.getDate() + 30 - 4 * 7 + 1);
 cyc.startDate = toDateStr(endsIn30);
 check('schweigt, solange der Zyklus laeuft', getAssessmentReminder() === null);
 
-// Zwischenstaende duerfen die Abschluss-Erinnerung nicht abloesen
+// Eine fruehe Messung im Zyklus loest die Erinnerung am Ende nicht ab,
+// eine Messung im Zeitfenster der letzten Woche schon.
 cyc.startDate = toDateStr(endsIn3);
-appData.assessments = [{ id: 'z', date: '2026-01-01', cycleId: cyc.id, isInterim: true, results: [] }];
-check('Zwischenstand loest die Erinnerung nicht ab', getAssessmentReminder() !== null);
-appData.assessments = [{ id: 'z', date: '2026-01-01', cycleId: cyc.id, isInterim: false, results: [] }];
-check('Abschlussmessung loest sie ab', getAssessmentReminder() === null);
+const cycEnd = getCycleEndDate(cyc);
+const frueh = new Date(parseDate(cycEnd)); frueh.setDate(frueh.getDate() - 20);
+appData.assessments = [{ id: 'z', date: toDateStr(frueh), cycleId: cyc.id, results: [] }];
+check('fruehe Messung loest die Erinnerung nicht ab', getAssessmentReminder() !== null);
+
+const spaet = new Date(parseDate(cycEnd)); spaet.setDate(spaet.getDate() - 2);
+appData.assessments = [{ id: 'z', date: toDateStr(spaet), cycleId: cyc.id, results: [] }];
+check('Messung in der letzten Woche loest sie ab', getAssessmentReminder() === null);
+
+// Auch ohne Zyklusbezug zaehlt sie – der Zeitpunkt entscheidet, nicht die Zuordnung
+appData.assessments = [{ id: 'z', date: toDateStr(spaet), cycleId: null, results: [] }];
+check('Zuordnung zum Zyklus ist dafuer nicht noetig', getAssessmentReminder() === null);
 
 // Ohne Tests soll die Erinnerung trotzdem kommen, aber woanders hinfuehren
 appData.assessments = [];
@@ -329,11 +335,49 @@ volCycle.exercises = [
 const vDays = getWeekDates(volCycle, 0);
 volCycle.sessions[vDays[0]] = [{ exId: 'f1' }, { exId: 'k1' }];
 volCycle.sessions[vDays[1]] = [{ exId: 'f1' }];
-eq('Volumen einer Kategorie ueber den Zyklus', getCycleCategoryTotal(volCycle, 'Finger'), 6);
-eq('andere Kategorie getrennt gezaehlt', getCycleCategoryTotal(volCycle, 'Basis'), 2);
-eq('Schreibweise egal', getCycleCategoryTotal(volCycle, '  fInGeR '), 6);
-eq('unbekannte Kategorie ergibt null', getCycleCategoryTotal(volCycle, 'Ausdauer'), 0);
-eq('leere Kategorie ergibt null', getCycleCategoryTotal(volCycle, ''), 0);
+// Volumen wird ueber Zeitraeume gerechnet, nicht ueber Zyklen: eine Messung
+// ist ein freier Zeitpunkt, der Zeitraum ergibt sich aus zwei Messungen.
+appData.cycles = [volCycle];
+appData.assessments = [];
+const d0 = vDays[0], d1 = vDays[1];
+eq('Volumen je Kategorie im Zeitraum',
+  getCategoryVolume(null, d1), { Finger: 6, Basis: 2 });
+eq('Startdatum ist exklusiv – der erste Tag faellt raus',
+  getCategoryVolume(d0, d1), { Finger: 3 });
+eq('Enddatum ist inklusive', getCategoryVolume(null, d0), { Finger: 3, Basis: 2 });
+eq('Zeitraum vor jedem Training ist leer', getCategoryVolume(null, '2020-01-01'), {});
+
+eq('einzelne Kategorie', getCategoryVolumeFor(null, d1, 'Finger'), 6);
+eq('Schreibweise egal', getCategoryVolumeFor(null, d1, '  fInGeR '), 6);
+eq('unbekannte Kategorie ergibt null', getCategoryVolumeFor(null, d1, 'Ausdauer'), 0);
+eq('leere Kategorie ergibt null', getCategoryVolumeFor(null, d1, ''), 0);
+
+// Ein Zeitraum darf ueber Zyklusgrenzen laufen
+const cycA = getDefaultCycle('A', 1); cycA.startDate = '2026-01-05';
+cycA.exercises = [{ id: 'e1', name: 'Hang', category: 'Finger', intensity: 4 }];
+cycA.sessions['2026-01-06'] = [{ exId: 'e1' }];
+const cycB = getDefaultCycle('B', 1); cycB.startDate = '2026-01-12';
+cycB.exercises = [{ id: 'e2', name: 'Hang', category: 'Finger', intensity: 5 }];
+cycB.sessions['2026-01-13'] = [{ exId: 'e2' }];
+appData.cycles = [cycA, cycB];
+eq('Zeitraum zaehlt ueber Zyklusgrenzen hinweg',
+  getCategoryVolumeFor('2026-01-01', '2026-01-20', 'Finger'), 9);
+eq('und laesst sich auf einen Zyklus eingrenzen',
+  getCategoryVolumeFor('2026-01-01', '2026-01-10', 'Finger'), 4);
+
+// Die vorherige Messung bestimmt den Beginn des Zeitraums
+appData.assessments = [
+  { id: 'm1', date: '2026-01-01', label: 'Start', cycleId: null, results: [] },
+  { id: 'm2', date: '2026-02-01', label: 'Mitte', cycleId: null, results: [] },
+  { id: 'm3', date: '2026-03-01', label: 'Ende', cycleId: null, results: [] }
+];
+eq('vorherige Messung gefunden', getPreviousAssessment('2026-03-01').id, 'm2');
+eq('vor der ersten gibt es keine', getPreviousAssessment('2026-01-01'), null);
+eq('sich selbst ignoriert man dabei',
+  getPreviousAssessment('2026-02-01', 'm2').id, 'm1');
+eq('Tage zwischen zwei Messungen', daysBetween('2026-01-01', '2026-02-01'), 31);
+eq('Zyklus zu einem Datum gefunden', findCycleForDate('2026-01-06').name, 'A');
+eq('ausserhalb aller Zyklen kein Treffer', findCycleForDate('2026-06-01'), null);
 
 // ═══════════════════════════════════════════════
 group('Verlaufsdiagramm');
