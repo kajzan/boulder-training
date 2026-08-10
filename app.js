@@ -52,12 +52,15 @@ function migrateCycles() {
     while (c.weekTargets.length < c.weeks) c.weekTargets.push(0);
     if (c.weekTargets.length > c.weeks) c.weekTargets = c.weekTargets.slice(0, c.weeks);
 
-    // Ensure each exercise has a category field
+    // Migrate exercises from a single category string to a list of categories.
+    // Eine Übung wie eine Campus-Board-Session trainiert mehreres zugleich.
     (c.exercises || []).forEach(ex => {
-      if (ex.category === undefined || ex.category === null) {
-        ex.category = '';
+      if (!Array.isArray(ex.categories)) {
+        const single = (ex.category || '').trim();
+        ex.categories = single ? [single] : [];
         changed = true;
       }
+      if (ex.category !== undefined) { delete ex.category; changed = true; }
     });
 
     // Migrate sessions from ['id', 'id'] to [{exId: 'id'}, ...]
@@ -130,16 +133,64 @@ const CATEGORY_PALETTE = [
   '#ffa726', '#ab47bc', '#26c6da', '#ffca28'
 ];
 
+// ── Kategorien einer Übung ──
+// Liste der gesetzten Kategorien, bereinigt. Kann leer sein.
+function exerciseCategories(ex) {
+  if (!ex || !Array.isArray(ex.categories)) return [];
+  const seen = [];
+  ex.categories.forEach(c => {
+    const t = (c || '').trim();
+    if (t && !seen.some(x => x.toLowerCase() === t.toLowerCase())) seen.push(t);
+  });
+  return seen;
+}
+
+// Dasselbe für die Verrechnung: ohne Kategorie zählt eine Übung auf 'Sonstige'.
+function exerciseCategoryKeys(ex) {
+  const list = exerciseCategories(ex);
+  return list.length ? list : ['Sonstige'];
+}
+
+// Kategorien aus einem Textfeld lesen bzw. dorthin schreiben ("Pull, Finger").
+function parseCategories(str) {
+  const out = [];
+  (str || '').split(',').forEach(part => {
+    const t = part.trim();
+    if (t && !out.some(x => x.toLowerCase() === t.toLowerCase())) out.push(t);
+  });
+  return out;
+}
+
+function formatCategories(list) {
+  return (list || []).join(', ');
+}
+
 function getAllCategoriesInCycle(cycle) {
   const set = new Set();
   let hasUncategorized = false;
   (cycle.exercises || []).forEach(ex => {
-    if (ex.category && ex.category.trim()) set.add(ex.category.trim());
+    const cats = exerciseCategories(ex);
+    if (cats.length) cats.forEach(c => set.add(c));
     else hasUncategorized = true;
   });
   const sorted = Array.from(set).sort((a,b) => a.localeCompare(b, 'de'));
   if (hasUncategorized) sorted.push('Sonstige');
   return sorted;
+}
+
+// ── Kategorien darstellen ──
+function catLabelsHtml(cats, allCats, dotSize) {
+  const s = dotSize || 13;
+  return cats.map(cat =>
+    `<span style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap">
+      <span style="color:${categoryColor(cat, allCats)};font-size:${s}px;line-height:1">●</span>${esc(cat)}
+    </span>`).join('');
+}
+
+function catDotsHtml(cats, allCats, dotSize) {
+  const s = dotSize || 11;
+  return cats.map(cat =>
+    `<span style="color:${categoryColor(cat, allCats)};font-size:${s}px;line-height:1">●</span>`).join('');
 }
 
 function categoryColor(cat, allCats) {
@@ -159,12 +210,24 @@ function getWeekCategoryBreakdown(cycle, weekIndex) {
     entries.forEach(entry => {
       const ex = cycle.exercises.find(e => e.id === entryId(entry));
       if (!ex) return;
-      const cat = (ex.category && ex.category.trim()) ? ex.category.trim() : 'Sonstige';
-      const eff = getEffectiveIntensity(cycle, entry);
-      out[cat] = (out[cat] || 0) + eff;
+      addSplitIntensity(out, ex, getEffectiveIntensity(cycle, entry));
     });
   });
   return out;
+}
+
+// Verteilt die Intensität einer Einheit gleichmäßig auf ihre Kategorien.
+//
+// Eine Campus-Board-Session mit Intensität 3 auf "Pull" und "Finger" zählt
+// also 1,5 je Kategorie, nicht 3 auf beide. Sonst würde die Summe über alle
+// Kategorien die tatsächlich geleistete Intensität übersteigen: Das gestapelte
+// Diagramm auf der Übersicht wäre höher als der Wochenwert, gegen den es sein
+// Ziel vergleicht, und dieselbe Einheit ergäbe in Diagramm und Assessment
+// verschiedene Zahlen.
+function addSplitIntensity(target, ex, intensity) {
+  const cats = exerciseCategoryKeys(ex);
+  const share = intensity / cats.length;
+  cats.forEach(cat => { target[cat] = (target[cat] || 0) + share; });
 }
 
 // ── HTML escape (safe for text content and quoted attribute values) ──
@@ -177,24 +240,63 @@ function esc(s) {
     .replace(/'/g, '&#39;');
 }
 
-// ── Build tappable chips of existing categories ──
-function buildCategoryChips(inputId) {
+// ── Antippbare Chips vorhandener Kategorien ──
+// multi=true: jeder Chip schaltet seine Kategorie an oder aus, das Feld führt
+// eine kommagetrennte Liste. multi=false: der Chip ersetzt den Inhalt (für
+// Assessment-Tests, die genau eine Kategorie messen).
+function buildCategoryChips(inputId, multi) {
   const cycle = getActiveCycle();
   if (!cycle) return '';
   const allCats = getAllCategoriesInCycle(cycle).filter(c => c !== 'Sonstige');
   if (allCats.length === 0) return '';
-  return `<div style="font-size:11px;color:var(--text-muted);margin-top:8px;margin-bottom:4px">Vorhandene Kategorien (tippen zum Übernehmen):</div>
-  <div style="display:flex;flex-wrap:wrap;gap:6px">
-    ${allCats.map(cat => {
-      const color = categoryColor(cat, allCats);
-      return `<button type="button" data-target="${inputId}" data-cat="${esc(cat)}"
-        onclick="document.getElementById(this.dataset.target).value=this.dataset.cat"
-        style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:5px 10px;font-size:12px;color:var(--text);display:inline-flex;align-items:center;gap:5px;cursor:pointer;font-family:inherit">
-        <span style="color:${color};font-size:13px;line-height:1">●</span>
-        ${esc(cat)}
-      </button>`;
-    }).join('')}
+  const hint = multi
+    ? 'Vorhandene Kategorien (tippen zum An- und Abwählen):'
+    : 'Vorhandene Kategorien (tippen zum Übernehmen):';
+  return `<div style="font-size:11px;color:var(--text-muted);margin-top:8px;margin-bottom:4px">${hint}</div>
+  <div id="chips_${inputId}" style="display:flex;flex-wrap:wrap;gap:6px">
+    ${renderCategoryChips(inputId, multi)}
   </div>`;
+}
+
+function renderCategoryChips(inputId, multi) {
+  const cycle = getActiveCycle();
+  if (!cycle) return '';
+  const allCats = getAllCategoriesInCycle(cycle).filter(c => c !== 'Sonstige');
+  const input = document.getElementById(inputId);
+  const active = input ? parseCategories(input.value) : [];
+  return allCats.map(cat => {
+    const color = categoryColor(cat, allCats);
+    const on = active.some(c => c.toLowerCase() === cat.toLowerCase());
+    const fn = multi ? 'toggleCategoryChip' : 'setCategoryChip';
+    return `<button type="button" data-target="${inputId}" data-cat="${esc(cat)}"
+      onclick="${fn}(this.dataset.target, this.dataset.cat)"
+      style="background:${on ? 'var(--accent-dim)' : 'var(--surface)'};border:1px solid ${on ? 'var(--accent)' : 'var(--border)'};border-radius:14px;padding:5px 10px;font-size:12px;color:var(--text);display:inline-flex;align-items:center;gap:5px;cursor:pointer;font-family:inherit">
+      <span style="color:${color};font-size:13px;line-height:1">●</span>
+      ${esc(cat)}
+    </button>`;
+  }).join('');
+}
+
+function toggleCategoryChip(inputId, cat) {
+  const input = document.getElementById(inputId);
+  if (!input) return;
+  const list = parseCategories(input.value);
+  const idx = list.findIndex(c => c.toLowerCase() === cat.toLowerCase());
+  if (idx >= 0) list.splice(idx, 1); else list.push(cat);
+  input.value = formatCategories(list);
+  refreshCategoryChips(inputId, true);
+}
+
+function setCategoryChip(inputId, cat) {
+  const input = document.getElementById(inputId);
+  if (!input) return;
+  input.value = cat;
+  refreshCategoryChips(inputId, false);
+}
+
+function refreshCategoryChips(inputId, multi) {
+  const box = document.getElementById('chips_' + inputId);
+  if (box) box.innerHTML = renderCategoryChips(inputId, multi);
 }
 
 function getWeekDates(cycle, weekIndex) {
@@ -625,8 +727,7 @@ function buildDayModalContent(dateStr, returnToWeek) {
         const entry = entries.find(e => entryId(e) === ex.id);
         const ov = entry ? entryOverride(entry) : null;
         const inputVal = ov !== null ? ov : ex.intensity;
-        const cat = (ex.category && ex.category.trim()) ? ex.category.trim() : '';
-        const catColor = cat ? categoryColor(cat, allCats) : '';
+        const cats = exerciseCategories(ex);
 
         return `<div class="check-row" style="display:flex;align-items:center;gap:8px;padding:6px 0">
           <div onclick="toggleDayEx('${dateStr}','${ex.id}', ${returnToWeek !== undefined && returnToWeek !== null ? returnToWeek : 'null'})"
@@ -636,8 +737,8 @@ function buildDayModalContent(dateStr, returnToWeek) {
             </div>
             <div style="flex:1;min-width:0">
               <div class="check-label" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(ex.name)}</div>
-              <div style="font-size:11px;color:var(--text-muted);font-family:'DM Mono',monospace;display:flex;align-items:center;gap:5px">
-                ${cat ? `<span style="color:${catColor};font-size:13px;line-height:1">●</span><span style="font-family:'DM Sans',sans-serif">${esc(cat)}</span><span style="color:var(--text-dim)">·</span>` : ''}
+              <div style="font-size:11px;color:var(--text-muted);font-family:'DM Mono',monospace;display:flex;align-items:center;gap:5px;flex-wrap:wrap">
+                ${cats.length ? `<span style="font-family:'DM Sans',sans-serif;display:inline-flex;gap:5px">${catLabelsHtml(cats, allCats, 13)}</span><span style="color:var(--text-dim)">·</span>` : ''}
                 <span>Std: ${ex.intensity}</span>
                 ${ov !== null ? `<span style="color:var(--accent)">→ ${ov}</span>` : ''}
               </div>
@@ -751,11 +852,10 @@ function openWeekModal(weekIdx) {
               if (!ex) return '';
               const eff = getEffectiveIntensity(cycle, entry);
               const ov = entryOverride(entry);
-              const cat = (ex.category && ex.category.trim()) ? ex.category.trim() : '';
-              const catColor = cat ? categoryColor(cat, allCats) : '';
+              const cats = exerciseCategories(ex);
               return `<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12px">
                 <span style="display:flex;align-items:center;gap:5px">
-                  ${cat ? `<span style="color:${catColor};font-size:11px;line-height:1">●</span>` : ''}
+                  ${catDotsHtml(cats, allCats, 11)}
                   <span>${esc(ex.name)}</span>
                 </span>
                 <span style="font-family:'DM Mono',monospace;color:var(--text-muted)">
@@ -794,14 +894,13 @@ function renderPlan() {
       : (() => {
           const allCats = getAllCategoriesInCycle(cycle);
           return cycle.exercises.map(ex => {
-            const cat = (ex.category && ex.category.trim()) ? ex.category.trim() : '';
-            const catColor = cat ? categoryColor(cat, allCats) : '#888';
+            const cats = exerciseCategories(ex);
             return `
             <div class="exercise-item" onclick="openEditExerciseModal('${ex.id}')" style="cursor:pointer">
               <div style="flex:1;min-width:0">
                 <div class="exercise-name">${esc(ex.name)}</div>
-                <div style="font-size:11px;color:var(--text-muted);margin-top:2px;display:flex;align-items:center;gap:5px">
-                  ${cat ? `<span style="color:${catColor};font-size:14px;line-height:1">●</span><span>${esc(cat)}</span><span style="color:var(--text-dim)">·</span>` : ''}
+                <div style="font-size:11px;color:var(--text-muted);margin-top:2px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                  ${cats.length ? catLabelsHtml(cats, allCats, 14) + `<span style="color:var(--text-dim)">·</span>` : ''}
                   <span>Tippen zum Bearbeiten</span>
                 </div>
               </div>
@@ -845,10 +944,12 @@ function openAddExerciseModal() {
       <input type="text" id="newExName" placeholder="z.B. Kilterboard Session">
     </div>
     <div class="field">
-      <label>Kategorie (optional)</label>
-      <input type="text" id="newExCat" placeholder="z.B. Krafttraining, Klettern, Fingertraining" list="catList">
+      <label>Kategorien (optional, mehrere möglich)</label>
+      <input type="text" id="newExCat" placeholder="z.B. Pull, Finger" list="catList"
+        oninput="refreshCategoryChips('newExCat', true)">
       ${datalist}
-      ${buildCategoryChips('newExCat')}
+      ${buildCategoryChips('newExCat', true)}
+      <div style="font-size:11px;color:var(--text-dim);margin-top:6px">Mehrere durch Komma trennen. Die Intensität wird gleichmäßig auf sie aufgeteilt.</div>
     </div>
     <div class="field">
       <label>Intensitätswert</label>
@@ -865,14 +966,14 @@ function openAddExerciseModal() {
 
 function addExercise() {
   const name = document.getElementById('newExName')?.value?.trim();
-  const category = document.getElementById('newExCat')?.value?.trim() || '';
+  const categories = parseCategories(document.getElementById('newExCat')?.value);
   const intensity = parseFloat(document.getElementById('newExInt')?.value);
   if (!name || isNaN(intensity) || intensity < 0) {
     alert('Bitte Name und gültigen Intensitätswert eingeben.');
     return;
   }
   const cycle = getActiveCycle();
-  cycle.exercises.push({ id: Date.now().toString(), name, category, intensity });
+  cycle.exercises.push({ id: Date.now().toString(), name, categories, intensity });
   saveData();
   closeModal();
   renderPlan();
@@ -893,10 +994,12 @@ function openEditExerciseModal(exId) {
       <input type="text" id="editExName" value="${esc(ex.name)}">
     </div>
     <div class="field">
-      <label>Kategorie (optional)</label>
-      <input type="text" id="editExCat" value="${esc(ex.category || '')}" placeholder="z.B. Krafttraining" list="catListEdit">
+      <label>Kategorien (optional, mehrere möglich)</label>
+      <input type="text" id="editExCat" value="${esc(formatCategories(exerciseCategories(ex)))}" placeholder="z.B. Pull, Finger" list="catListEdit"
+        oninput="refreshCategoryChips('editExCat', true)">
       ${datalist}
-      ${buildCategoryChips('editExCat')}
+      ${buildCategoryChips('editExCat', true)}
+      <div style="font-size:11px;color:var(--text-dim);margin-top:6px">Mehrere durch Komma trennen. Die Intensität wird gleichmäßig auf sie aufgeteilt.</div>
     </div>
     <div class="field">
       <label>Intensitätswert</label>
@@ -913,7 +1016,7 @@ function openEditExerciseModal(exId) {
 
 function saveExerciseEdit(exId) {
   const name = document.getElementById('editExName')?.value?.trim();
-  const category = document.getElementById('editExCat')?.value?.trim() || '';
+  const categories = parseCategories(document.getElementById('editExCat')?.value);
   const intensity = parseFloat(document.getElementById('editExInt')?.value);
   if (!name || isNaN(intensity) || intensity < 0) {
     alert('Bitte Name und gültigen Intensitätswert eingeben.');
@@ -923,7 +1026,7 @@ function saveExerciseEdit(exId) {
   const ex = cycle.exercises.find(e => e.id === exId);
   if (!ex) return;
   ex.name = name;
-  ex.category = category;
+  ex.categories = categories;
   ex.intensity = intensity;
   saveData();
   closeModal();
@@ -1027,12 +1130,11 @@ function openCycleDetail(cycleId) {
     ${(() => {
       const allCats = getAllCategoriesInCycle(cycle);
       return cycle.exercises.map(ex => {
-        const cat = (ex.category && ex.category.trim()) ? ex.category.trim() : '';
-        const catColor = cat ? categoryColor(cat, allCats) : '';
+        const cats = exerciseCategories(ex);
         return `<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">
-          <span style="display:flex;align-items:center;gap:6px;font-size:14px">
-            ${cat ? `<span style="color:${catColor};font-size:12px;line-height:1">●</span>` : ''}
-            <span>${esc(ex.name)}${cat ? ` <span style="color:var(--text-dim);font-size:11px">· ${esc(cat)}</span>` : ''}</span>
+          <span style="display:flex;align-items:center;gap:6px;font-size:14px;min-width:0;flex-wrap:wrap">
+            ${catDotsHtml(cats, allCats, 12)}
+            <span>${esc(ex.name)}${cats.length ? ` <span style="color:var(--text-dim);font-size:11px">· ${esc(cats.join(', '))}</span>` : ''}</span>
           </span>
           <span style="font-family:'DM Mono',monospace;font-size:13px;color:var(--accent)">×${ex.intensity}</span>
         </div>`;
@@ -1158,7 +1260,7 @@ function createCycle() {
       cycle.exercises = src.exercises.map(ex => ({
         id: Date.now().toString() + Math.random().toString(36).slice(2,7),
         name: ex.name,
-        category: ex.category || '',
+        categories: exerciseCategories(ex),   // eigene Kopie, nicht dieselbe Liste
         intensity: ex.intensity
       }));
       // Copy week targets, truncating or padding as needed
@@ -1432,8 +1534,7 @@ function getCategoryVolume(fromDate, toDate) {
       (cycle.sessions[day] || []).forEach(entry => {
         const ex = (cycle.exercises || []).find(e => e.id === entryId(entry));
         if (!ex) return;
-        const cat = (ex.category && ex.category.trim()) ? ex.category.trim() : 'Sonstige';
-        out[cat] = (out[cat] || 0) + getEffectiveIntensity(cycle, entry);
+        addSplitIntensity(out, ex, getEffectiveIntensity(cycle, entry));
       });
     });
   });
