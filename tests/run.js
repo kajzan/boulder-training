@@ -19,8 +19,8 @@ el('copyFromCycle').value = '';
 createCycle();
 
 const src = getActiveCycle();
-src.exercises.push({ id: 'a', name: 'Kilterboard', category: 'Klettern', intensity: 3 });
-src.exercises.push({ id: 'b', name: 'Hangboard', category: 'Finger', intensity: 2 });
+src.exercises.push({ id: 'a', name: 'Kilterboard', categories: ['Klettern'], intensity: 3 });
+src.exercises.push({ id: 'b', name: 'Hangboard', categories: ['Finger'], intensity: 2 });
 src.weekTargets = [9, 10, 11, 8];
 saveData();
 
@@ -29,7 +29,7 @@ el('copyFromCycle').value = src.id;
 createCycle();
 const copy = getActiveCycle();
 
-eq('Kategorien werden mitkopiert', copy.exercises.map(e => e.category), ['Klettern', 'Finger']);
+eq('Kategorien werden mitkopiert', copy.exercises.map(e => e.categories), [['Klettern'], ['Finger']]);
 eq('Wochenziele werden mitkopiert', copy.weekTargets, [9, 10, 11, 8]);
 check('Uebungen bekommen neue IDs', copy.exercises.every(e => !['a', 'b'].includes(e.id)));
 
@@ -235,7 +235,7 @@ appData.assessments = [{ id: 'a1', date: '2026-05-01', label: NASTY, cycleId: co
                          bodyweight: 70, results: [{ testId: 't1', value: 5 }] }];
 const cyc = getActiveCycle();
 cyc.name = NASTY;
-cyc.exercises = [{ id: 'x1', name: NASTY, category: NASTY, intensity: 2 }];
+cyc.exercises = [{ id: 'x1', name: NASTY, categories: [NASTY], intensity: 2 }];
 cyc.sessions[getWeekDates(cyc, 0)[0]] = [{ exId: 'x1' }];
 saveData();
 
@@ -329,8 +329,8 @@ group('Trainingsvolumen gegen Leistung');
 // ═══════════════════════════════════════════════
 const volCycle = getDefaultCycle('Volumen-Zyklus', 2);
 volCycle.exercises = [
-  { id: 'f1', name: 'Hangboard', category: 'Finger', intensity: 3 },
-  { id: 'k1', name: 'Klettern', category: 'Basis', intensity: 2 }
+  { id: 'f1', name: 'Hangboard', categories: ['Finger'], intensity: 3 },
+  { id: 'k1', name: 'Klettern', categories: ['Basis'], intensity: 2 }
 ];
 const vDays = getWeekDates(volCycle, 0);
 volCycle.sessions[vDays[0]] = [{ exId: 'f1' }, { exId: 'k1' }];
@@ -354,10 +354,10 @@ eq('leere Kategorie ergibt null', getCategoryVolumeFor(null, d1, ''), 0);
 
 // Ein Zeitraum darf ueber Zyklusgrenzen laufen
 const cycA = getDefaultCycle('A', 1); cycA.startDate = '2026-01-05';
-cycA.exercises = [{ id: 'e1', name: 'Hang', category: 'Finger', intensity: 4 }];
+cycA.exercises = [{ id: 'e1', name: 'Hang', categories: ['Finger'], intensity: 4 }];
 cycA.sessions['2026-01-06'] = [{ exId: 'e1' }];
 const cycB = getDefaultCycle('B', 1); cycB.startDate = '2026-01-12';
-cycB.exercises = [{ id: 'e2', name: 'Hang', category: 'Finger', intensity: 5 }];
+cycB.exercises = [{ id: 'e2', name: 'Hang', categories: ['Finger'], intensity: 5 }];
 cycB.sessions['2026-01-13'] = [{ exId: 'e2' }];
 appData.cycles = [cycA, cycB];
 eq('Zeitraum zaehlt ueber Zyklusgrenzen hinweg',
@@ -414,5 +414,95 @@ const countSvg = renderTestChart(tCounts, [
   { date: '2026-03-01', value: { 6: 8, 7: 2 } }
 ]);
 check('Zaehltests lassen sich zeichnen', countSvg.includes('<path'));
+
+// ═══════════════════════════════════════════════
+group('Mehrere Kategorien pro Uebung');
+// ═══════════════════════════════════════════════
+// Migration: der alte Einzelwert wird zur Liste
+const oldCycle = getDefaultCycle('Alt', 2);
+oldCycle.id = 'cyc-alt';
+oldCycle.exercises = [
+  { id: 'o1', name: 'Hangboard', category: 'Finger', intensity: 3 },
+  { id: 'o2', name: 'Ohne Kategorie', category: '', intensity: 1 }
+];
+appData.cycles = [oldCycle];
+appData.activeCycleId = oldCycle.id;
+migrateCycles();
+eq('Einzelkategorie wird zur Liste', oldCycle.exercises[0].categories, ['Finger']);
+eq('leere Kategorie wird zur leeren Liste', oldCycle.exercises[1].categories, []);
+check('das alte Feld ist danach weg', oldCycle.exercises.every(e => e.category === undefined));
+
+// Textfeld lesen und schreiben
+eq('Komma trennt', parseCategories('Pull, Finger'), ['Pull', 'Finger']);
+eq('Leerraum wird getrimmt', parseCategories('  Pull ,  Finger  '), ['Pull', 'Finger']);
+eq('leere Teile fallen weg', parseCategories('Pull,,Finger,'), ['Pull', 'Finger']);
+eq('Duplikate fallen weg, Schreibweise egal', parseCategories('Pull, pull'), ['Pull']);
+eq('leerer Text ergibt leere Liste', parseCategories('   '), []);
+eq('und wieder zurueck in Text', formatCategories(['Pull', 'Finger']), 'Pull, Finger');
+
+eq('doppelte Kategorien werden zusammengefasst',
+  exerciseCategories({ categories: ['Pull', ' pull ', 'Finger'] }), ['Pull', 'Finger']);
+eq('ohne Liste bleibt es leer', exerciseCategories({}), []);
+eq('fuer die Verrechnung faellt Leeres auf Sonstige',
+  exerciseCategoryKeys({ categories: [] }), ['Sonstige']);
+
+// Aufteilung der Intensitaet
+const multiCycle = getDefaultCycle('Multi', 2);
+multiCycle.id = 'cyc-multi';
+multiCycle.exercises = [
+  { id: 'c1', name: 'Campus Board', categories: ['Pull', 'Finger'], intensity: 3 },
+  { id: 'c2', name: 'Hangboard', categories: ['Finger'], intensity: 2 },
+  { id: 'c3', name: 'Dehnen', categories: [], intensity: 1 }
+];
+const md = getWeekDates(multiCycle, 0);
+multiCycle.sessions[md[0]] = [{ exId: 'c1' }, { exId: 'c2' }, { exId: 'c3' }];
+appData.cycles = [multiCycle];
+appData.activeCycleId = multiCycle.id;
+
+const bd = getWeekCategoryBreakdown(multiCycle, 0);
+eq('Campus Board zaehlt haelftig auf Pull', bd.Pull, 1.5);
+eq('haelftig auf Finger, dazu das ganze Hangboard', bd.Finger, 3.5);
+eq('ohne Kategorie zaehlt es auf Sonstige', bd.Sonstige, 1);
+
+// Die entscheidende Bedingung: die Aufteilung darf die Wochenintensitaet nicht
+// aufblaehen, sonst waere das gestapelte Diagramm hoeher als der Wert, gegen
+// den es sein Ziel vergleicht.
+const summe = Object.keys(bd).reduce((s, k) => s + bd[k], 0);
+eq('Aufteilung summiert sich genau auf die Wochenintensitaet',
+  summe, getWeekIntensity(multiCycle, 0));
+
+eq('alle Kategorien erfasst, Sonstige zuletzt',
+  getAllCategoriesInCycle(multiCycle), ['Finger', 'Pull', 'Sonstige']);
+
+// Auch das Volumen fuer die Assessments teilt auf
+eq('Volumen teilt ebenso auf', getCategoryVolumeFor(null, md[0], 'Pull'), 1.5);
+eq('und summiert dieselbe Kategorie ueber mehrere Uebungen',
+  getCategoryVolumeFor(null, md[0], 'Finger'), 3.5);
+
+// Ein Override wirkt auf beide Kategorien gleichermassen
+multiCycle.sessions[md[0]][0].overrideInt = 5;
+const bd2 = getWeekCategoryBreakdown(multiCycle, 0);
+eq('Override wird ebenfalls aufgeteilt', bd2.Pull, 2.5);
+multiCycle.sessions[md[0]][0].overrideInt = undefined;
+
+// Kopieren muss die ganze Liste mitnehmen, und zwar als eigene Kopie
+el('newCycleName').value = 'Multi-Kopie';
+el('newCycleWeeks').value = '2';
+el('copyFromCycle').value = multiCycle.id;
+createCycle();
+const mCopy = getActiveCycle();
+eq('beide Kategorien mitkopiert', mCopy.exercises[0].categories, ['Pull', 'Finger']);
+mCopy.exercises[0].categories.push('Extra');
+eq('die Kopie teilt sich die Liste nicht mit dem Original',
+  multiCycle.exercises[0].categories, ['Pull', 'Finger']);
+
+// Darstellung
+appData.activeCycleId = multiCycle.id;
+renderPlan();
+const planHtml = el('planContent').innerHTML;
+check('beide Kategorien stehen in der Uebungsliste',
+  planHtml.includes('Pull') && planHtml.includes('Finger'));
+check('jede Kategorie bekommt einen eigenen Punkt',
+  (planHtml.match(/●/g) || []).length >= 3, 'Punkte: ' + (planHtml.match(/●/g) || []).length);
 
 done();
