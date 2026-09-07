@@ -202,6 +202,23 @@ label { font-size: 12px; color: var(--text-muted); display: block; margin-bottom
 }
 .del-btn:active { color: var(--red); }
 
+/* ── ANFASSER ZUM SORTIEREN ── */
+.drag-handle {
+  width: 26px; height: 34px; margin-left: -4px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-dim); flex-shrink: 0;
+  cursor: grab;
+  /* Ohne das scrollt iOS beim Ziehen die Seite statt die Zeile zu bewegen */
+  touch-action: none;
+  user-select: none; -webkit-user-select: none;
+}
+.drag-handle:active { cursor: grabbing; color: var(--accent); }
+.exercise-item.dragging {
+  position: relative; z-index: 10;
+  border-color: var(--accent);
+  box-shadow: 0 8px 20px rgba(0,0,0,0.5);
+}
+
 /* ── PROGRESS BAR ── */
 .progress-bar-wrap {
   height: 6px; background: var(--surface2); border-radius: 3px; overflow: hidden;

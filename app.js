@@ -893,10 +893,13 @@ function renderPlan() {
       ? `<div class="empty"><div class="empty-icon">💪</div><div>Noch keine Übungen.<br>Füge deine erste Übung hinzu!</div></div>`
       : (() => {
           const allCats = getAllCategoriesInCycle(cycle);
-          return cycle.exercises.map(ex => {
+          return `<div id="exerciseList">` + cycle.exercises.map(ex => {
             const cats = exerciseCategories(ex);
             return `
-            <div class="exercise-item" onclick="openEditExerciseModal('${ex.id}')" style="cursor:pointer">
+            <div class="exercise-item" data-exid="${ex.id}" onclick="openEditExerciseModal('${ex.id}')" style="cursor:pointer">
+              <div class="drag-handle" onpointerdown="startExerciseDrag(event, this)" onclick="event.stopPropagation()" title="Ziehen zum Sortieren">
+                <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 4h12M2 8h12M2 12h12"/></svg>
+              </div>
               <div style="flex:1;min-width:0">
                 <div class="exercise-name">${esc(ex.name)}</div>
                 <div style="font-size:11px;color:var(--text-muted);margin-top:2px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
@@ -907,9 +910,12 @@ function renderPlan() {
               <div class="exercise-int">×${ex.intensity}</div>
               <button class="del-btn" onclick="event.stopPropagation(); deleteExercise('${ex.id}')">×</button>
             </div>
-          `}).join('');
+          `}).join('') + `</div>`;
         })()
     }
+    ${cycle.exercises.length > 1
+      ? `<div style="font-size:11px;color:var(--text-dim);text-align:center;margin-top:2px;margin-bottom:8px">Am Anfasser links ziehen, um die Reihenfolge zu ändern.</div>`
+      : ''}
 
     <div class="divider"></div>
     <div class="section-hdr"><h2>Wochenziele</h2></div>
@@ -1043,6 +1049,130 @@ function deleteExercise(exId) {
   });
   saveData();
   renderPlan();
+}
+
+// ═══════════════════════════════════════════════
+// ÜBUNGEN SORTIEREN (ZIEHEN)
+// ═══════════════════════════════════════════════
+// Pointer-Events statt der HTML5-Drag-API: Letztere reagiert auf iOS nicht auf
+// Berührungen, und die App wird vor allem am Handy benutzt. Gezogen wird nur
+// am Anfasser, damit Tippen (Bearbeiten) und Wischen (Scrollen) unberührt
+// bleiben; dafür braucht der Anfasser touch-action:none.
+let exerciseDrag = null;
+
+function startExerciseDrag(e, handle) {
+  const el = handle.closest('[data-exid]');
+  const parent = el && el.parentElement;
+  if (!el || !parent) return;
+  e.preventDefault();
+  e.stopPropagation();
+  exerciseDrag = { el, parent, pointerId: e.pointerId, startY: e.clientY, moved: false };
+  el.classList.add('dragging');
+  // Bewusst am Fenster und nicht am Anfasser: Beim Umhängen der Zeile wandert
+  // der Anfasser mit aus dem Dokument, wodurch er die Zeigerführung verliert
+  // und die folgenden Ereignisse verpassen würde. Am Fenster kommen sie in
+  // jedem Fall an, ob mit Maus oder Finger.
+  window.addEventListener('pointermove', onExerciseDragMove);
+  window.addEventListener('pointerup', endExerciseDrag);
+  window.addEventListener('pointercancel', endExerciseDrag);
+}
+
+function onExerciseDragMove(e) {
+  const s = exerciseDrag;
+  if (!s || e.pointerId !== s.pointerId) return;
+  e.preventDefault();
+  s.moved = true;
+  applyDragOffset(e.clientY);
+  // Bei schnellem Ziehen können mehrere Positionen auf einmal fällig sein.
+  let guard = 0;
+  while (guard++ < 30 && stepDragOrder(e.clientY)) { /* weiter */ }
+}
+
+function applyDragOffset(clientY) {
+  exerciseDrag.el.style.transform = `translateY(${clientY - exerciseDrag.startY}px)`;
+}
+
+// Tauscht mit dem Nachbarn, sobald die Mitte der gezogenen Zeile dessen Mitte
+// erreicht hat. Gibt true zurück, wenn getauscht wurde.
+//
+// Der Vergleich ist bewusst nicht streng: Zieht man um genau eine Zeilenhöhe,
+// liegen beide Mitten nach dem Ausgleich exakt aufeinander, und mit ">" bliebe
+// die Zeile eine Position zurück. Zum Hin- und Herspringen führt das nicht,
+// weil der Ausgleich die Zeile bei jedem Tausch über den Gleichstand
+// hinausträgt.
+function stepDragOrder(clientY) {
+  const { el, parent } = exerciseDrag;
+  const rect = el.getBoundingClientRect();
+  const center = rect.top + rect.height / 2;
+
+  const next = el.nextElementSibling;
+  if (next && next.dataset.exid) {
+    const r = next.getBoundingClientRect();
+    if (center >= r.top + r.height / 2) {
+      return moveDragged(() => parent.insertBefore(next, el), clientY);
+    }
+  }
+  const prev = el.previousElementSibling;
+  if (prev && prev.dataset.exid) {
+    const r = prev.getBoundingClientRect();
+    if (center <= r.top + r.height / 2) {
+      return moveDragged(() => parent.insertBefore(el, prev), clientY);
+    }
+  }
+  return false;
+}
+
+// Durch das Umhängen wandert die Zeile im Layout. Damit sie optisch unter dem
+// Finger stehen bleibt, wird der Startpunkt um genau diese Strecke mitgezogen.
+// offsetTop ist dafür der richtige Messwert, weil transform das Layout nicht
+// verändert.
+function moveDragged(fn, clientY) {
+  const before = exerciseDrag.el.offsetTop;
+  fn();
+  exerciseDrag.startY += exerciseDrag.el.offsetTop - before;
+  applyDragOffset(clientY);
+  return true;
+}
+
+function endExerciseDrag(e) {
+  const s = exerciseDrag;
+  if (!s || (e && e.pointerId !== s.pointerId)) return;
+  window.removeEventListener('pointermove', onExerciseDragMove);
+  window.removeEventListener('pointerup', endExerciseDrag);
+  window.removeEventListener('pointercancel', endExerciseDrag);
+  s.el.style.transform = '';
+  s.el.classList.remove('dragging');
+  exerciseDrag = null;
+  if (!s.moved) return;   // reines Antippen des Anfassers ändert nichts
+  // Nach einem Zug folgt noch ein Klick. Ohne diese Sperre würde er die Zeile
+  // zum Bearbeiten öffnen. Der Zeitgeber räumt sie auch dann weg, wenn gar
+  // kein Klick mehr kommt – etwa bei Bedienung per Finger.
+  window.addEventListener('click', swallowDragClick, true);
+  setTimeout(() => window.removeEventListener('click', swallowDragClick, true), 350);
+  const ids = Array.from(s.parent.children).map(c => c.dataset.exid).filter(Boolean);
+  reorderExercises(ids);
+  renderPlan();
+}
+
+function swallowDragClick(e) {
+  e.stopPropagation();
+  e.preventDefault();
+  window.removeEventListener('click', swallowDragClick, true);
+}
+
+// Bringt cycle.exercises in die Reihenfolge der übergebenen IDs. Übungen, die
+// nicht in der Liste vorkommen, bleiben erhalten und wandern ans Ende.
+function reorderExercises(ids) {
+  const cycle = getActiveCycle();
+  if (!cycle) return;
+  const byId = new Map(cycle.exercises.map(ex => [ex.id, ex]));
+  const sorted = [];
+  ids.forEach(id => {
+    if (byId.has(id)) { sorted.push(byId.get(id)); byId.delete(id); }
+  });
+  byId.forEach(ex => sorted.push(ex));
+  cycle.exercises = sorted;
+  saveData();
 }
 
 function updateWeekTarget(weekIdx, val) {

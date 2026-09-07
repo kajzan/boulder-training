@@ -4,7 +4,7 @@
  * app.js die VERSION unten hochzählen. Sonst behalten bereits installierte
  * Geräte unter Umständen den alten Stand.
  */
-const VERSION = 'v5';
+const VERSION = 'v6';
 const CACHE = 'boulder-' + VERSION;
 
 /* Alles, was die App zum Starten braucht. Wird bei der Installation

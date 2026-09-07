@@ -505,4 +505,54 @@ check('beide Kategorien stehen in der Uebungsliste',
 check('jede Kategorie bekommt einen eigenen Punkt',
   (planHtml.match(/●/g) || []).length >= 3, 'Punkte: ' + (planHtml.match(/●/g) || []).length);
 
+// ═══════════════════════════════════════════════
+group('Uebungen sortieren');
+// ═══════════════════════════════════════════════
+const sortCycle = getDefaultCycle('Sortieren', 2);
+sortCycle.id = 'cyc-sort';
+sortCycle.exercises = [
+  { id: 's1', name: 'Erste', categories: [], intensity: 1 },
+  { id: 's2', name: 'Zweite', categories: [], intensity: 2 },
+  { id: 's3', name: 'Dritte', categories: [], intensity: 3 }
+];
+appData.cycles = [sortCycle];
+appData.activeCycleId = sortCycle.id;
+
+reorderExercises(['s3', 's1', 's2']);
+eq('Reihenfolge folgt den uebergebenen IDs',
+  sortCycle.exercises.map(e => e.id), ['s3', 's1', 's2']);
+check('die Uebungen selbst bleiben unveraendert',
+  sortCycle.exercises.find(e => e.id === 's3').name === 'Dritte');
+
+// Fehlt eine ID, darf die Uebung nicht verschwinden
+reorderExercises(['s2', 's1']);
+eq('nicht genannte Uebungen wandern ans Ende und bleiben erhalten',
+  sortCycle.exercises.map(e => e.id), ['s2', 's1', 's3']);
+
+// Unbekannte IDs werden ignoriert
+reorderExercises(['gibtsnicht', 's1', 's2', 's3']);
+eq('unbekannte IDs werden uebergangen',
+  sortCycle.exercises.map(e => e.id), ['s1', 's2', 's3']);
+eq('und die Anzahl bleibt gleich', sortCycle.exercises.length, 3);
+
+// Leere Liste laesst alles stehen
+reorderExercises([]);
+eq('leere Liste aendert nichts', sortCycle.exercises.map(e => e.id), ['s1', 's2', 's3']);
+
+// Die Reihenfolge muss gespeichert sein, nicht nur im Arbeitsspeicher stehen
+reorderExercises(['s3', 's2', 's1']);
+const gespeichert = JSON.parse(localStorage.getItem('boulderApp_v2'));
+eq('die neue Reihenfolge wird gespeichert',
+  gespeichert.cycles.find(c => c.id === 'cyc-sort').exercises.map(e => e.id),
+  ['s3', 's2', 's1']);
+
+// Darstellung: eigener Container und ein Anfasser je Zeile
+renderPlan();
+const sortHtml = el('planContent').innerHTML;
+check('Uebungen liegen in einem eigenen Container', sortHtml.includes('id="exerciseList"'));
+eq('ein Anfasser je Uebung', (sortHtml.match(/class="drag-handle"/g) || []).length, 3);
+eq('jede Zeile traegt ihre ID', (sortHtml.match(/data-exid=/g) || []).length, 3);
+check('der Anfasser oeffnet nicht den Bearbeiten-Dialog',
+  sortHtml.includes('onclick="event.stopPropagation()" title="Ziehen zum Sortieren"'));
+
 done();
