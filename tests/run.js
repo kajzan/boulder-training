@@ -835,6 +835,57 @@ check('Messung auf dem Handy, Test umbenannt am Laptop: beides bleibt',
   r.daten.assessments.length === 1 && r.daten.tests[0].name === 'Max Hang 20 mm');
 
 // ═══════════════════════════════════════════════
+group('Abgleich planen');
+// ═══════════════════════════════════════════════
+const leer = toDocs({ activeCycleId: null, cycles: [], tests: [], assessments: [] });
+check('frische App hat keine Trainingsdaten', !hasUserData(leer));
+check('ein Zyklus zaehlt als Trainingsdaten', hasUserData(toDocs(START)));
+
+// Erste Anmeldung mit leerem Konto: alles vom Geraet hochladen
+let plan = planFirstLink(toDocs(START), {}, true);
+check('leeres Konto uebernimmt den Stand des Geraets', gleich(plan.result, toDocs(START)));
+eq('und schreibt alle Eintraege hoch',
+  Object.keys(plan.push.set).sort(), Object.keys(toDocs(START)).sort());
+
+// Neues Geraet ohne Daten meldet sich an: der Kontostand gilt, nichts schreiben
+plan = planFirstLink(leer, toDocs(START), true);
+check('leeres Geraet bekommt den Kontostand', gleich(plan.result, toDocs(START)));
+check('und schreibt dabei nichts', isEmptyDiff(plan.push));
+
+// Beide haben Daten: zusammenfuehren oder nur Konto
+const anderesGeraet = kopie(START);
+anderesGeraet.cycles = [{ id: 'c9', name: 'Vom Laptop', startDate: '2026-08-01', weeks: 1,
+  weekTargets: [3], notes: {}, exercises: [], sessions: {} }];
+anderesGeraet.activeCycleId = 'c9';
+plan = planFirstLink(toDocs(anderesGeraet), toDocs(START), true);
+eq('zusammenfuehren behaelt beide Zyklen', fromDocs(plan.result).cycles.map(c => c.id), ['c1', 'c9']);
+eq('und schreibt nur, was im Konto fehlt', Object.keys(plan.push.set), ['cycle:c9']);
+eq('beim selben Eintrag gilt das Konto', fromDocs(plan.result).activeCycleId, 'c1');
+eq('loescht beim Zusammenfuehren nichts', plan.push.del, []);
+plan = planFirstLink(toDocs(anderesGeraet), toDocs(START), false);
+check('ohne Zusammenfuehren gilt nur das Konto',
+  gleich(plan.result, toDocs(START)) && isEmptyDiff(plan.push));
+
+// Laufender Abgleich: eigene Aenderungen schreiben, fremde uebernehmen
+const basisStand = toDocs(START);
+const hier = kopie(START); abhaken(hier, '2026-09-08', 'x2');
+const dort = kopie(START); zy(dort).name = 'Vom anderen Geraet';
+plan = planSync(basisStand, toDocs(hier), toDocs(dort));
+eq('nur die eigene Aenderung wird geschrieben', Object.keys(plan.push.set), ['entry:c1:2026-09-08:x2']);
+check('die fremde Aenderung kommt an', zy(fromDocs(plan.result)).name === 'Vom anderen Geraet');
+check('die eigene bleibt erhalten', abgehakt(fromDocs(plan.result), '2026-09-08').includes('x2'));
+
+plan = planSync(basisStand, basisStand, toDocs(dort));
+check('ohne eigene Aenderung wird nichts geschrieben', isEmptyDiff(plan.push));
+
+// Offline geloescht, waehrenddessen anderswo umbenannt: das Loeschen bleibt
+const geloescht = kopie(START); uebungLoeschen(geloescht, 'x2');
+const umbenanntDort = kopie(START); zy(umbenanntDort).exercises[1].name = 'Klimmzüge eng';
+plan = planSync(basisStand, toDocs(geloescht), toDocs(umbenanntDort));
+check('offline geloeschte Uebung bleibt geloescht',
+  !zy(fromDocs(plan.result)).exercises.some(e => e.id === 'x2'));
+
+// ═══════════════════════════════════════════════
 group('Abgleich-Modell: echte App-Daten');
 // ═══════════════════════════════════════════════
 // Daten, wie die App sie selbst erzeugt - nicht von Hand gebaut. IDs beruhen

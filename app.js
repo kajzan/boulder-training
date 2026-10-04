@@ -13,6 +13,22 @@ function loadData() {
 
 function saveData() {
   localStorage.setItem(STORE_KEY, JSON.stringify(appData));
+  // Angemeldet: geänderte Einträge ans Konto übertragen (cloud.js)
+  if (typeof window !== 'undefined' && window.cloudAfterSave) window.cloudAfterSave();
+}
+
+// Für den Abgleich (cloud.js): appData ist eine Variable dieses Skripts und
+// von außen nur über diese beiden Funktionen erreichbar.
+function getAppData() {
+  return appData;
+}
+
+// Übernimmt einen Stand, der von einem anderen Gerät kam. Bewusst ohne
+// saveData(): Der Stand stammt ja schon vom Konto und muss nicht zurück.
+function replaceAppData(data) {
+  appData = data;
+  localStorage.setItem(STORE_KEY, JSON.stringify(appData));
+  render();
 }
 
 function getDefaultData() {
@@ -1318,12 +1334,18 @@ function renderSettings() {
     ` : ''}
 
     <div class="divider"></div>
+    <div class="section-hdr"><h2>Konto</h2></div>
+    <div id="cloudBox"></div>
+
+    <div class="divider"></div>
     <div class="section-hdr"><h2>Daten</h2></div>
     <button class="btn btn-ghost btn-full" style="margin-bottom:10px" onclick="exportData()">Daten exportieren</button>
     <button class="btn btn-ghost btn-full" onclick="importDataPrompt()">Daten importieren</button>
     <div style="height:10px"></div>
-    <div class="text-muted" style="font-size:11px;text-align:center">Boulder Training App · Alle Daten lokal gespeichert</div>
+    <div class="text-muted" style="font-size:11px;text-align:center">Boulder Training App</div>
   `;
+  // Den Konto-Kasten füllt cloud.js; ohne Firebase bleibt er einfach leer.
+  if (window.renderCloudBox) window.renderCloudBox();
 }
 
 function openNewCycleModal() {

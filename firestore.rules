@@ -1,0 +1,14 @@
+rules_version = '2';
+
+// Sicherheitsregeln für Firestore. Werden nicht automatisch übernommen, sondern
+// in der Firebase-Konsole unter Firestore → Regeln eingefügt und veröffentlicht.
+//
+// Jedes Konto darf ausschließlich seine eigenen Einträge lesen und schreiben.
+// Alles andere ist gesperrt.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{uid}/data/{docId} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+  }
+}

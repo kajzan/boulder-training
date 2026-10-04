@@ -4,7 +4,7 @@
  * app.js die VERSION unten hochzählen. Sonst behalten bereits installierte
  * Geräte unter Umständen den alten Stand.
  */
-const VERSION = 'v6';
+const VERSION = 'v7';
 const CACHE = 'boulder-' + VERSION;
 
 /* Alles, was die App zum Starten braucht. Wird bei der Installation
@@ -13,7 +13,10 @@ const APP_SHELL = [
   './',
   './index.html',
   './styles.css',
+  './sync.js',
   './app.js',
+  './cloud.js',
+  './vendor/firebase.js',
   './manifest.json',
   './assets/fonts/dm-sans-var.woff2',
   './assets/fonts/dm-mono-400.woff2',
@@ -23,9 +26,10 @@ const APP_SHELL = [
   './assets/icons/apple-touch-icon.png'
 ];
 
-/* Schriften und Icons ändern sich praktisch nie -> zuerst aus dem Speicher.
+/* Schriften, Icons und die Firebase-Bibliothek ändern sich nur mit einer
+ * neuen VERSION -> zuerst aus dem Speicher.
  * Für den Rest (HTML/CSS/JS) gilt: zuerst Netz, siehe unten. */
-const IMMUTABLE = /\/assets\/(fonts|icons)\//;
+const IMMUTABLE = /\/(assets\/(fonts|icons)|vendor)\//;
 
 /* Wie lange auf das Netz gewartet wird, bevor auf den Speicher
  * zurückgefallen wird. Zielt auf den Fall "eine Ecke Empfang in der Halle",

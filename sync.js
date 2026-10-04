@@ -218,3 +218,44 @@ function applyDiff(docs, diff) {
 function isEmptyDiff(diff) {
   return diff.del.length === 0 && Object.keys(diff.set).length === 0;
 }
+
+// Ob ein Stand echte Trainingsdaten enthält. Der Einstellungs-Eintrag allein
+// zählt nicht – den hat auch eine frisch installierte App.
+function hasUserData(docs) {
+  return Object.keys(docs).some(k => {
+    const t = syncKeyType(k);
+    return SYNC_TYPES.has(t) && t !== 'settings';
+  });
+}
+
+// ── Abgleich planen ──
+//
+// Beide Funktionen entscheiden nur, was herauskommt und was geschrieben
+// werden muss. Sie fassen weder Netz noch Speicher an und lassen sich so ohne
+// Server prüfen.
+
+// Dieses Gerät verbindet sich zum ersten Mal mit dem Konto.
+// merge: Sind auf dem Gerät und im Konto schon Daten, werden sie
+// zusammengeführt (true) oder es gelten nur die Daten des Kontos (false).
+function planFirstLink(localDocs, serverDocs, merge) {
+  if (!hasUserData(serverDocs)) {
+    // Neues Konto: alles von diesem Gerät übernehmen
+    return { result: localDocs, push: diffDocs(serverDocs, localDocs) };
+  }
+  if (!hasUserData(localDocs) || !merge) {
+    return { result: serverDocs, push: { set: {}, del: [] } };
+  }
+  // Zusammenführen: was nur hier existiert, kommt dazu. Bei gleichem Eintrag
+  // gilt das Konto, denn dort liegt der gemeinsame Stand aller Geräte.
+  const result = Object.assign({}, localDocs, serverDocs);
+  return { result, push: diffDocs(serverDocs, result) };
+}
+
+// Normaler Abgleich mit dem Konto: base ist der letzte gemeinsame Stand, den
+// dieses Gerät kennt. Was sich hier seitdem geändert hat, wird geschrieben und
+// gewinnt beim selben Eintrag – es ist die jüngere Absicht. Alles andere kommt
+// vom Konto.
+function planSync(base, localDocs, serverDocs) {
+  const mine = diffDocs(base, localDocs);
+  return { result: applyDiff(serverDocs, mine), push: mine };
+}
