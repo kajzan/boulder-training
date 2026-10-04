@@ -43,7 +43,9 @@ function install() {
   globalThis.confirm = () => true;
   globalThis.setTimeout = fn => { /* Modal-Animationen im Test nicht nachspielen */ };
 
-  vm.runInThisContext(fs.readFileSync(path.join(ROOT, 'app.js'), 'utf8'), { filename: 'app.js' });
+  ['sync.js', 'app.js'].forEach(file => {
+    vm.runInThisContext(fs.readFileSync(path.join(ROOT, file), 'utf8'), { filename: file });
+  });
 
   return { el: fakeEl, store };
 }

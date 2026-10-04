@@ -12,6 +12,7 @@ Server und kein Konto.
 | `index.html` | Grundgerüst der Seite |
 | `styles.css` | Gestaltung |
 | `app.js` | die gesamte Logik |
+| `sync.js` | Abgleich-Modell für die Synchronisation zwischen Geräten (noch nicht eingebunden) |
 | `sw.js` | Service Worker – macht die App offline nutzbar |
 | `manifest.json` | macht die App installierbar |
 | `assets/fonts/` | Schriften, lokal statt von Google |

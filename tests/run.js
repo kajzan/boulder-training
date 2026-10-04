@@ -555,4 +555,348 @@ eq('jede Zeile traegt ihre ID', (sortHtml.match(/data-exid=/g) || []).length, 3)
 check('der Anfasser oeffnet nicht den Bearbeiten-Dialog',
   sortHtml.includes('onclick="event.stopPropagation()" title="Ziehen zum Sortieren"'));
 
+// ═══════════════════════════════════════════════
+group('Abgleich-Modell: hin und zurueck');
+// ═══════════════════════════════════════════════
+const kopie = x => JSON.parse(JSON.stringify(x));
+const gleich = (a, b) => syncCanon(a) === syncCanon(b);
+
+// Vergleichsform: gleicht die Reihenfolgen an, die das Modell bewusst selbst
+// festlegt (Zyklen, Tests, Messungen nach ID; abgehakte Uebungen eines Tages
+// nach Trainingsplan), und entfernt leere Tage und das Altformat.
+function vergleichsform(data) {
+  const d = kopie(data);
+  const nachId = (a, b) => syncCmp(a.id, b.id);
+  d.cycles.sort(nachId);
+  d.cycles.forEach(c => {
+    const rang = new Map(c.exercises.map((ex, i) => [String(ex.id), i]));
+    const rangVon = e => rang.has(String(e.exId)) ? rang.get(String(e.exId)) : c.exercises.length;
+    const tage = {};
+    Object.keys(c.sessions || {}).sort().forEach(datum => {
+      const liste = (c.sessions[datum] || [])
+        .map(e => typeof e === 'string' ? { exId: e } : e)
+        .sort((a, b) => rangVon(a) - rangVon(b) || syncCmp(a.exId, b.exId));
+      if (liste.length) tage[datum] = liste;
+    });
+    c.sessions = tage;
+  });
+  d.tests.sort(nachId);
+  d.assessments.sort(nachId);
+  return d;
+}
+
+const BESTAND = {
+  activeCycleId: 'c2',
+  cycles: [
+    { id: 'c2', name: 'Sommer', startDate: '2026-06-01', weeks: 2, weekTargets: [8, 9], notes: {},
+      zukunftsfeld: { von: 'einer spaeteren Version' },
+      exercises: [
+        { id: 'e2', name: 'Campus', categories: ['Pull', 'Finger'], intensity: 3 },
+        { id: 'e1', name: 'Hangboard', categories: ['Finger'], intensity: 2 },
+        { id: 'e3', name: 'Dehnen', categories: [], intensity: 1 }
+      ],
+      sessions: {
+        '2026-06-01': [{ exId: 'e1' }, { exId: 'e2', overrideInt: 4.5 }],
+        '2026-06-02': [],
+        '2026-06-03': ['e3']
+      } },
+    { id: 'c1', name: 'Frühjahr', startDate: '2026-03-01', weeks: 1, weekTargets: [5], notes: {},
+      exercises: [{ id: 'e1', name: 'Hangboard', categories: ['Finger'], intensity: 2 }],
+      sessions: { '2026-03-02': [{ exId: 'e1' }] } }
+  ],
+  tests: [
+    { id: 't2', name: 'Grad', kind: 'scale', scaleId: 'font', unit: '', category: '', higherIsBetter: true, usesBodyweight: false },
+    { id: 't1', name: 'Max Hang', kind: 'number', unit: 'kg', category: 'Finger', higherIsBetter: true, usesBodyweight: true },
+    { id: 't3', name: 'Routen', kind: 'counts', scaleId: 'gym', unit: '', category: '', higherIsBetter: true, usesBodyweight: false },
+    { id: 't4', name: 'Pace', kind: 'time', unit: '', category: '', higherIsBetter: false, usesBodyweight: false }
+  ],
+  assessments: [
+    { id: 'a2', date: '2026-06-30', label: 'Ende', cycleId: 'c2', bodyweight: 71,
+      results: [{ testId: 't1', value: 22, note: 'gut' }, { testId: 't3', value: { 6: 12, 7: 5 } }] },
+    { id: 'a1', date: '2026-03-31', label: '', cycleId: null, bodyweight: 0, results: [] }
+  ]
+};
+
+const bestandDocs = toDocs(BESTAND);
+check('hin und zurueck geht nichts verloren',
+  gleich(fromDocs(bestandDocs), vergleichsform(BESTAND)),
+  JSON.stringify(fromDocs(bestandDocs)).slice(0, 300));
+check('zurueck und wieder hin ergibt exakt dieselben Eintraege',
+  gleich(toDocs(fromDocs(bestandDocs)), bestandDocs));
+
+const schluessel = Object.keys(bestandDocs);
+check('je Zyklus ein Eintrag', schluessel.includes('cycle:c1') && schluessel.includes('cycle:c2'));
+check('gleiche Uebungs-ID in zwei Zyklen bleibt getrennt',
+  schluessel.includes('exercise:c1:e1') && schluessel.includes('exercise:c2:e1'));
+eq('jede abgehakte Uebung ist ein eigener Eintrag',
+  schluessel.filter(k => k.startsWith('entry:')).sort(),
+  ['entry:c1:2026-03-02:e1', 'entry:c2:2026-06-01:e1', 'entry:c2:2026-06-01:e2', 'entry:c2:2026-06-03:e3']);
+check('ein leerer Tag erzeugt keinen Eintrag',
+  !schluessel.some(k => k.includes('2026-06-02')));
+eq('das alte Format abgehakter Uebungen wird mit uebernommen',
+  bestandDocs['entry:c2:2026-06-03:e3'], { exId: 'e3', cycleId: 'c2', date: '2026-06-03' });
+eq('eine geaenderte Intensitaet reist mit',
+  (bestandDocs['entry:c2:2026-06-01:e2'] || {}).overrideInt, 4.5);
+
+const zurueck = fromDocs(bestandDocs);
+eq('Zyklen nach Anlegezeitpunkt geordnet', zurueck.cycles.map(c => c.id), ['c1', 'c2']);
+eq('die Reihenfolge der Uebungen bleibt erhalten',
+  zurueck.cycles[1].exercises.map(e => e.id), ['e2', 'e1', 'e3']);
+eq('unbekannte Felder einer spaeteren Version ueberleben',
+  zurueck.cycles[1].zukunftsfeld, { von: 'einer spaeteren Version' });
+eq('Zaehlwerte einer Messung bleiben erhalten',
+  zurueck.assessments[1].results[1].value, { 6: 12, 7: 5 });
+check('die Uebungen tragen keine Hilfsfelder ins App-Modell',
+  zurueck.cycles.every(c => c.exerciseOrder === undefined &&
+    c.exercises.every(ex => ex.cycleId === undefined)));
+
+// Die Eintraege muessen vom App-Objekt geloest sein
+const losgeloest = kopie(BESTAND);
+const losDocs = toDocs(losgeloest);
+losgeloest.cycles[0].exercises[0].name = 'nachtraeglich geaendert';
+eq('spaetere Aenderungen am App-Objekt veraendern die Eintraege nicht',
+  losDocs['exercise:c2:e2'].name, 'Campus');
+
+// Firestore nimmt nicht alles: kein undefined, kein Array direkt in einem
+// Array, keine '/' in IDs, keine reservierten Namen, hoechstens 1500 Bytes.
+function firestoreProbleme(docs) {
+  const probleme = [];
+  const pruefe = (v, pfad, imArray) => {
+    if (v === undefined) probleme.push(pfad + ': undefined');
+    else if (Array.isArray(v)) {
+      if (imArray) probleme.push(pfad + ': Array direkt in Array');
+      v.forEach((x, i) => pruefe(x, pfad + '[' + i + ']', true));
+    } else if (v && typeof v === 'object') {
+      Object.keys(v).forEach(k => pruefe(v[k], pfad + '.' + k, false));
+    } else if (typeof v === 'number' && !isFinite(v)) probleme.push(pfad + ': ' + v);
+  };
+  Object.keys(docs).forEach(k => {
+    if (k.includes('/')) probleme.push(k + ': enthaelt /');
+    if (/^__.*__$/.test(k)) probleme.push(k + ': reservierter Name');
+    if (Buffer.byteLength(k) > 1500) probleme.push(k + ': zu lang');
+    pruefe(docs[k], k, false);
+  });
+  return probleme;
+}
+eq('alle Eintraege sind fuer Firestore zulaessig', firestoreProbleme(bestandDocs), []);
+
+// IDs aus eingelesenen Altdaten koennen Trennzeichen enthalten
+const sonder = toDocs({ activeCycleId: null, tests: [], assessments: [], cycles: [
+  { id: 'a:b', name: 'x', exercises: [{ id: 'c', name: 'x', categories: [], intensity: 1 }], sessions: {} },
+  { id: 'a', name: 'y', exercises: [{ id: 'b:c', name: 'y', categories: [], intensity: 1 }], sessions: {} },
+  { id: 'mit/strich', name: 'z', exercises: [], sessions: {} }
+] });
+eq('Trennzeichen in IDs vermischen keine Schluessel',
+  Object.keys(sonder).filter(k => k.startsWith('exercise:')).length, 2);
+eq('ein / in einer ID landet nicht im Schluessel', firestoreProbleme(sonder), []);
+eq('und kommt unveraendert zurueck',
+  fromDocs(sonder).cycles.map(c => c.id).sort(), ['a', 'a:b', 'mit/strich']);
+
+// ═══════════════════════════════════════════════
+group('Abgleich-Modell: Aenderungen erkennen');
+// ═══════════════════════════════════════════════
+check('ohne Aenderung nichts zu tun', isEmptyDiff(diffDocs(bestandDocs, toDocs(BESTAND))));
+
+const umsortierteFelder = {};
+Object.keys(bestandDocs).forEach(k => {
+  const d = bestandDocs[k], neu = {};
+  Object.keys(d).reverse().forEach(f => { neu[f] = d[f]; });
+  umsortierteFelder[k] = neu;
+});
+check('andere Feldreihenfolge ist keine Aenderung',
+  isEmptyDiff(diffDocs(bestandDocs, umsortierteFelder)));
+
+const umbenannt = kopie(BESTAND);
+umbenannt.cycles[1].exercises[0].name = 'Hangboard 20 mm';
+const dUmbenannt = diffDocs(bestandDocs, toDocs(umbenannt));
+eq('eine Umbenennung aendert genau einen Eintrag', Object.keys(dUmbenannt.set), ['exercise:c1:e1']);
+eq('und loescht nichts', dUmbenannt.del, []);
+
+const ohneTest = kopie(BESTAND);
+ohneTest.tests = ohneTest.tests.filter(t => t.id !== 't4');
+eq('Loeschen wird als Loeschen erkannt', diffDocs(bestandDocs, toDocs(ohneTest)).del, ['test:t4']);
+
+const mitFremdem = Object.assign({ 'zukunft:x': { neu: true } }, bestandDocs);
+check('Eintraege unbekannter Art werden nie geloescht',
+  !diffDocs(mitFremdem, toDocs(fromDocs(mitFremdem))).del.includes('zukunft:x'));
+
+// ═══════════════════════════════════════════════
+group('Abgleich-Modell: zwei Geraete');
+// ═══════════════════════════════════════════════
+// Beide Geraete starten vom selben Stand und aendern offline. Danach landen
+// beide Aenderungen auf dem gemeinsamen Stand, B als zweites.
+function zweiGeraete(start, aendereA, aendereB, aZuletzt) {
+  const basis = toDocs(start);
+  const a = kopie(start); aendereA(a);
+  const b = kopie(start); aendereB(b);
+  const dA = diffDocs(basis, toDocs(a));
+  const dB = diffDocs(basis, toDocs(b));
+  const server = aZuletzt ? applyDiff(applyDiff(basis, dB), dA) : applyDiff(applyDiff(basis, dA), dB);
+  return { daten: fromDocs(server), server };
+}
+
+const START = {
+  activeCycleId: 'c1', tests: [], assessments: [],
+  cycles: [{ id: 'c1', name: 'Zyklus', startDate: '2026-09-07', weeks: 4, weekTargets: [8, 8, 8, 8], notes: {},
+    exercises: [
+      { id: 'x1', name: 'Hangboard', categories: ['Finger'], intensity: 2 },
+      { id: 'x2', name: 'Klimmzüge', categories: ['Pull'], intensity: 2 },
+      { id: 'x3', name: 'Campus', categories: ['Pull', 'Finger'], intensity: 3 }
+    ],
+    sessions: { '2026-09-07': [{ exId: 'x1' }] } }]
+};
+const zy = d => d.cycles[0];
+const abhaken = (d, datum, exId) => {
+  const s = zy(d).sessions;
+  if (!s[datum]) s[datum] = [];
+  s[datum].push({ exId });
+};
+const uebungLoeschen = (d, exId) => {
+  zy(d).exercises = zy(d).exercises.filter(e => e.id !== exId);
+  Object.keys(zy(d).sessions).forEach(t => {
+    zy(d).sessions[t] = zy(d).sessions[t].filter(e => e.exId !== exId);
+  });
+};
+const abgehakt = (d, datum) => (zy(d).sessions[datum] || []).map(e => e.exId);
+
+let r = zweiGeraete(START,
+  d => abhaken(d, '2026-09-08', 'x2'),
+  d => zy(d).exercises.push({ id: 'x4', name: 'Laufen', categories: ['Ausdauer'], intensity: 2 }));
+check('Handy hakt ab, Laptop legt Uebung an: beides bleibt',
+  abgehakt(r.daten, '2026-09-08').includes('x2') && zy(r.daten).exercises.some(e => e.id === 'x4'));
+
+r = zweiGeraete(START,
+  d => abhaken(d, '2026-09-08', 'x2'),
+  d => abhaken(d, '2026-09-08', 'x3'));
+eq('am selben Tag Verschiedenes abgehakt: beide Haken bleiben',
+  abgehakt(r.daten, '2026-09-08'), ['x2', 'x3']);
+
+r = zweiGeraete(START,
+  d => { zy(d).sessions['2026-09-07'][0].overrideInt = 5; },
+  d => abhaken(d, '2026-09-07', 'x2'));
+check('geaenderte Intensitaet und neuer Haken am selben Tag: beides bleibt',
+  zy(r.daten).sessions['2026-09-07'].find(e => e.exId === 'x1').overrideInt === 5 &&
+  abgehakt(r.daten, '2026-09-07').includes('x2'));
+
+r = zweiGeraete(START,
+  d => uebungLoeschen(d, 'x2'),
+  d => { zy(d).name = 'Herbst'; });
+check('Handy loescht Uebung, Laptop benennt Zyklus um: Uebung bleibt geloescht',
+  !zy(r.daten).exercises.some(e => e.id === 'x2'),
+  JSON.stringify(zy(r.daten).exercises.map(e => e.id)));
+eq('und die Umbenennung kommt an', zy(r.daten).name, 'Herbst');
+
+r = zweiGeraete(START,
+  d => uebungLoeschen(d, 'x2'),
+  d => abhaken(d, '2026-09-09', 'x1'));
+check('Geloeschtes kommt nicht zurueck, wenn das andere Geraet etwas anderes aendert',
+  !zy(r.daten).exercises.some(e => e.id === 'x2') && abgehakt(r.daten, '2026-09-09').includes('x1'));
+
+r = zweiGeraete(START,
+  d => { zy(d).exercises[0].name = 'Hang 20 mm'; },
+  d => { zy(d).exercises[0].name = 'Hang 15 mm'; });
+eq('beide aendern dieselbe Uebung: die spaetere Aenderung gewinnt',
+  zy(r.daten).exercises[0].name, 'Hang 15 mm');
+
+// Umsortieren und Anlegen treffen beide die Reihenfolge am Zyklus. Welche
+// Reihenfolge gilt, haengt davon ab, wer zuletzt schreibt - aber in keinem
+// Fall darf dabei eine Uebung verloren gehen.
+const umsortieren = d => { zy(d).exercises = [zy(d).exercises[2], zy(d).exercises[0], zy(d).exercises[1]]; };
+const anlegen = d => zy(d).exercises.push({ id: 'x4', name: 'Laufen', categories: [], intensity: 2 });
+const alleDa = d => ['x1', 'x2', 'x3', 'x4'].every(id => zy(d).exercises.some(e => e.id === id));
+check('Umsortieren gegen Anlegen, Anlegen zuletzt: keine Uebung geht verloren',
+  alleDa(zweiGeraete(START, umsortieren, anlegen, false).daten));
+const umsortiertZuletzt = zweiGeraete(START, umsortieren, anlegen, true).daten;
+check('Umsortieren gegen Anlegen, Umsortieren zuletzt: keine Uebung geht verloren',
+  alleDa(umsortiertZuletzt));
+eq('und die neue Uebung landet hinten', zy(umsortiertZuletzt).exercises.map(e => e.id),
+  ['x3', 'x1', 'x2', 'x4']);
+
+// Ein Geraet loescht den Zyklus, das andere hakt darin offline noch etwas ab.
+// Der Haken hat danach keinen Zyklus mehr und wird beim naechsten Abgleich
+// aufgeraeumt, statt den Zyklus halb zurueckzuholen.
+r = zweiGeraete(START,
+  d => { d.cycles = []; d.activeCycleId = null; },
+  d => abhaken(d, '2026-09-10', 'x1'));
+eq('geloeschter Zyklus bleibt geloescht', r.daten.cycles.length, 0);
+const aufraeumen = diffDocs(r.server, toDocs(r.daten));
+check('verwaiste Eintraege werden beim naechsten Abgleich entfernt',
+  aufraeumen.del.includes('entry:c1:2026-09-10:x1'), JSON.stringify(aufraeumen.del));
+check('nach dem Aufraeumen bleibt nichts vom Zyklus uebrig',
+  !Object.keys(applyDiff(r.server, aufraeumen)).some(k => /^(entry|exercise|cycle):/.test(k)));
+
+r = zweiGeraete({ activeCycleId: null, cycles: [], tests: [
+    { id: 't1', name: 'Max Hang', kind: 'number', unit: 'kg', category: 'Finger', higherIsBetter: true, usesBodyweight: true }
+  ], assessments: [] },
+  d => d.assessments.push({ id: 'm1', date: '2026-09-10', label: 'Woche 4', cycleId: null, bodyweight: 70,
+                             results: [{ testId: 't1', value: 20 }] }),
+  d => { d.tests[0].name = 'Max Hang 20 mm'; });
+check('Messung auf dem Handy, Test umbenannt am Laptop: beides bleibt',
+  r.daten.assessments.length === 1 && r.daten.tests[0].name === 'Max Hang 20 mm');
+
+// ═══════════════════════════════════════════════
+group('Abgleich-Modell: echte App-Daten');
+// ═══════════════════════════════════════════════
+// Daten, wie die App sie selbst erzeugt - nicht von Hand gebaut. IDs beruhen
+// auf Date.now(); damit zwei schnelle Aufrufe im Test nicht dieselbe ID
+// bekommen, laeuft die Uhr hier je Aufruf eine Millisekunde weiter.
+const echteUhr = Date.now;
+let uhr = echteUhr();
+Date.now = () => ++uhr;
+try {
+  appData.cycles = []; appData.tests = []; appData.assessments = []; appData.activeCycleId = null;
+
+  el('newCycleName').value = 'Echt';
+  el('newCycleDate').value = '2026-09-07';
+  el('newCycleWeeks').value = '4';
+  el('copyFromCycle').value = '';
+  createCycle();
+
+  [['Campus', 'Pull, Finger', '3'], ['Hangboard', 'Finger', '2'], ['Dehnen', '', '1']].forEach(([n, k, i]) => {
+    el('newExName').value = n; el('newExCat').value = k; el('newExInt').value = i;
+    addExercise();
+  });
+  const echt = getActiveCycle();
+  toggleDayEx('2026-09-07', echt.exercises[0].id);
+  toggleDayEx('2026-09-07', echt.exercises[1].id);
+  setOverride('2026-09-07', echt.exercises[0].id, '4');
+  toggleDayEx('2026-09-08', echt.exercises[2].id);
+  toggleDayEx('2026-09-08', echt.exercises[2].id);   // wieder abgehakt: leerer Tag bleibt zurueck
+
+  el('testName').value = 'Routen Halle';
+  el('testKind').value = 'counts';
+  el('testScale').value = 'gym';
+  el('testCat').value = '';
+  el('testHigher').dataset.on = '1';
+  el('testBw').dataset.on = '0';
+  saveTest(null);
+  const routen = appData.tests[appData.tests.length - 1];
+
+  // Ein Zahlen-Test hat kein Skalenfeld; saveTest setzt es auf undefined.
+  el('testName').value = 'Max Hang';
+  el('testKind').value = 'number';
+  el('testUnit').value = 'kg';
+  el('testCat').value = 'Finger';
+  el('testBw').dataset.on = '1';
+  saveTest(null);
+  check('Ausgangslage: der Zahlen-Test traegt ein undefined-Feld',
+    Object.prototype.hasOwnProperty.call(appData.tests[appData.tests.length - 1], 'scaleId') &&
+    appData.tests[appData.tests.length - 1].scaleId === undefined);
+  el('assDate').value = '2026-09-10';
+  el('assLabel').value = 'Woche 1';
+  el('assCycle').value = echt.id;
+  el('assBw').value = '';
+  testScale(routen).steps.forEach((s, i) => { el(`res_${routen.id}_${i}`).value = i === 6 ? '12' : ''; });
+  saveAssessment(null);
+
+  const echtDocs = toDocs(appData);
+  check('App-Daten ueberstehen hin und zurueck',
+    gleich(fromDocs(echtDocs), vergleichsform(appData)));
+  eq('App-Daten sind fuer Firestore zulaessig', firestoreProbleme(echtDocs), []);
+  check('der Test ohne Skalenfeld hinterlaesst kein undefined',
+    Object.values(echtDocs).every(d => !syncCanon(d).includes('undefined')));
+} finally {
+  Date.now = echteUhr;
+}
+
 done();
