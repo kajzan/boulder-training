@@ -87,6 +87,10 @@
 </div>
 
 
+<script src="sync.js"></script>
 <script src="app.js"></script>
+<!-- Konto und Synchronisation. Als Modul läuft es erst nach app.js; schlägt es
+     fehl (etwa in einem sehr alten Browser), bleibt die App rein lokal. -->
+<script type="module" src="cloud.js"></script>
 </body>
 </html>
