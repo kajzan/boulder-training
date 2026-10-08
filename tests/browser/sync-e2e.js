@@ -49,6 +49,28 @@ async function anmelden(g, email, pw, neu) {
   await g.page.click(neu ? 'button:text-is("Konto erstellen")' : 'button:text-is("Anmelden")');
 }
 
+// Bestaetigungslink aus dem Emulator holen und "anklicken", wie es der
+// Nutzer in seiner Mail tun wuerde. Danach in der App "Bestaetigt" tippen.
+const EMU_AUTH = 'http://127.0.0.1:9099/emulator/v1/projects/demo-boulder';
+async function bestaetigen(g, email) {
+  let link;
+  for (let i = 0; i < 20 && !link; i++) {
+    const codes = (await (await fetch(EMU_AUTH + '/oobCodes')).json()).oobCodes || [];
+    const c = codes.filter(x => x.email === email && x.requestType === 'VERIFY_EMAIL').pop();
+    if (c) link = c.oobLink; else await new Promise(r => setTimeout(r, 300));
+  }
+  if (!link) throw new Error('keine Bestaetigungsmail fuer ' + email);
+  await fetch(link.replace('localhost', '127.0.0.1'));
+  await g.page.click('button:text-is("Bestätigt")');
+}
+
+// Rohdaten in Firestore, an den Sicherheitsregeln vorbei (nur im Emulator)
+const EMU_FS = 'http://127.0.0.1:8085/v1/projects/demo-boulder/databases/(default)/documents';
+async function rohDokumente(uid) {
+  const r = await (await fetch(EMU_FS + '/users/' + uid + '/data', { headers: { Authorization: 'Bearer owner' } })).json();
+  return (r.documents || []).map(d => d.name.split('/').pop());
+}
+
 const synchron = (g, ms = 30000) => g.page.waitForFunction(
   () => window.__cloud.state.ready && window.__cloud.state.status === 'synced', null, { timeout: ms });
 
@@ -76,11 +98,25 @@ const START = {
   const handy = await geraet('Handy');
   await lokalerStand(handy, START);
   await anmelden(handy, 'kajetan@test.de', 'geheim123', true);
+  await handy.page.waitForSelector('button:text-is("Bestätigt")', { timeout: 15000 });
+  await handy.page.waitForFunction(() => window.__cloud.state.status === 'error', null, { timeout: 15000 });
+  ok('Handy: ohne bestaetigte Adresse wird nichts abgeglichen',
+    await handy.page.evaluate(() => window.__cloud.state.error.includes('bestätige')),
+    await handy.page.evaluate(() => window.__cloud.state.error));
+  await bestaetigen(handy, 'kajetan@test.de');
   await synchron(handy);
+  ok('Handy: nach der Bestaetigung verschwindet der Hinweis',
+    !(await handy.page.locator('button:text-is("Bestätigt")').isVisible()));
   const uid = await handy.page.evaluate(() => window.__cloud.state.user.uid);
   ok('Handy: Konto angelegt und synchronisiert', !!uid);
   const anzahl = await handy.page.evaluate(() => Object.keys(window.__cloud.state.base).length);
   ok('Handy: lokale Daten ins Konto hochgeladen', anzahl >= 5, 'Eintraege: ' + anzahl);
+  let roh = [];
+  for (let i = 0; i < 20 && roh.sort().join() !== 'c~c1,misc'; i++) {
+    roh = await rohDokumente(uid);
+    if (roh.sort().join() !== 'c~c1,misc') await new Promise(r => setTimeout(r, 300));
+  }
+  ok('Firestore: gebuendelt, ein Dokument je Zyklus plus eines', roh.sort().join() === 'c~c1,misc', roh.join());
   await handy.page.screenshot({ path: path.join(__dirname, 'shot-konto.png') });
 
   // ── 2. Laptop ohne Daten meldet sich an ──
@@ -155,6 +191,7 @@ const START = {
   // ── 7. Fremdes Konto kommt nicht an die Daten ──
   const fremd = await geraet('Fremd');
   await anmelden(fremd, 'fremd@test.de', 'geheim123', true);
+  await bestaetigen(fremd, 'fremd@test.de');
   await synchron(fremd);
   const zugriff = await fremd.page.evaluate(uid => new Promise(res => {
     const c = window.__cloud;
@@ -170,7 +207,46 @@ const START = {
   await fehl.page.waitForSelector('text=E-Mail oder Passwort stimmt nicht.', { timeout: 15000 });
   ok('falsches Passwort: verstaendliche Meldung', true);
 
-  // ── 9. Abmelden behaelt die Daten auf dem Geraet ──
+  // ── 9. Ein Geraet mit alter Version (v7) schreibt noch Einzeldokumente ──
+  await fremd.page.evaluate(() => {
+    const c = window.__cloud, uid = c.state.user.uid;
+    const b = c.writeBatch(c.db);
+    b.set(c.doc(c.db, 'users', uid, 'data', 'cycle:alt'), { id: 'alt', name: 'Von v7', startDate: '2026-01-05',
+      weeks: 1, weekTargets: [2], notes: {}, exerciseOrder: ['u1'] });
+    b.set(c.doc(c.db, 'users', uid, 'data', 'exercise:alt:u1'), { id: 'u1', cycleId: 'alt', name: 'Alt', categories: [], intensity: 1 });
+    return b.commit();
+  });
+  await warteAuf(fremd, () => getAppData().cycles.some(c => c.name === 'Von v7'));
+  ok('Umzug: Daten aus alten Einzeldokumenten erscheinen', true);
+  const fremdUid = await fremd.page.evaluate(() => window.__cloud.state.user.uid);
+  let umgezogen = false, rohFremd = [];
+  for (let i = 0; i < 30 && !umgezogen; i++) {
+    rohFremd = await rohDokumente(fremdUid);
+    umgezogen = rohFremd.every(id => id === 'misc' || id.startsWith('c~')) && rohFremd.includes('c~alt');
+    if (!umgezogen) await new Promise(r => setTimeout(r, 300));
+  }
+  ok('Umzug: alte Einzeldokumente sind in die gebuendelte Ablage gewandert', umgezogen, rohFremd.join());
+
+  // ── 10. Konto loeschen ──
+  await fremd.page.click('.tab-btn:nth-child(5)');
+  await fremd.page.click('button:text-is("Konto löschen")');
+  await fremd.page.fill('#cloudDelPw', 'falsch999');
+  await fremd.page.click('#cloudDelBtn');
+  await fremd.page.waitForFunction(() => document.getElementById('cloudDelErr').textContent.length > 0);
+  ok('Konto loeschen: falsches Passwort wird abgelehnt',
+    await fremd.page.evaluate(() => !!window.__cloud.state.user));
+  await fremd.page.fill('#cloudDelPw', 'geheim123');
+  await fremd.page.click('#cloudDelBtn');
+  await fremd.page.waitForFunction(() => !window.__cloud.state.user, null, { timeout: 20000 });
+  ok('Konto loeschen: abgemeldet', true);
+  ok('Konto loeschen: alle Daten in der Cloud sind weg', (await rohDokumente(fremdUid)).length === 0,
+    (await rohDokumente(fremdUid)).join());
+  ok('Konto loeschen: Daten auf dem Geraet bleiben', (await daten(fremd)).cycles.some(c => c.name === 'Von v7'));
+  const nochDa = await (await fetch(EMU_AUTH + '/accounts', { headers: { Authorization: 'Bearer owner' } })).json();
+  ok('Konto loeschen: das Konto selbst ist geloescht',
+    !(nochDa.userInfo || []).some(u => u.email === 'fremd@test.de'));
+
+  // ── 11. Abmelden behaelt die Daten auf dem Geraet ──
   await laptop.page.click('.tab-btn:nth-child(5)');
   await laptop.page.click('button:text-is("Abmelden")');
   await laptop.page.waitForFunction(() => !window.__cloud.state.user);

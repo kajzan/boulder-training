@@ -228,6 +228,75 @@ function hasUserData(docs) {
   });
 }
 
+// ── Ablage in Firestore ──
+//
+// Die logischen Einträge oben liegen nicht je als eigenes Firestore-Dokument,
+// sondern als Felder in wenigen gemeinsamen: alles eines Zyklus (Zyklus,
+// Übungen, Haken) in einem, Tests, Messungen und Einstellungen in einem
+// weiteren. Grund sind die Kosten: War die App über 30 Minuten zu, berechnet
+// Firestore beim Öffnen jedes Dokument neu – bei einem Dokument je Haken
+// wären das nach einem Trainingsjahr rund 900 statt einer Handvoll.
+//
+// Geschrieben wird feldweise. Firestore führt Änderungen an verschiedenen
+// Feldern desselben Dokuments zusammen; zwei Geräte, die am selben Tag
+// Verschiedenes abhaken, verlieren also weiterhin nichts.
+//
+// Aufbau: users/<konto>/data/<gruppe> = { k: { <eintrag>: <daten>, … } }
+
+const STORAGE_MISC = 'misc';
+
+function storageGroup(key) {
+  const t = syncKeyType(key);
+  if (t === 'cycle' || t === 'exercise' || t === 'entry') {
+    return 'c~' + key.split(':')[1];   // die Zyklus-ID, schon kodiert
+  }
+  return STORAGE_MISC;
+}
+
+function isStorageGroup(id) {
+  return id === STORAGE_MISC || id.startsWith('c~');
+}
+
+// Firestore-Dokumente → Einträge. Einzeldokumente aus der Zeit vor der
+// Bündelung (App-Version v7) werden mitgelesen und als "legacy" gemeldet,
+// damit sie umgezogen werden können. Steht derselbe Eintrag schon gebündelt
+// da, gilt die gebündelte Fassung.
+function flattenStorage(storageDocs) {
+  const docs = {};
+  const legacy = [];
+  Object.keys(storageDocs).forEach(id => {
+    const d = storageDocs[id];
+    if (isStorageGroup(id) && d && d.k && typeof d.k === 'object') {
+      Object.keys(d.k).forEach(key => { docs[key] = d.k[key]; });
+    } else {
+      legacy.push(id);
+    }
+  });
+  legacy.forEach(id => {
+    if (!Object.prototype.hasOwnProperty.call(docs, id)) docs[id] = storageDocs[id];
+  });
+  return { docs, legacy };
+}
+
+// Änderungen an Einträgen → Schreibvorgänge je Firestore-Dokument.
+// before ist der Stand vor der Änderung; wird eine Gruppe dadurch leer
+// (Zyklus gelöscht), wird ihr Dokument ganz entfernt.
+function storageWrites(diff, before) {
+  const after = applyDiff(before, diff);
+  const groups = {};
+  const group = k => {
+    const g = storageGroup(k);
+    if (!groups[g]) groups[g] = { set: {}, del: [] };
+    return groups[g];
+  };
+  Object.keys(diff.set).forEach(k => { group(k).set[k] = diff.set[k]; });
+  diff.del.forEach(k => { group(k).del.push(k); });
+  const stillUsed = new Set(Object.keys(after).map(storageGroup));
+  return Object.keys(groups).sort().map(id => ({
+    id, set: groups[id].set, del: groups[id].del, removeDoc: !stillUsed.has(id)
+  }));
+}
+
 // ── Abgleich planen ──
 //
 // Beide Funktionen entscheiden nur, was herauskommt und was geschrieben
