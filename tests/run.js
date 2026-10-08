@@ -1207,4 +1207,100 @@ check('Logbuch reist durch den Abgleich', gleich(fromDocs(toDocs(appData)).ascen
   globalThis.Date = EchtesDate;
 }
 
-done();
+
+// ═══════════════════════════════════════════════
+group('Sicherung wiederherstellen');
+// ═══════════════════════════════════════════════
+const vorher = kopie(appData);
+const datei = normalizeData({ cycles: [
+  { id: 'imp1', name: 'Aus Datei', startDate: '2025-01-06', weeks: 2, weekTargets: [1, 1],
+    exercises: [{ id: 'q', name: 'Q', category: 'Alt', intensity: 1 }], sessions: { '2025-01-06': ['q'] }, notes: {} }
+], activeCycleId: 'imp1' });
+check('alte Sicherung wird beim Einlesen angepasst',
+  Array.isArray(datei.tests) && Array.isArray(datei.ascents) && datei.cycles[0].exercises[0].categories[0] === 'Alt' &&
+  typeof datei.cycles[0].sessions['2025-01-06'][0] === 'object');
+check('Einlesen speichert nichts', JSON.stringify(appData) === JSON.stringify(vorher));
+eq('Zusammenfassung', dataSummary(datei), '1 Zyklus · 1 Trainingstag · 0 Messungen · 0 Boulder');
+
+openRestoreModal(datei, 'Datei test.json');
+applyRestore('merge');
+check('Hinzufügen behält alle bisherigen Zyklen', vorher.cycles.every(c => appData.cycles.some(x => x.id === c.id)));
+check('Hinzufügen bringt den neuen Zyklus', appData.cycles.some(c => c.id === 'imp1'));
+eq('Hinzufügen lässt den aktiven Zyklus', appData.activeCycleId, vorher.activeCycleId);
+eq('Hinzufügen behält das Logbuch', appData.ascents.length, vorher.ascents.length);
+check('der Stand davor ist gemerkt', !!getUndoInfo());
+undoImport();
+check('rückgängig: wieder genau der alte Stand', gleich(toDocs(appData), toDocs(vorher)));
+check('rückgängig räumt den Merker weg', getUndoInfo() === null);
+
+// Gleicher Eintrag in beiden: das Gerät gewinnt
+const aufGeraet = { cycles: [{ id: 'g', name: 'Neu', startDate: '2026-01-05', weeks: 1, weekTargets: [1], notes: {},
+  exercises: [{ id: 'a', name: 'A', categories: [], intensity: 2 }], sessions: { '2026-01-05': [{ exId: 'a' }] } }],
+  activeCycleId: 'g', tests: [], assessments: [], ascents: [] };
+const sicherung = { cycles: [{ id: 'g', name: 'Alt', startDate: '2026-01-05', weeks: 1, weekTargets: [1], notes: {},
+  exercises: [{ id: 'a', name: 'A alt', categories: [], intensity: 1 }, { id: 'b', name: 'B', categories: [], intensity: 1 }],
+  sessions: { '2026-01-06': [{ exId: 'b' }] } }], activeCycleId: 'g', tests: [], assessments: [],
+  ascents: [{ id: 'l9', date: '2025-05-01', scaleId: 'font', grade: 3, style: 'top', place: 'fels' }] };
+const zus = mergeData(aufGeraet, sicherung);
+eq('bei Gleichem gilt das Gerät', [zus.cycles[0].name, zus.cycles[0].exercises[0].name], ['Neu', 'A']);
+eq('Fehlendes kommt dazu', zus.cycles[0].exercises.map(e => e.id), ['a', 'b']);
+eq('Haken beider Tage', Object.keys(zus.cycles[0].sessions).sort(), ['2026-01-05', '2026-01-06']);
+eq('Logbuch aus der Sicherung', zus.ascents.length, 1);
+
+openRestoreModal(normalizeData(kopie(sicherung)), 'x');
+applyRestore('replace');
+eq('Ersetzen: genau der Stand der Sicherung', appData.cycles.map(c => c.name), ['Alt']);
+undoImport();
+check('auch Ersetzen lässt sich zurücknehmen', gleich(toDocs(appData), toDocs(vorher)));
+
+(async () => {
+  // ═══════════════════════════════════════════════
+  group('Pläne teilen');
+  // ═══════════════════════════════════════════════
+  const quelle = { name: 'Plan für Lisa', weeks: 3, weekTargets: [5, 6, 3, 99],
+    exercises: [
+      { id: 'x', name: 'Max Hang <b>', categories: ['Finger'], intensity: 2, days: [0, 3], desc: '5 × 10 s', measure: true, unit: 'kg' },
+      { id: 'y', name: 'Bouldern', categories: [], intensity: 3 }
+    ], sessions: { '2026-01-05': [{ exId: 'x', value: 20 }] } };
+  const geteilt = planFromCycle(quelle, 'Trainer Max', 'Gut aufwärmen');
+  check('keine Trainingsdaten im Plan', !JSON.stringify(geteilt).includes('2026-01-05') && !('sessions' in geteilt));
+  eq('Wochenziele auf die Wochenzahl gekürzt', geteilt.weekTargets, [5, 6, 3]);
+  const code = await encodePlan(geteilt);
+  check('Code ist link-tauglich', /^[zj][A-Za-z0-9_-]+$/.test(code), code.slice(0, 20));
+  check('komprimiert', code[0] === 'z');
+  const zurueckPlan = await decodePlan(planLink(code));
+  eq('hin und zurück über den Link', zurueckPlan, validatePlan(geteilt));
+  eq('auch nur der Code geht', (await decodePlan(code)).name, 'Plan für Lisa');
+  eq('unkomprimierter Code geht auch',
+    (await decodePlan('j' + b64url(new TextEncoder().encode(JSON.stringify(geteilt))))).exercises.length, 2);
+
+  let fehler = 0;
+  for (const kaputt of ['', 'hallo', 'https://x.de/#plan=zzzz', 'j' + b64url(new TextEncoder().encode('{"exercises":[]}')),
+                        'j' + b64url(new TextEncoder().encode('[1,2]'))]) {
+    try { await decodePlan(kaputt); } catch (e) { fehler++; }
+  }
+  eq('kaputte Links werden abgelehnt', fehler, 5);
+
+  const bereinigt = validatePlan({ name: 'x'.repeat(500), weeks: 999, weekTargets: ['a', -3, 4],
+    exercises: [{ name: 'A', intensity: '5', days: [0, 9, 'x', 0], categories: ['k', 7], desc: 5, measure: 'ja', extra: 'weg' }, { intensity: 1 }],
+    author: { boese: 1 }, sessions: { a: 1 } });
+  eq('fremde Eingaben werden bereinigt', bereinigt, { v: 1, name: 'x'.repeat(80), weeks: 52,
+    weekTargets: [0, 0, 4].concat(Array(49).fill(0)),
+    exercises: [{ name: 'A', categories: ['k'], intensity: 0, days: [0] }] });
+
+  el('planStart').value = '2026-03-02';
+  pendingPlan = zurueckPlan;
+  startImportedPlan();
+  const ausLink = getActiveCycle();
+  eq('importierter Plan wird aktiver Zyklus', [ausLink.name, ausLink.startDate, ausLink.mode, ausLink.weeks], ['Plan für Lisa', '2026-03-02', 'plan', 3]);
+  eq('Übungen mit Tagen und Beschreibung', ausLink.exercises.map(e => [e.name, e.days, e.desc, e.unit]),
+    [['Max Hang <b>', [0, 3], '5 × 10 s', 'kg'], ['Bouldern', undefined, undefined, undefined]]);
+  check('neue IDs', !ausLink.exercises.some(e => e.id === 'x' || e.id === 'y'));
+  eq('Absender und Hinweis bleiben sichtbar', [ausLink.planAuthor, ausLink.planNote], ['Trainer Max', 'Gut aufwärmen']);
+  currentView = 'plan';
+  renderPlan();
+  check('Trainingsplan zeigt Absender und maskiert Namen',
+    el('planContent').innerHTML.includes('Plan von Trainer Max') && el('planContent').innerHTML.includes('Max Hang &lt;b&gt;'));
+
+  done();
+})();

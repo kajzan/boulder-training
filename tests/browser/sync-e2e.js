@@ -147,6 +147,25 @@ const START = {
   ok('Firestore: gebuendelt, ein Dokument je Zyklus plus eines', roh.sort().join() === 'c~c1,misc', roh.join());
   await handy.page.screenshot({ path: path.join(__dirname, 'shot-konto.png') });
 
+  // ── 1b. Woechentliche Sicherung im Konto ──
+  let sicherungen = [];
+  for (let i = 0; i < 30 && !sicherungen.length; i++) {
+    const r = await (await fetch(EMU_FS + '/users/' + uid + '/backups', { headers: { Authorization: 'Bearer owner' } })).json();
+    sicherungen = (r.documents || []).map(d => d.name.split('/').pop());
+    if (!sicherungen.length) await new Promise(r => setTimeout(r, 300));
+  }
+  ok('Konto: woechentliche Sicherung angelegt', sicherungen.length === 1 && /^slot[0-3]$/.test(sicherungen[0]), sicherungen.join());
+  await kontoFenster(handy);
+  await handy.page.click('#accountSheet .list-title:text-is("Wöchentliche Sicherungen")');
+  await handy.page.waitForSelector('#accountSheet .list-sub:has-text("1 Zyklus")', { timeout: 15000 });
+  ok('Konto: Sicherung erscheint in der Liste', true);
+  await handy.page.screenshot({ path: path.join(__dirname, 'shot-sicherungen.png') });
+  await handy.page.click('#accountSheet .list-sub:has-text("1 Zyklus")');
+  await handy.page.waitForSelector('#modalContent .list-row:has-text("Hinzufügen")');
+  ok('Konto: Sicherung laesst sich wiederherstellen', true);
+  await handy.page.evaluate(() => closeModal());
+  await handy.page.waitForTimeout(300);
+
   // ── 2. Laptop ohne Daten meldet sich an ──
   const laptop = await geraet('Laptop');
   await anmelden(laptop, 'kajetan@test.de', 'geheim123', false);

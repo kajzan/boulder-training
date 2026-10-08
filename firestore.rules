@@ -15,5 +15,16 @@ service cloud.firestore {
                                   && request.auth.token.email_verified == true;
       allow delete: if request.auth != null && request.auth.uid == uid;
     }
+    // Wöchentliche Sicherungen (vier Plätze, reihum überschrieben)
+    match /users/{uid}/backups/{slot} {
+      allow read: if request.auth != null
+                  && request.auth.uid == uid
+                  && request.auth.token.email_verified == true;
+      allow create, update: if request.auth != null
+                            && request.auth.uid == uid
+                            && request.auth.token.email_verified == true
+                            && slot in ['slot0', 'slot1', 'slot2', 'slot3'];
+      allow delete: if request.auth != null && request.auth.uid == uid;
+    }
   }
 }

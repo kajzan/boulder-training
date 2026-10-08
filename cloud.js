@@ -191,8 +191,66 @@ function onServerState(snap) {
   if (syncCanon(plan.result) !== syncCanon(local)) {
     replaceAppData(fromDocs(plan.result));
   }
+  if (state.status === 'synced') weeklySnapshot();
   renderCloudBox();
 }
+
+// ── Wöchentliche Sicherung im Konto ──
+// Der Abgleich überträgt auch Versehen sofort überallhin. Deshalb legt die App
+// einmal pro Woche eine vollständige Kopie unter users/<konto>/backups ab, in
+// vier reihum überschriebenen Plätzen – also immer die letzten vier Wochen.
+// Getrennt von den Daten, damit der Abgleich sie nie mitlesen muss.
+const SNAPSHOT_SLOTS = 4;
+let snapshotTried = false;
+
+function currentWeekNumber() {
+  return Math.floor(Date.now() / (7 * 86400000));
+}
+
+function weeklySnapshot() {
+  const u = state.user;
+  if (snapshotTried || !u || !u.emailVerified || !state.ready) return;
+  snapshotTried = true;
+  const week = currentWeekNumber();
+  const mark = 'boulderSnapshot:' + u.uid;
+  try { if (localStorage.getItem(mark) === String(week)) return; } catch (e) {}
+  const data = getAppData();
+  if (!hasUserData(toDocs(data))) return;
+  const batch = writeBatch(db);
+  batch.set(doc(db, 'users', u.uid, 'backups', 'slot' + (week % SNAPSHOT_SLOTS)),
+    { at: new Date().toISOString(), json: JSON.stringify(data) });
+  batch.commit()
+    .then(() => { try { localStorage.setItem(mark, String(week)); } catch (e) {} })
+    .catch(() => {});   // z.B. Regeln noch nicht eingetragen – dann eben nicht
+}
+
+async function loadSnapshots() {
+  const snap = await getDocs(collection(db, 'users', state.user.uid, 'backups'));
+  return snap.docs.map(d => Object.assign({ id: d.id }, d.data()))
+    .filter(b => b.at && typeof b.json === 'string')
+    .sort((a, b) => b.at.localeCompare(a.at));
+}
+
+window.cloudOpenSnapshot = id => {
+  const b = (state.snapshots || []).find(x => x.id === id);
+  if (!b) return;
+  let data;
+  try { data = JSON.parse(b.json); } catch (e) { return; }
+  closeModal();
+  const tag = new Date(b.at).toLocaleDateString('de-DE', { day: 'numeric', month: 'long' });
+  setTimeout(() => openRestoreModal(normalizeData(data), 'Sicherung vom ' + tag), 250);
+};
+
+window.cloudShowSnapshots = async () => {
+  state.sheet = 'backups';
+  state.snapshots = null;
+  renderSheet();
+  try { state.snapshots = await loadSnapshots(); }
+  catch (e) { state.snapshots = []; state.snapshotError = describeError(e); }
+  renderSheet();
+};
+
+window.cloudSignedIn = () => !!(state.user && state.user.emailVerified);
 
 function startSync() {
   state.ready = false;
@@ -347,11 +405,13 @@ window.cloudDeleteAccountConfirm = async () => {
     // Firebase verlangt für das Löschen eine frische Anmeldung
     await reauthenticateWithCredential(user, EmailAuthProvider.credential(user.email, pw));
     stopSync();
-    const snap = await getDocs(collection(db, 'users', user.uid, 'data'));
-    for (let i = 0; i < snap.docs.length; i += BATCH_LIMIT) {
-      const batch = writeBatch(db);
-      snap.docs.slice(i, i + BATCH_LIMIT).forEach(d => batch.delete(d.ref));
-      await batch.commit();
+    for (const name of ['data', 'backups']) {
+      const snap = await getDocs(collection(db, 'users', user.uid, name));
+      for (let i = 0; i < snap.docs.length; i += BATCH_LIMIT) {
+        const batch = writeBatch(db);
+        snap.docs.slice(i, i + BATCH_LIMIT).forEach(d => batch.delete(d.ref));
+        await batch.commit();
+      }
     }
     await deleteUser(user);
     try { localStorage.removeItem(SYNC_KEY); } catch (e) {}
@@ -546,7 +606,7 @@ function renderSheet() {
   // anderes Gerät hat abgemeldet). Dann die passende Ansicht zeigen.
   if (u && (view === 'signin' || view === 'signup')) view = u.emailVerified ? 'account' : 'verify';
   if (u && u.emailVerified && view === 'verify') view = 'verified';
-  if (!u && (view === 'account' || view === 'verify' || view === 'delete')) view = 'signin';
+  if (!u && (view === 'account' || view === 'verify' || view === 'delete' || view === 'backups')) view = 'signin';
   state.sheet = view;
 
   const busy = state.busy ? 'disabled' : '';
@@ -649,6 +709,29 @@ function renderSheet() {
     return;
   }
 
+  if (view === 'backups') {
+    const list = state.snapshots;
+    el.innerHTML = `
+      <div class="sheet-head">
+        <div class="sheet-title">Wöchentliche Sicherungen</div>
+        <div class="sheet-text">Einmal pro Woche legt die App eine Kopie deiner Daten im Konto ab. Wähle eine aus, um sie wiederherzustellen.</div>
+      </div>
+      ${list === null ? '<div class="waiting" style="display:flex;justify-content:center;margin:10px 0 20px"><span class="action-spin small"></span>Lade …</div>'
+        : list.length === 0 ? `<div class="text-muted" style="margin-bottom:16px">${esc(state.snapshotError || 'Noch keine Sicherung. Die erste entsteht automatisch beim nächsten Abgleich.')}</div>`
+        : `<div class="list-group">${list.map(b => {
+            let summary = '';
+            try { summary = dataSummary(normalizeData(JSON.parse(b.json))); } catch (e) {}
+            return `<div class="list-row" onclick="cloudOpenSnapshot('${esc(b.id)}')">
+              <div class="list-main">
+                <div class="list-title">${esc(new Date(b.at).toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' }))}</div>
+                <div class="list-sub" style="display:block">${esc(summary)}</div>
+              </div>
+              <span class="chev">›</span></div>`;
+          }).join('')}</div>`}
+      <button class="btn-link" onclick="cloudSwitchSheet('account')">Zurück</button>`;
+    return;
+  }
+
   // account
   const s = statusText();
   const backup = localStorage.getItem(BACKUP_KEY);
@@ -659,6 +742,9 @@ function renderSheet() {
       <div class="sheet-text sheet-status"><span class="dot" style="background:${s.color}"></span>${esc(s.text)}</div>
     </div>
     <div class="list-group">
+      <div class="list-row" onclick="cloudShowSnapshots()">
+        <div class="list-main"><div class="list-title">Wöchentliche Sicherungen</div><div class="list-sub">Die letzten vier Wochen im Konto</div></div>
+        <span class="chev">›</span></div>
       ${backup ? `<div class="list-row" onclick="cloudDownloadBackup()">
         <div class="list-main"><div class="list-title">Stand vor der Anmeldung</div><div class="list-sub">Als Datei sichern</div></div>
         <span class="chev">›</span></div>` : ''}

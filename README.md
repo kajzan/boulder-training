@@ -94,10 +94,27 @@ dabei nicht berührt.
 
 ## Datensicherung
 
-Einstellungen → **Daten exportieren** schreibt alles in eine JSON-Datei.
-Ohne Konto ist das die einzige Sicherung – Browser räumen ihren Speicher
-gelegentlich auf. Mit Konto liegen die Daten zusätzlich in Firebase. Vor größeren Änderungen und ab und zu zwischendurch
-exportieren.
+Das Konto gleicht ab, es sichert nicht: Ein Versehen landet genauso auf allen
+Geräten. Deshalb:
+
+- **Wöchentliche Sicherung im Konto:** Einmal pro Woche legt die App eine
+  vollständige Kopie unter `users/<konto>/backups` ab, in vier reihum
+  überschriebenen Plätzen. Wiederherstellen unter Einstellungen → Konto →
+  Wöchentliche Sicherungen.
+- **Sicherung als Datei:** Einstellungen → Sicherung exportieren.
+  Ohne Konto ist das die einzige Sicherung.
+- **Wiederherstellen** fragt immer: *Hinzufügen* (nur Fehlendes, nichts wird
+  gelöscht) oder *Ersetzen*. Der Stand davor wird gemerkt und lässt sich in
+  den Einstellungen zurückholen.
+
+## Pläne teilen
+
+Trainingsplan → Plan teilen erzeugt einen Link, in dem der Plan selbst
+steckt (komprimiert, nach dem `#`, geht an keinen Server). Mitgeschickt werden
+nur Übungen, Tage, Beschreibungen und Wochenziele, keine Trainingsdaten. Der
+Empfänger öffnet den Link oder fügt ihn unter Einstellungen → Plan
+importieren ein. Inhalte aus dem Link werden geprüft und begrenzt
+(`validatePlan` in `app.js`).
 
 ## Vor der Veröffentlichung
 

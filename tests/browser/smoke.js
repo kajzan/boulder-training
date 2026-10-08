@@ -41,7 +41,7 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
     await page.evaluate(() => navigator.serviceWorker.ready.then(r => r.scope.endsWith('/boulder-training/'))));
 
   // Erster Start: Wahl zwischen Wochenplan und frei, Zyklus aus Vorlage
-  ok('erster Start bietet Wochenplan und frei an', (await page.locator('.choice-card').count()) === 2);
+  ok('erster Start bietet Wochenplan, frei und Trainer-Plan an', (await page.locator('.choice-card').count()) === 3);
   await page.screenshot({ path: path.join(__dirname, 'shot-start.png') });
   await page.click('.choice-card:has-text("Mit Wochenplan")');
   ok('Wochenplan ist vorgewaehlt', (await page.inputValue('#newCycleMode')) === 'plan');
@@ -165,6 +165,80 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
   ok('Pyramide zeigt den hoechsten Grad', await page.locator('.stat-val:text-is("6B+")').first().isVisible());
   ok('zwei Eintraege im Logbuch', (await page.locator('.log-row').count()) === 2);
   await page.screenshot({ path: path.join(__dirname, 'shot-logbuch.png'), fullPage: true });
+
+  // Plan teilen (ohne Teilen-Menue im Testbrowser: Link in die Zwischenablage)
+  await ctx.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.click('.tab-btn:nth-child(2)');
+  await page.click('.list-row:has-text("Plan teilen")');
+  await page.fill('#sharePlanAuthor', 'Trainerin Lisa');
+  await page.fill('#sharePlanNote', 'Immer gut aufwaermen.');
+  await page.click('button:has-text("Link teilen")');
+  await page.waitForSelector('#sharePlanUrl');
+  const link = await page.inputValue('#sharePlanUrl');
+  ok('Plan-Link erzeugt', link.includes('#plan=z'), link.slice(0, 60));
+  ok('Link liegt in der Zwischenablage', (await page.evaluate(() => navigator.clipboard.readText())) === link);
+  await page.screenshot({ path: path.join(__dirname, 'shot-teilen.png') });
+  await page.evaluate(() => closeModal());
+
+  // Ein Schueler oeffnet den Link in einem frischen Browser
+  const schueler = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const sp = await schueler.newPage();
+  sp.on('pageerror', e => errs.push('Schueler: ' + e.message));
+  await sp.goto(link, { waitUntil: 'networkidle' });
+  await sp.waitForSelector('button:text-is("Als neuen Zyklus starten")');
+  ok('Link zeigt den Plan', await sp.locator('.modal-title:text-is("S")').isVisible() &&
+    await sp.locator('text=von Trainerin Lisa').isVisible());
+  ok('Link wird aus der Adresse entfernt', !(await sp.evaluate(() => location.hash)));
+  await sp.screenshot({ path: path.join(__dirname, 'shot-plan-vorschau.png') });
+  await sp.click('button:text-is("Als neuen Zyklus starten")');
+  await sp.waitForTimeout(300);
+  ok('Schueler hat den Plan als Zyklus', await sp.evaluate(() =>
+    getActiveCycle().exercises.some(e => e.name === 'Klimmzug max' && e.unit === 'kg') &&
+    getActiveCycle().planAuthor === 'Trainerin Lisa' &&
+    Object.keys(getActiveCycle().sessions).length === 0));
+  await schueler.close();
+
+  // Import per Einfuegen in der App
+  await page.click('.tab-btn:nth-child(5)');
+  await page.click('.list-row:has-text("Plan importieren")');
+  await page.fill('#planCode', 'kein link');
+  await page.click('button:text-is("Weiter")');
+  ok('ungueltiger Link: Hinweis', await page.locator('#planCodeErr:has-text("kein gültiger")').isVisible());
+  await page.click('button:text-is("Aus Zwischenablage einfügen")');
+  await page.waitForSelector('button:text-is("Als neuen Zyklus starten")');
+  ok('Einfuegen aus der Zwischenablage oeffnet die Vorschau', true);
+  await page.evaluate(() => closeModal());
+  await page.waitForTimeout(300);
+
+  // Sicherung: exportieren, wiederherstellen (hinzufuegen), rueckgaengig
+  const [dl] = await Promise.all([page.waitForEvent('download'), page.click('.list-row:has-text("Sicherung exportieren")')]);
+  const datei = path.join(__dirname, 'sicherung-test.json');
+  await dl.saveAs(datei);
+  ok('Sicherung traegt das Datum im Namen', /boulder-sicherung-\d{4}-\d{2}-\d{2}\.json/.test(dl.suggestedFilename()));
+  const vorher = await page.evaluate(() => JSON.stringify(toDocs(getAppData())));
+  await page.evaluate(() => { getAppData().cycles.push(getDefaultCycle('Nach dem Export', 2)); saveData(); });
+  const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.click('.list-row:has-text("Sicherung wiederherstellen")')]);
+  await chooser.setFiles(datei);
+  await page.waitForSelector('#modalContent .list-row:has-text("Hinzufügen")');
+  await page.screenshot({ path: path.join(__dirname, 'shot-wiederherstellen.png') });
+  await page.click('#modalContent .list-row:has-text("Hinzufügen")');
+  await page.waitForTimeout(300);
+  ok('Hinzufuegen behaelt den neueren Zyklus', await page.evaluate(() => getAppData().cycles.some(c => c.name === 'Nach dem Export')));
+  await page.click('.list-row:has-text("rückgängig")');
+  ok('Rueckgaengig-Zeile funktioniert', await page.evaluate(() => getAppData().cycles.some(c => c.name === 'Nach dem Export')) &&
+    !(await page.locator('.list-row:has-text("rückgängig")').count()));
+  fs.unlinkSync(datei);
+  void vorher;
+
+  // So sieht es auf dem iPhone aus
+  const iphone = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2,
+    userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1' });
+  const ip = await iphone.newPage();
+  await ip.goto(`http://localhost:8094${BASE}/`, { waitUntil: 'networkidle' });
+  ok('iPhone bekommt das Apple-Aussehen', await ip.evaluate(() => document.documentElement.classList.contains('apple')));
+  await ip.click('.tab-btn:nth-child(5)');
+  await ip.screenshot({ path: path.join(__dirname, 'shot-iphone-einstellungen.png') });
+  await iphone.close();
 
   // Neustart ohne Netz
   await ctx.setOffline(true);

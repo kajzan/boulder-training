@@ -58,9 +58,9 @@ function getDefaultCycle(name, weeks) {
 }
 
 // Migration: ensure all existing cycles have a 'weeks' property
-function migrateCycles() {
+function migrateCycles(d = appData) {
   let changed = false;
-  appData.cycles.forEach(c => {
+  d.cycles.forEach(c => {
     if (typeof c.weeks !== 'number' || c.weeks < 1) {
       c.weeks = 12;
       changed = true;
@@ -100,7 +100,8 @@ function migrateCycles() {
       });
     }
   });
-  if (changed) saveData();
+  if (changed && d === appData) saveData();
+  return changed;
 }
 
 function toDateStr(d) {
@@ -679,6 +680,10 @@ function renderDashboard() {
         <div class="choice-title">Frei</div>
         <div class="choice-text">Du trägst ein, was du trainiert hast – ohne festen Plan.</div>
       </div>
+      <div class="choice-card" onclick="openImportPlanModal()">
+        <div class="choice-title">Plan von deinem Trainer</div>
+        <div class="choice-text">Füge den Link ein, den du bekommen hast.</div>
+      </div>
       <div class="text-muted" style="text-align:center;font-size:11px;margin-top:4px">Lässt sich später in den Einstellungen umstellen.</div>`;
     document.getElementById('navSub').textContent = 'Kein aktiver Zyklus';
     return;
@@ -1157,7 +1162,15 @@ function renderPlan() {
       }).join('')
     : '';
 
+  const planFrom = cycle.planAuthor || cycle.planNote
+    ? `<div class="card">
+        <div class="card-title">Plan${cycle.planAuthor ? ' von ' + esc(cycle.planAuthor) : ''}</div>
+        ${cycle.planNote ? `<div style="font-size:14px;line-height:1.5">${esc(cycle.planNote)}</div>` : ''}
+      </div>`
+    : '';
+
   el.innerHTML = `
+    ${planFrom}
     ${weekPlan ? `<div class="card"><div class="card-title">Wochenplan</div>${weekPlan}</div>` : ''}
     <div class="section-hdr" style="margin-top:0">
       <h2>Übungen</h2>
@@ -1214,6 +1227,15 @@ function renderPlan() {
           onchange="updateWeekTarget(${i}, this.value)">
       </div>
     `}).join('')}
+
+    ${cycle.exercises.length ? `
+    <div class="list-group" style="margin-top:20px">
+      <div class="list-row" onclick="openSharePlanModal()">
+        <span class="list-icon">${SHARE_ICON}</span>
+        <div class="list-main"><div class="list-title">Plan teilen</div><div class="list-sub">Als Link, z.B. an deine Schüler</div></div>
+        <span class="chev">›</span>
+      </div>
+    </div>` : ''}
   `;
 }
 
@@ -1609,8 +1631,22 @@ const ASCENT_PLACES = { halle: 'Halle', board: 'Board', fels: 'Fels' };
 const LOG_PREVIEW = 10;
 let logShowAll = false;
 
-function migrateLogbook() {
-  if (!Array.isArray(appData.ascents)) { appData.ascents = []; saveData(); }
+function migrateLogbook(d = appData) {
+  if (Array.isArray(d.ascents)) return false;
+  d.ascents = [];
+  if (d === appData) saveData();
+  return true;
+}
+
+// Bringt einen fremden Stand (Sicherungsdatei, Konto-Sicherung) auf den
+// aktuellen Aufbau, ohne ihn zu speichern.
+function normalizeData(d) {
+  if (!Array.isArray(d.cycles)) d.cycles = [];
+  if (d.activeCycleId === undefined) d.activeCycleId = null;
+  migrateCycles(d);
+  migrateAssessments(d);
+  migrateLogbook(d);
+  return d;
 }
 
 function ascentGrade(a) {
@@ -1800,6 +1836,7 @@ function renderSettings() {
   const el = document.getElementById('settingsContent');
   const cycle = getActiveCycle();
   const plan = isPlanMode(cycle);
+  const undo = getUndoInfo();
   el.innerHTML = `
     <div class="group-label" style="margin-top:0">Konto</div>
     <div class="list-group" id="cloudBox">
@@ -1828,6 +1865,10 @@ function renderSettings() {
       <div class="list-row" onclick="openNewCycleModal()">
         <div class="list-main"><div class="list-title" style="color:var(--accent)">Neuen Zyklus starten</div></div>
       </div>
+      <div class="list-row" onclick="openImportPlanModal()">
+        <div class="list-main"><div class="list-title">Plan importieren</div><div class="list-sub">Von deinem Trainer, per Link</div></div>
+        <span class="chev">›</span>
+      </div>
     </div>
 
     <div class="group-label">Daten</div>
@@ -1837,9 +1878,13 @@ function renderSettings() {
         <span class="chev">›</span>
       </div>
       <div class="list-row" onclick="importDataPrompt()">
-        <div class="list-main"><div class="list-title">Sicherung importieren</div><div class="list-sub">Ersetzt die Daten auf diesem Gerät</div></div>
+        <div class="list-main"><div class="list-title">Sicherung wiederherstellen</div><div class="list-sub">Aus einer Datei – hinzufügen oder ersetzen</div></div>
         <span class="chev">›</span>
       </div>
+      ${undo ? `<div class="list-row" onclick="undoImport()">
+        <div class="list-main"><div class="list-title">Wiederherstellen rückgängig machen</div><div class="list-sub">Stand vom ${formatDay(toDateStr(new Date(undo.at)))} zurückholen</div></div>
+        <span class="chev">›</span>
+      </div>` : ''}
     </div>
 
     <div class="settings-foot">Boulder Training</div>
@@ -1979,26 +2024,13 @@ function createCycle() {
   if (date) cycle.startDate = date;
   if (mode === 'plan') cycle.mode = 'plan';
 
-  const copyExercise = ex => {
-    const out = {
-      id: Date.now().toString() + Math.random().toString(36).slice(2,7),
-      name: ex.name,
-      categories: exerciseCategories(ex),   // eigene Kopie, nicht dieselbe Liste
-      intensity: ex.intensity
-    };
-    if (exerciseDays(ex).length) out.days = exerciseDays(ex);
-    if (ex.desc) out.desc = ex.desc;
-    if (ex.measure) { out.measure = true; out.unit = ex.unit || ''; }
-    return out;
-  };
-
   if (tpl) {
-    cycle.exercises = tpl.exercises.map(copyExercise);
+    cycle.exercises = tpl.exercises.map(cloneExercise);
     cycle.weekTargets = templateTargets(tpl, weeks);
   } else if (copyFromId) {
     const src = appData.cycles.find(c => c.id === copyFromId);
     if (src) {
-      cycle.exercises = src.exercises.map(copyExercise);
+      cycle.exercises = src.exercises.map(cloneExercise);
       // Copy week targets, truncating or padding as needed
       const srcTargets = src.weekTargets || [];
       cycle.weekTargets = Array(weeks).fill(0).map((_, i) => srcTargets[i] || 0);
@@ -2010,6 +2042,21 @@ function createCycle() {
   saveData();
   closeModal();
   render();
+}
+
+// Kopie einer Übung mit neuer ID – für Vorlagen, kopierte Zyklen und
+// geteilte Pläne. Übernimmt nur den Plan, keine Trainingsdaten.
+function cloneExercise(ex) {
+  const out = {
+    id: Date.now().toString() + Math.random().toString(36).slice(2,7),
+    name: ex.name,
+    categories: exerciseCategories(ex),   // eigene Kopie, nicht dieselbe Liste
+    intensity: ex.intensity
+  };
+  if (exerciseDays(ex).length) out.days = exerciseDays(ex);
+  if (ex.desc) out.desc = ex.desc;
+  if (ex.measure) { out.measure = true; out.unit = ex.unit || ''; }
+  return out;
 }
 
 function togglePlanMode() {
@@ -2050,38 +2097,359 @@ function confirmEndCycle() {
   renderCyclesSheet();
 }
 
+// ═══════════════════════════════════════════════
+// SICHERUNG
+// ═══════════════════════════════════════════════
+// Das Konto gleicht ab, es sichert nicht: Ein Versehen wird genauso auf alle
+// Geräte übertragen. Deshalb gibt es weiter die Sicherung als Datei, und vor
+// jedem Wiederherstellen merkt sich die App den bisherigen Stand.
+const UNDO_KEY = 'boulderApp_vorImport';
+let pendingRestore = null;
+
 function exportData() {
   const json = JSON.stringify(appData, null, 2);
   const blob = new Blob([json], {type: 'application/json'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url; a.download = 'boulder-backup.json'; a.click();
+  a.href = url; a.download = `boulder-sicherung-${toDateStr(new Date())}.json`; a.click();
+}
+
+function dataSummary(d) {
+  const days = new Set();
+  d.cycles.forEach(c => Object.keys(c.sessions || {}).forEach(k => {
+    if ((c.sessions[k] || []).length) days.add(k);
+  }));
+  const n = (x, one, many) => `${x} ${x === 1 ? one : many}`;
+  return [n(d.cycles.length, 'Zyklus', 'Zyklen'), n(days.size, 'Trainingstag', 'Trainingstage'),
+          n((d.assessments || []).length, 'Messung', 'Messungen'), n((d.ascents || []).length, 'Boulder', 'Boulder')].join(' · ');
 }
 
 function importDataPrompt() {
   const input = document.createElement('input');
-  input.type = 'file'; input.accept = '.json';
+  input.type = 'file'; input.accept = '.json,application/json';
   input.onchange = e => {
     const file = e.target.files[0];
+    if (!file) return;
     const reader = new FileReader();
     reader.onload = ev => {
-      try {
-        const imported = JSON.parse(ev.target.result);
-        if (imported.cycles && Array.isArray(imported.cycles)) {
-          appData = imported;
-          // Aeltere Sicherungen kennen noch keine Tests/Assessments
-          migrateCycles();
-          migrateAssessments();
-          migrateLogbook();
-          saveData();
-          alert('Import erfolgreich!');
-          render();
-        } else { alert('Ungültige Datei.'); }
-      } catch { alert('Fehler beim Importieren.'); }
+      let data;
+      try { data = JSON.parse(ev.target.result); } catch { data = null; }
+      if (!data || !Array.isArray(data.cycles)) { alert('Diese Datei ist keine Sicherung der Boulder-App.'); return; }
+      openRestoreModal(normalizeData(data), 'Datei ' + file.name);
     };
     reader.readAsText(file);
   };
   input.click();
+}
+
+// source: Herkunft für die Anzeige, z.B. "Datei …" oder "Sicherung vom …"
+function openRestoreModal(data, source) {
+  pendingRestore = data;
+  const synced = !!(window.cloudSignedIn && window.cloudSignedIn());
+  openModal(`
+    <div class="modal-title">Sicherung wiederherstellen</div>
+    <div class="text-muted" style="margin-bottom:4px">${esc(source)}</div>
+    <div class="text-muted" style="margin-bottom:16px;font-size:12px">${esc(dataSummary(data))}</div>
+    <div class="list-group">
+      <div class="list-row" onclick="applyRestore('merge')">
+        <div class="list-main"><div class="list-title">Hinzufügen</div>
+          <div class="list-sub" style="display:block">Übernimmt nur, was hier fehlt. Nichts wird gelöscht.</div></div>
+        <span class="chev">›</span>
+      </div>
+      <div class="list-row" onclick="applyRestore('replace')">
+        <div class="list-main"><div class="list-title" style="color:var(--red)">Ersetzen</div>
+          <div class="list-sub" style="display:block">Alles durch die Sicherung ersetzen${synced ? ' – auch im Konto und auf deinen anderen Geräten' : ''}.</div></div>
+        <span class="chev">›</span>
+      </div>
+    </div>
+    <div class="group-note">Der jetzige Stand wird vorher gemerkt. In den Einstellungen kannst du das rückgängig machen.</div>
+    <button class="btn btn-ghost btn-full" style="margin-top:14px" onclick="closeModal()">Abbrechen</button>`);
+}
+
+// Gleicher Eintrag in beiden: der Stand auf dem Gerät gewinnt. Was nur in der
+// Sicherung steht – ein Zyklus, ein Haken, ein Boulder –, kommt dazu.
+function mergeData(current, incoming) {
+  return fromDocs(Object.assign({}, toDocs(incoming), toDocs(current)));
+}
+
+function applyRestore(mode) {
+  if (!pendingRestore) return;
+  try {
+    localStorage.setItem(UNDO_KEY, JSON.stringify({ at: new Date().toISOString(), data: appData }));
+  } catch (e) {}
+  appData = normalizeData(mode === 'merge' ? mergeData(appData, pendingRestore) : pendingRestore);
+  pendingRestore = null;
+  saveData();
+  closeModal();
+  render();
+}
+
+function getUndoInfo() {
+  try {
+    const raw = localStorage.getItem(UNDO_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) { return null; }
+}
+
+function undoImport() {
+  const undo = getUndoInfo();
+  if (!undo || !undo.data) return;
+  if (!confirm('Den Stand von vor dem letzten Wiederherstellen zurückholen?')) return;
+  appData = normalizeData(undo.data);
+  try { localStorage.removeItem(UNDO_KEY); } catch (e) {}
+  saveData();
+  render();
+}
+
+// ═══════════════════════════════════════════════
+// PLÄNE TEILEN
+// ═══════════════════════════════════════════════
+// Ein Trainer schickt einen Plan als Link. Der Plan steckt komprimiert im Link
+// selbst (nach dem #, das nie an einen Server geht) – es braucht dafür weder
+// ein Konto noch eine Verbindung zwischen den Konten. Mitgeschickt wird nur
+// der Plan: Übungen, Tage, Beschreibungen, Wochenziele. Keine Trainingsdaten.
+const PLAN_LIMITS = { name: 80, author: 60, note: 600, desc: 600, unit: 12, cat: 30, cats: 5, exercises: 40 };
+
+function planFromCycle(cycle, author, note) {
+  const weeks = cycle.weeks || 12;
+  const plan = {
+    v: 1,
+    name: cycle.name,
+    weeks,
+    weekTargets: (cycle.weekTargets || []).slice(0, weeks),
+    exercises: cycle.exercises.map(ex => {
+      const o = { name: ex.name, categories: exerciseCategories(ex), intensity: parseFloat(ex.intensity) || 0 };
+      if (exerciseDays(ex).length) o.days = exerciseDays(ex);
+      if (ex.desc) o.desc = ex.desc;
+      if (ex.measure) { o.measure = true; o.unit = ex.unit || ''; }
+      return o;
+    })
+  };
+  if (author) plan.author = author;
+  if (note) plan.note = note;
+  return plan;
+}
+
+// Ein Plan aus einem Link ist fremde Eingabe: nur bekannte Felder mit
+// passenden Typen übernehmen, Längen begrenzen. Wirft bei Unbrauchbarem.
+function validatePlan(p) {
+  const str = (v, max) => typeof v === 'string' ? v.trim().slice(0, max) : '';
+  const num = v => (typeof v === 'number' && isFinite(v) && v >= 0) ? Math.min(v, 1000) : 0;
+  if (!p || typeof p !== 'object' || !Array.isArray(p.exercises)) throw new Error('kein Plan');
+  const L = PLAN_LIMITS;
+  const weeks = Math.max(1, Math.min(52, parseInt(p.weeks, 10) || 12));
+  const exercises = p.exercises.slice(0, L.exercises).map(ex => {
+    if (!ex || typeof ex !== 'object') return null;
+    const name = str(ex.name, L.name);
+    if (!name) return null;
+    const o = {
+      name,
+      categories: (Array.isArray(ex.categories) ? ex.categories : []).map(c => str(c, L.cat)).filter(Boolean).slice(0, L.cats),
+      intensity: num(ex.intensity)
+    };
+    const days = Array.isArray(ex.days) ? [...new Set(ex.days.filter(d => Number.isInteger(d) && d >= 0 && d <= 6))].sort() : [];
+    if (days.length) o.days = days;
+    if (str(ex.desc, L.desc)) o.desc = str(ex.desc, L.desc);
+    if (ex.measure === true) { o.measure = true; o.unit = str(ex.unit, L.unit); }
+    return o;
+  }).filter(Boolean);
+  if (!exercises.length) throw new Error('keine Übungen');
+  const plan = {
+    v: 1,
+    name: str(p.name, L.name) || 'Trainingsplan',
+    weeks,
+    weekTargets: Array.from({ length: weeks }, (_, i) => num(Array.isArray(p.weekTargets) ? p.weekTargets[i] : 0)),
+    exercises
+  };
+  if (str(p.author, L.author)) plan.author = str(p.author, L.author);
+  if (str(p.note, L.note)) plan.note = str(p.note, L.note);
+  return plan;
+}
+
+function b64url(bytes) {
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function fromB64url(s) {
+  const bin = atob(s.replace(/-/g, '+').replace(/_/g, '/'));
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+async function pipeBytes(bytes, stream) {
+  return new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(stream)).arrayBuffer());
+}
+
+// "z…" komprimiert, "j…" unkomprimiert (für Browser ohne CompressionStream)
+async function encodePlan(plan) {
+  const bytes = new TextEncoder().encode(JSON.stringify(plan));
+  if (typeof CompressionStream === 'function') {
+    try { return 'z' + b64url(await pipeBytes(bytes, new CompressionStream('deflate-raw'))); } catch (e) {}
+  }
+  return 'j' + b64url(bytes);
+}
+
+// Nimmt den ganzen Link oder nur den Code.
+async function decodePlan(text) {
+  const t = String(text || '').trim();
+  const m = t.match(/plan=([A-Za-z0-9_-]+)/);
+  const code = m ? m[1] : (/^[zj][A-Za-z0-9_-]+$/.test(t) ? t : '');
+  if (!code) throw new Error('kein Code');
+  let bytes = fromB64url(code.slice(1));
+  if (code[0] === 'z') bytes = await pipeBytes(bytes, new DecompressionStream('deflate-raw'));
+  return validatePlan(JSON.parse(new TextDecoder().decode(bytes)));
+}
+
+function planLink(code) {
+  return location.origin + location.pathname + '#plan=' + code;
+}
+
+const SHARE_ICON = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 8l5-5 5 5"/><path d="M5 12v7a2 2 0 002 2h10a2 2 0 002-2v-7"/></svg>';
+
+function openSharePlanModal() {
+  const cycle = getActiveCycle();
+  if (!cycle || !cycle.exercises.length) return;
+  let author = '';
+  try { author = localStorage.getItem('boulderPlanAuthor') || ''; } catch (e) {}
+  openModal(`
+    <div class="modal-title">Plan teilen</div>
+    <div class="text-muted" style="margin-bottom:16px;line-height:1.5">„${esc(cycle.name)}" als Link verschicken, z.B. an deine Schüler. Sie übernehmen ihn in ihrer App als eigenen Zyklus. Mitgeschickt werden nur Übungen, Tage, Beschreibungen und Wochenziele – keine Trainingsdaten.</div>
+    <div class="field"><label>Dein Name (optional)</label>
+      <input type="text" id="sharePlanAuthor" maxlength="${PLAN_LIMITS.author}" value="${esc(author)}" placeholder="z.B. Trainerin Lisa"></div>
+    <div class="field"><label>Hinweis (optional)</label>
+      <textarea id="sharePlanNote" rows="2" maxlength="${PLAN_LIMITS.note}" placeholder="z.B. Vor jeder Einheit 20 min aufwärmen."></textarea></div>
+    <div id="shareResult"></div>
+    <button class="btn btn-primary btn-full" onclick="sharePlan()">${SHARE_ICON} Link teilen</button>
+    <button class="btn-link" onclick="closeModal()">Abbrechen</button>
+  `);
+}
+
+async function sharePlan() {
+  const cycle = getActiveCycle();
+  if (!cycle) return;
+  const author = document.getElementById('sharePlanAuthor')?.value?.trim() || '';
+  const note = document.getElementById('sharePlanNote')?.value?.trim() || '';
+  try { localStorage.setItem('boulderPlanAuthor', author); } catch (e) {}
+  const url = planLink(await encodePlan(planFromCycle(cycle, author, note)));
+  const box = document.getElementById('shareResult');
+  // Auf iPhone und Mac das Teilen-Menü des Systems, sonst in die Zwischenablage
+  if (navigator.share) {
+    try {
+      await navigator.share({ title: 'Trainingsplan: ' + cycle.name, text: `Trainingsplan „${cycle.name}" für die Boulder-App`, url });
+      return closeModal();
+    } catch (e) {
+      if (e && e.name === 'AbortError') return;
+    }
+  }
+  let copied = false;
+  try { await navigator.clipboard.writeText(url); copied = true; } catch (e) {}
+  if (box) box.innerHTML = `
+    <div class="sheet-notice">${copied ? 'Link kopiert – füge ihn in eine Nachricht ein.' : 'Kopiere diesen Link und schick ihn weiter:'}</div>
+    <div class="field"><input type="text" id="sharePlanUrl" readonly value="${esc(url)}" onclick="this.select()"></div>`;
+}
+
+function openImportPlanModal() {
+  openModal(`
+    <div class="modal-title">Plan importieren</div>
+    <div class="text-muted" style="margin-bottom:16px;line-height:1.5">Füge den Link ein, den du von deinem Trainer bekommen hast.</div>
+    <div class="field">
+      <textarea id="planCode" rows="3" placeholder="https://…#plan=…" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea>
+    </div>
+    ${navigator.clipboard && navigator.clipboard.readText
+      ? `<button class="btn btn-ghost btn-full" style="margin-bottom:10px" onclick="pastePlanCode()">Aus Zwischenablage einfügen</button>` : ''}
+    <div id="planCodeErr" class="sheet-error"></div>
+    <button class="btn btn-primary btn-full" onclick="readPlanCode()">Weiter</button>
+    <button class="btn-link" onclick="closeModal()">Abbrechen</button>
+  `);
+}
+
+async function pastePlanCode() {
+  try {
+    const t = await navigator.clipboard.readText();
+    const el = document.getElementById('planCode');
+    if (el) el.value = t;
+    readPlanCode();
+  } catch (e) {}
+}
+
+async function readPlanCode() {
+  const text = document.getElementById('planCode')?.value || '';
+  try {
+    openPlanPreview(await decodePlan(text));
+  } catch (e) {
+    const err = document.getElementById('planCodeErr');
+    if (err) err.textContent = 'Das ist kein gültiger Plan-Link. Bitte den ganzen Link einfügen.';
+  }
+}
+
+let pendingPlan = null;
+
+// fromLink: der Plan kam über einen geöffneten Link (Browser). Auf dem iPhone
+// ist das Safari und nicht die App vom Home-Bildschirm – die haben getrennte
+// Speicher. Dann zusätzlich erklären, wie der Plan in die App kommt.
+function openPlanPreview(plan, fromLink) {
+  pendingPlan = plan;
+  const standalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || navigator.standalone;
+  const ios = /iPhone|iPad|iPod/.test(navigator.userAgent || '');
+  const byDay = DAYS_DE.map((d, i) => {
+    const names = plan.exercises.filter(ex => (ex.days || []).includes(i)).map(ex => esc(ex.name));
+    return names.length ? `<div class="plan-day"><span class="plan-wd">${d}</span><span>${names.join(', ')}</span></div>` : '';
+  }).join('');
+  openModal(`
+    <div class="modal-title" style="margin-bottom:4px">${esc(plan.name)}</div>
+    <div class="text-muted" style="margin-bottom:14px">${plan.author ? 'von ' + esc(plan.author) + ' · ' : ''}${plan.weeks} Wochen · ${plan.exercises.length} Übungen</div>
+    ${fromLink && ios && !standalone ? `
+      <div class="sheet-notice" style="line-height:1.5">Nutzt du die App vom Home-Bildschirm? Dann kopiere den Link und füge ihn dort unter Einstellungen → Plan importieren ein.
+        <button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="navigator.clipboard.writeText(location.href.split('#')[0] + '#plan=' + (window.__planCode || ''));this.textContent='Kopiert'">Link kopieren</button>
+      </div>` : ''}
+    ${plan.note ? `<div class="card" style="font-size:14px;line-height:1.5">${esc(plan.note)}</div>` : ''}
+    ${byDay ? `<div class="card"><div class="card-title">Wochenplan</div>${byDay}</div>` : ''}
+    <div class="list-group" style="margin-bottom:16px">
+      ${plan.exercises.map(ex => `<div class="list-row" style="cursor:default;align-items:flex-start">
+        <div class="list-main">
+          <div class="list-title">${esc(ex.name)}</div>
+          ${ex.desc ? `<div class="list-sub" style="display:block;line-height:1.4">${esc(ex.desc)}</div>` : ''}
+        </div>
+        <span class="exercise-int" style="margin:2px 0 0">×${fmtNum(ex.intensity)}</span>
+      </div>`).join('')}
+    </div>
+    <div class="field"><label>Start am</label><input type="date" id="planStart" value="${toDateStr(new Date())}"></div>
+    <button class="btn btn-primary btn-full" onclick="startImportedPlan()">Als neuen Zyklus starten</button>
+    <button class="btn-link" onclick="closeModal()">Abbrechen</button>
+  `);
+}
+
+function startImportedPlan() {
+  const plan = pendingPlan;
+  if (!plan) return;
+  const cycle = getDefaultCycle(plan.name, plan.weeks);
+  const start = document.getElementById('planStart')?.value;
+  if (start) cycle.startDate = start;
+  if (plan.exercises.some(ex => (ex.days || []).length)) cycle.mode = 'plan';
+  cycle.exercises = plan.exercises.map(cloneExercise);
+  cycle.weekTargets = plan.weekTargets.slice(0, cycle.weeks);
+  if (plan.author) cycle.planAuthor = plan.author;
+  if (plan.note) cycle.planNote = plan.note;
+  appData.cycles.push(cycle);
+  appData.activeCycleId = cycle.id;
+  pendingPlan = null;
+  saveData();
+  closeModal();
+  switchView('dashboard');
+}
+
+// Wurde die App über einen Plan-Link geöffnet?
+async function checkPlanLink() {
+  if (typeof location === 'undefined' || typeof history === 'undefined') return;
+  const m = (location.hash || '').match(/^#plan=([A-Za-z0-9_-]+)/);
+  if (!m) return;
+  window.__planCode = m[1];
+  history.replaceState(null, '', location.pathname + location.search);
+  try { openPlanPreview(await decodePlan(m[1]), true); }
+  catch (e) { alert('Dieser Plan-Link ist unvollständig oder beschädigt.'); }
 }
 
 // ═══════════════════════════════════════════════
@@ -2137,21 +2505,22 @@ function formatCounts(test, value) {
   return parts.length ? parts.join(' · ') : '–';
 }
 
-function migrateAssessments() {
+function migrateAssessments(d = appData) {
   let changed = false;
-  if (!Array.isArray(appData.tests)) { appData.tests = []; changed = true; }
-  if (!Array.isArray(appData.assessments)) { appData.assessments = []; changed = true; }
-  appData.tests.forEach(t => {
+  if (!Array.isArray(d.tests)) { d.tests = []; changed = true; }
+  if (!Array.isArray(d.assessments)) { d.assessments = []; changed = true; }
+  d.tests.forEach(t => {
     if (!t.kind) { t.kind = 'number'; changed = true; }
     if (t.unit === undefined) { t.unit = ''; changed = true; }
     if (t.category === undefined) { t.category = ''; changed = true; }
     if (t.higherIsBetter === undefined) { t.higherIsBetter = true; changed = true; }
     if (t.usesBodyweight === undefined) { t.usesBodyweight = false; changed = true; }
   });
-  appData.assessments.forEach(a => {
+  d.assessments.forEach(a => {
     if (!Array.isArray(a.results)) { a.results = []; changed = true; }
   });
-  if (changed) saveData();
+  if (changed && d === appData) saveData();
+  return changed;
 }
 
 function getTest(testId) {
@@ -3060,6 +3429,7 @@ migrateCycles();
 migrateAssessments();
 migrateLogbook();
 render();
+checkPlanLink();
 
 // Offline-Fähigkeit. Fehlt beim Öffnen als lokale Datei – dann läuft die App
 // wie bisher, nur eben ohne Zwischenspeicher.

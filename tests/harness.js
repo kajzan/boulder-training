@@ -38,6 +38,7 @@ function install() {
     createElement: () => ({ click() {}, setAttribute() {}, style: {} })
   };
   globalThis.navigator = {};
+  globalThis.location = { origin: 'https://kajzan.github.io', pathname: '/boulder-training/', search: '', hash: '' };
   globalThis.window = { addEventListener() {} };
   globalThis.alert = m => { throw new Error('unerwarteter alert: ' + m); };
   globalThis.confirm = () => true;

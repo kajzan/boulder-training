@@ -40,6 +40,7 @@ font-display: swap;
   --red: #ff5252;
   --red-bg: rgba(255,82,82,0.12);
 
+  --seg-on: #3a3a3a;
   --radius: 14px;
   --radius-sm: 8px;
   --safe-bottom: env(safe-area-inset-bottom, 0px);
@@ -369,15 +370,26 @@ label { font-size: 12px; color: var(--text-muted); display: block; margin-bottom
 }
 .plan-day { display: flex; gap: 10px; font-size: 13px; padding: 3px 0; }
 .plan-wd { font-family: 'DM Mono', monospace; color: var(--accent); width: 22px; flex-shrink: 0; }
-.weekday-pick, .seg { display: flex; gap: 4px; }
-.weekday-pick button, .seg button {
+.weekday-pick { display: flex; gap: 4px; }
+.weekday-pick button {
   flex: 1; padding: 8px 0; border-radius: var(--radius-sm);
   background: var(--surface2); border: 1px solid var(--border); color: var(--text-muted);
   font-family: inherit; font-size: 13px; cursor: pointer;
 }
-.weekday-pick button.on, .seg button.on {
-  background: var(--accent-dim); border-color: var(--accent); color: var(--accent);
+.weekday-pick button.on { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+
+/* Segmentierte Auswahl wie bei iOS: eine Spur, darin ein heller Schieber */
+.seg {
+  display: flex; padding: 2px; border-radius: 9px;
+  background: var(--surface2);
 }
+.seg button {
+  flex: 1; padding: 7px 0; border: none; border-radius: 7px;
+  background: transparent; color: var(--text-muted);
+  font-family: inherit; font-size: 13px; font-weight: 500; cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+.seg button.on { background: var(--seg-on); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,0.3); }
 textarea { resize: vertical; font-size: 14px; line-height: 1.4; }
 
 /* ── MESSWERT BEIM ABHAKEN ── */
@@ -513,3 +525,33 @@ textarea { resize: vertical; font-size: 14px; line-height: 1.4; }
 }
 .action-spin.small { width: 12px; height: 12px; margin: 0; border-width: 1.5px; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── APPLE: Systemschrift und iOS-Farben ──
+   Gesetzt per Klasse .apple am <html> (siehe index.html). Die Zahlen bleiben
+   in DM Mono – das ist das Markenzeichen der App. */
+.apple {
+  --bg: #000000;
+  --surface: #1c1c1e;
+  --surface2: #2c2c2e;
+  --border: #38383a;
+  --text-muted: #8e8e93;
+  --text-dim: #636366;
+  --seg-on: #636366;
+  --radius: 12px;
+}
+.apple body, .apple input, .apple select, .apple textarea, .apple button,
+.apple .btn, .apple .tab-btn {
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
+}
+.apple body { -webkit-font-smoothing: antialiased; }
+.apple .nav, .apple .tabs { background: rgba(0,0,0,0.8); }
+.apple .tab-btn { font-size: 10px; }
+.apple input, .apple select, .apple textarea { font-size: 16px; }
+.apple .section-hdr h2 { font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
+.apple .modal-title, .apple .sheet-title { letter-spacing: -0.01em; }
+.apple .modal { border-radius: 14px 14px 0 0; }
+.apple .list-row { min-height: 48px; padding: 11px 16px; }
+.apple .list-title { font-size: 17px; letter-spacing: -0.02em; }
+.apple .list-sub { font-size: 13px; }
+.apple .group-label { text-transform: uppercase; font-size: 12px; letter-spacing: 0.02em; font-weight: 400; }
+.list-icon { color: var(--accent); display: flex; }
