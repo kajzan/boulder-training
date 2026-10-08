@@ -1422,7 +1422,7 @@ check('auch Ersetzen lässt sich zurücknehmen', gleich(toDocs(appData), toDocs(
   currentView = 'dashboard';
   renderDashboard();
   check('Übersicht beschriftet mit Trainingszeit und Minuten',
-    el('dashContent').innerHTML.includes('Trainingszeit (min)') && el('dashContent').innerHTML.includes('min Ziel'));
+    el('dashContent').innerHTML.includes('Trainingszeit (min)') && /von [0-9]+ min/.test(el('dashContent').innerHTML));
   el('newCycleUnit').dataset.val = '';
 
   // ═══════════════════════════════════════════════

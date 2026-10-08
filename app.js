@@ -918,54 +918,38 @@ function renderDashboard() {
     ${isPlanMode(cycle) ? renderTodayCard(cycle, today) : ''}
     <div class="section-hdr"><h2>Diese Woche</h2>${weekHdrRight}</div>
 
-    <div class="card mb-0">
-      <div class="card-title">Woche ${weekIdx+1} von ${totalWeeks} · ${unit.title}</div>
-      <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:6px">
-        <span style="font-family:'DM Mono',monospace;font-size:32px;color:var(--accent)">${fmtNum(weekInt)}</span>
-        <span class="text-muted">/ ${fmtAmount(cycle, target)} Ziel</span>
+    <div class="card week-card">
+      <div class="card-title">Woche ${weekIdx+1} von ${totalWeeks}${(() => {
+        const plan = weekPlanFor(cycle, weekIdx);
+        return plan ? ` · <span style="color:${weekPlanColor(cycle, plan)}">${esc(plan.name)}</span>` : ` · ${unit.title}`;
+      })()}</div>
+      <div class="week-total">
+        <span class="week-total-val">${fmtNum(weekInt)}</span>
+        <span class="text-muted">von ${fmtAmount(cycle, target)}</span>
         <span class="intensity-badge ${iClass}" style="margin-left:auto">${intensityLabel(weekInt, target, unit.tol)}</span>
       </div>
       <div class="progress-bar-wrap">
         <div class="progress-bar-fill" style="width:${pct}%;background:${barColor}"></div>
       </div>
-    </div>
-    `}
-
-    <div class="stats-row" style="margin-top:10px">
-      <div class="stat-card">
-        <div class="stat-val">${weekIdx+1}<span style="font-size:13px;color:var(--text-muted)">/${totalWeeks}</span></div>
-        <div class="stat-lbl">Aktuelle Woche</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-val">${trainingDays}</div>
-        <div class="stat-lbl">Trainingstage gesamt</div>
-      </div>
-    </div>
-
-    ${renderIntensityChart(cycle)}
-
-    ${paused ? '' : `
-    <div class="section-hdr" style="margin-top:8px"><h2>Diese Trainingswoche</h2></div>
-    <div class="card">
-      <div class="week-grid">
+      <div class="week-grid" style="margin-top:16px">
         ${dayLabelsShort.map((d, i) => {
           const dateStr = weekDays[i];
           const exIds = cycle.sessions[dateStr] || [];
           const isToday = dateStr === today;
           const planned = exIds.length === 0 && plannedExercises(cycle, dateStr).length > 0;
-          return `<div class="day-col">
-            <div class="day-label" style="${isToday ? 'color:var(--accent)' : ''}">${d}</div>
-            <div class="day-dot ${exIds.length > 0 ? 'has-session' : ''} ${planned ? 'planned' : ''}"
-                 style="${isToday ? 'border-color:var(--accent);' : ''}"
-                 onclick="openDayModal('${dateStr}')">
+          return `<button type="button" class="day-col" onclick="openDayModal('${dateStr}')">
+            <span class="day-label ${isToday ? 'today' : ''}">${d}</span>
+            <span class="day-dot ${exIds.length > 0 ? 'has-session' : ''} ${planned ? 'planned' : ''} ${isToday ? 'today' : ''}">
               ${exIds.length > 0 ? exIds.length : ''}
-            </div>
-          </div>`;
+            </span>
+          </button>`;
         }).join('')}
       </div>
-      <div style="text-align:center;font-size:12px;color:var(--text-muted);margin-top:4px">${formatDateRange(weekDays[0], weekDays[6])}</div>
+      <div class="week-foot">${formatDateRange(weekDays[0], weekDays[6])} · ${trainingDays} ${trainingDays === 1 ? 'Trainingstag' : 'Trainingstage'} im Zyklus</div>
     </div>
     `}
+
+    ${renderIntensityChart(cycle)}
 
     ${renderWeekList(cycle, weekIdx, paused)}
   `;
@@ -1133,7 +1117,7 @@ function buildDayModalContent(dateStr, returnToWeek) {
         const cats = exerciseCategories(ex);
         const unit = ex.unit ? ` (${esc(ex.unit)})` : '';
 
-        return `<div class="check-row" style="display:flex;align-items:center;gap:8px;padding:6px 0">
+        return `<div class="check-row day-ex ${checked ? 'done' : ''}">
           <div onclick="toggleDayEx('${dateStr}','${ex.id}', ${returnToWeek !== undefined && returnToWeek !== null ? returnToWeek : 'null'})"
                style="display:flex;align-items:center;gap:10px;flex:1;min-width:0;cursor:pointer">
             <div class="check-box ${checked ? 'checked' : ''}" style="flex-shrink:0">
@@ -1141,9 +1125,9 @@ function buildDayModalContent(dateStr, returnToWeek) {
             </div>
             <div style="flex:1;min-width:0">
               <div class="check-label" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(ex.name)}</div>
-              <div style="font-size:11px;color:var(--text-muted);font-family:'DM Mono',monospace;display:flex;align-items:center;gap:5px;flex-wrap:wrap">
-                ${cats.length ? `<span style="font-family:'DM Sans',sans-serif;display:inline-flex;gap:5px">${catLabelsHtml(cats, allCats, 13)}</span><span style="color:var(--text-dim)">·</span>` : ''}
-                <span>Plan: ${fmtAmount(cycle, planAmount)}</span>
+              <div class="day-ex-sub">
+                ${cats.length ? `<span style="display:inline-flex;gap:5px">${catLabelsHtml(cats, allCats, 12)}</span><span style="color:var(--text-dim)">·</span>` : ''}
+                <span>${fmtExAmount(cycle, planAmount)}</span>
                 ${ov !== null && ov !== parseFloat(planAmount) ? `<span style="color:var(--accent)">→ ${fmtNum(ov)}</span>` : ''}
               </div>
               ${pl && pl.note ? `<div class="ex-note">${esc(pl.note)}</div>` : ''}
@@ -1180,10 +1164,9 @@ function buildDayModalContent(dateStr, returnToWeek) {
     : `<button class="btn btn-ghost btn-full" onclick="closeModal()">Fertig</button>`;
 
   return `
-    <div class="modal-title">${title}</div>
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">
-      <span class="text-muted">${unitInfo(cycle).day}:</span>
-      <span id="dayIntDisplay" style="font-family:'DM Mono',monospace;font-size:18px;color:var(--accent)">${fmtAmount(cycle, dayInt)}</span>
+    <div class="day-head">
+      <div class="modal-title" style="margin:0">${title}</div>
+      <div class="day-total"><span id="dayIntDisplay">${fmtAmount(cycle, dayInt)}</span><span>${unitInfo(cycle).day}</span></div>
     </div>
     ${exList}
     <div class="divider"></div>
@@ -2993,30 +2976,23 @@ function renderAssessment() {
   const allCats = getAllCategoriesInCycle(getActiveCycle() || { exercises: [] });
 
   const measureList = measurements.length === 0
-    ? `<div class="empty" style="padding:24px 0"><div class="empty-icon">📏</div><div>${
-        tests.length === 0
-          ? 'Lege zuerst unten einen Test an.'
-          : 'Noch keine Messung erfasst.'
-      }</div></div>`
+    ? `<div class="card text-muted" style="text-align:center">${
+        tests.length === 0 ? 'Lege zuerst oben einen Test an.' : 'Noch keine Messung erfasst.'}</div>`
     : measurements.map(a => {
         const cycle = appData.cycles.find(c => c.id === a.cycleId);
         const d = parseDate(a.date);
-        return `<div class="week-row" onclick="openAssessmentModal('${a.id}')">
-          <div class="week-row-left">
-            <div class="week-row-name">${esc(a.label || 'Messung')}</div>
-            <div class="week-row-date">${d.toLocaleDateString('de-DE')}${
-              cycle ? ' · ' + esc(cycle.name) : ''}</div>
+        return `<div class="list-row" onclick="openAssessmentModal('${a.id}')">
+          <div class="list-main">
+            <div class="list-title">${esc(a.label || 'Messung')}</div>
+            <div class="list-sub">${d.getDate()}. ${MONTHS_DE[d.getMonth()]} ${d.getFullYear()}${cycle ? ' · ' + esc(cycle.name) : ''}</div>
           </div>
-          <div style="display:flex;align-items:center;gap:4px;flex-shrink:0">
-            <span style="font-family:'DM Mono',monospace;font-size:13px;color:var(--text-muted)">${
-              a.results.length} ${a.results.length === 1 ? 'Wert' : 'Werte'}</span>
-            <button class="del-btn" onclick="event.stopPropagation(); deleteAssessment('${a.id}')" title="Messung löschen">×</button>
-          </div>
+          <span class="list-value">${a.results.length} ${a.results.length === 1 ? 'Wert' : 'Werte'}</span>
+          <button class="del-btn" onclick="event.stopPropagation(); deleteAssessment('${a.id}')" title="Messung löschen">×</button>
         </div>`;
       }).join('');
 
   const testList = tests.length === 0
-    ? `<div class="empty" style="padding:24px 0"><div class="empty-icon">🎯</div><div>Noch keine Tests.<br>Z.B. „Max Hang 20 mm" oder „Max Klimmzüge".</div></div>`
+    ? `<div class="card text-muted" style="text-align:center;line-height:1.5">Noch keine Tests – z.B. „Max Hang 20 mm" oder „Max Klimmzüge".</div>`
     : tests.map(t => {
         const cat = (t.category && t.category.trim()) ? t.category.trim() : '';
         const catColor = cat ? categoryColor(cat, allCats) : '#888';
@@ -3028,37 +3004,32 @@ function renderAssessment() {
                      : (t.unit || 'Zahl');
         if (!t.higherIsBetter) kindText += ' · weniger ist besser';
         if (t.usesBodyweight) kindText += ' · mit KG';
-        return `<div class="exercise-item" onclick="openTestProgressModal('${t.id}')" style="cursor:pointer">
-          <div style="flex:1;min-width:0">
-            <div class="exercise-name">${esc(t.name)}</div>
-            <div style="font-size:11px;color:var(--text-muted);margin-top:2px;display:flex;align-items:center;gap:5px;flex-wrap:wrap">
-              ${cat ? `<span style="color:${catColor};font-size:14px;line-height:1">●</span><span>${esc(cat)}</span><span style="color:var(--text-dim)">·</span>` : ''}
+        return `<div class="list-row" onclick="openTestProgressModal('${t.id}')">
+          <div class="list-main">
+            <div class="list-title">${esc(t.name)}</div>
+            <div class="list-sub" style="flex-wrap:wrap">
+              ${cat ? `<span style="color:${catColor};line-height:1">●</span><span>${esc(cat)}</span><span style="color:var(--text-dim)">·</span>` : ''}
               <span>${esc(kindText)}</span>
             </div>
           </div>
-          <div class="exercise-int">${latest ? formatTestValue(t, latest.value) : '–'}</div>
+          <span class="list-value accent">${latest ? formatTestValue(t, latest.value) : '–'}</span>
           <button class="del-btn" onclick="event.stopPropagation(); deleteTest('${t.id}')" title="Test löschen">×</button>
         </div>`;
       }).join('');
 
   el.innerHTML = `
     <div class="section-hdr" style="margin-top:0">
-      <h2>Messungen</h2>
-      ${tests.length > 0
-        ? `<button class="btn btn-primary btn-sm" onclick="openAssessmentModal()">+ Neue Messung</button>`
-        : ''}
-    </div>
-    ${measureList}
-
-    <div class="divider"></div>
-    <div class="section-hdr">
       <h2>Tests</h2>
-      <button class="btn btn-primary btn-sm" onclick="openTestModal()">+ Test</button>
+      <button class="btn ${tests.length ? 'btn-ghost' : 'btn-primary'} btn-sm" onclick="openTestModal()">+ Test</button>
     </div>
-    ${testList}
-    ${tests.length > 0
-      ? `<div style="font-size:11px;color:var(--text-dim);text-align:center;margin-top:8px">Tippe einen Test an, um seinen Verlauf zu sehen.</div>`
-      : ''}
+    ${tests.length ? `<div class="list-group">${testList}</div>
+      <div class="group-note" style="text-align:center">Test antippen für seinen Verlauf.</div>` : testList}
+
+    <div class="section-hdr">
+      <h2>Messungen</h2>
+      ${tests.length > 0 ? `<button class="btn btn-primary btn-sm" onclick="openAssessmentModal()">+ Messung</button>` : ''}
+    </div>
+    ${measurements.length ? `<div class="list-group">${measureList}</div>` : measureList}
   `;
 }
 

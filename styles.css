@@ -808,3 +808,50 @@ textarea { resize: vertical; font-size: 14px; line-height: 1.4; }
 .log-flash { font-size: 10px; }
 .log-chip.new { animation: pop 0.5s ease; border-color: var(--accent); }
 @keyframes pop { 0% { transform: scale(0.6); opacity: 0; } 60% { transform: scale(1.12); } 100% { transform: scale(1); } }
+
+/* ═══ FEINSCHLIFF ═══ */
+/* Diese Woche: Umfang und Tage in einer Karte */
+.week-total { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
+.week-total-val { font-family: 'DM Mono', monospace; font-size: 36px; line-height: 1; color: var(--accent); }
+.week-card .week-grid { margin-bottom: 0; }
+.week-card .day-col { background: none; border: none; padding: 0; cursor: pointer; font-family: inherit; color: inherit; }
+.day-label.today { color: var(--accent); }
+.day-dot { width: 36px; height: 36px; font-size: 12px; }
+.day-dot.today { border-color: var(--accent); }
+.day-dot.has-session { background: var(--accent); color: #000; border-color: var(--accent); font-weight: 600; }
+.week-foot { text-align: center; font-size: 11px; color: var(--text-dim); margin-top: 12px; }
+.progress-bar-wrap { height: 8px; border-radius: 4px; }
+.progress-bar-fill { border-radius: 4px; }
+
+/* Wochenliste kompakter */
+.week-row { padding: 10px 14px; margin-bottom: 6px; }
+.week-row-num { font-size: 11px; }
+.week-row-date { font-size: 13px; color: var(--text); margin-top: 1px; }
+
+/* Ruhige, gleichmäßige Abstände */
+.section-hdr { margin-top: 26px; }
+.section-hdr h2 { font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
+.card-title { letter-spacing: 0.08em; }
+.btn { border-radius: 10px; }
+.btn-primary { font-weight: 600; }
+.modal-title { font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
+
+/* Tagesdialog */
+.day-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
+.day-total { display: flex; flex-direction: column; align-items: flex-end; flex-shrink: 0; }
+.day-total span:first-child { font-family: 'DM Mono', monospace; font-size: 20px; color: var(--accent); line-height: 1.1; }
+.day-total span:last-child { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.08em; margin-top: 2px; }
+.check-row.day-ex { display: flex; align-items: center; gap: 8px; padding: 9px 0; border-bottom: 1px solid var(--border); }
+.check-row.day-ex .check-box { width: 26px; height: 26px; border-radius: 8px; }
+.check-row.day-ex.done .check-label { color: var(--text-muted); }
+.check-row.day-ex .check-label { font-size: 15px; }
+.day-ex-sub { font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin-top: 2px; }
+.list-value { font-family: 'DM Mono', monospace; font-size: 13px; color: var(--text-muted); flex-shrink: 0; }
+.list-value.accent { color: var(--accent); font-size: 14px; }
+.list-row .del-btn { margin-right: -8px; }
+/* Große Kennzahlen in der Textschrift: ruhiger, und die Null ohne Schrägstrich */
+.week-total-val, .day-total span:first-child, .log-big, .stat-val, .list-value, .we-total, .today-amt {
+  font-family: inherit; font-variant-numeric: tabular-nums; font-weight: 600; letter-spacing: -0.01em;
+}
+.week-total-val { font-size: 40px; }
+.check-row.day-ex:last-of-type { border-bottom: none; }

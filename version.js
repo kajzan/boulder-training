@@ -3,4 +3,4 @@
 //   sh tools/version.sh
 // ausführen. Das Skript setzt dieselbe Nummer auch in sw.js; eine neue
 // Nummer sorgt dafür, dass installierte Geräte den neuen Stand laden.
-const APP_VERSION = { name: '21', date: '2026-10-08 20:40' };
+const APP_VERSION = { name: '22', date: '2026-10-08 20:42' };
