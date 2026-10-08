@@ -87,6 +87,7 @@ Browsertests (optional, brauchen `playwright` und für den Abgleich zusätzlich
 
 ```sh
 node tests/browser/smoke.js
+node tests/browser/explore.js     # viele Szenarien und Randfälle, prüft Datenstimmigkeit
 firebase emulators:exec --project demo-boulder --only auth,firestore "node tests/browser/sync-e2e.js"
 ```
 

@@ -121,6 +121,11 @@ function migrateCycles(d = appData) {
   return changed;
 }
 
+// Zahl aus einer Eingabe – auch mit deutschem Komma ("4,5")
+function parseNum(v) {
+  return parseFloat(String(v === undefined || v === null ? '' : v).trim().replace(',', '.'));
+}
+
 function toDateStr(d) {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -875,8 +880,12 @@ function renderDashboard() {
   const iClass = intensityClass(weekInt, target, unit.tol);
   const today = toDateStr(new Date());
   const paused = isCyclePaused(cycle);
+  const status = cycleStatus(cycle);
 
-  document.getElementById('navSub').textContent = cycle.name + (paused ? ' · Pause' : ' · Woche ' + (weekIdx + 1));
+  document.getElementById('navSub').textContent = cycle.name + (paused ? ' · Pause'
+    : status === 'future' ? ' · startet ' + formatDay(cycle.startDate)
+    : status === 'ended' ? ' · beendet'
+    : ' · Woche ' + (weekIdx + 1));
 
   // Stats: count completed exercise sessions across cycle
   let completedExercises = 0;
@@ -914,7 +923,7 @@ function renderDashboard() {
 
   el.innerHTML = `
     ${renderAssessmentReminder()}
-    ${paused ? pauseCard : `
+    ${paused ? pauseCard : status !== 'running' ? renderStatusCard(cycle, status) : `
     ${isPlanMode(cycle) ? renderTodayCard(cycle, today) : ''}
     <div class="section-hdr"><h2>Diese Woche</h2>${weekHdrRight}</div>
 
@@ -951,8 +960,32 @@ function renderDashboard() {
 
     ${renderIntensityChart(cycle)}
 
-    ${renderWeekList(cycle, weekIdx, paused)}
+    ${renderWeekList(cycle, weekIdx, paused || status !== 'running')}
   `;
+}
+
+// Noch nicht gestartet oder schon vorbei – dann gibt es kein "Diese Woche"
+function cycleStatus(cycle) {
+  const today = toDateStr(new Date());
+  if (today < cycle.startDate) return 'future';
+  if (!isCyclePaused(cycle) && today > getCycleEndDate(cycle)) return 'ended';
+  return 'running';
+}
+
+function renderStatusCard(cycle, status) {
+  const today = toDateStr(new Date());
+  if (status === 'future') {
+    const n = daysBetween(today, cycle.startDate);
+    return `<div class="pause-hero">
+      <div class="sheet-title">Startet ${n === 1 ? 'morgen' : `in ${n} Tagen`}</div>
+      <div class="sheet-text">Am ${DAYS_FULL[weekdayOf(cycle.startDate)]}, ${formatDay(cycle.startDate)} beginnt Woche 1 von ${cycle.weeks || 12}.</div>
+    </div>`;
+  }
+  return `<div class="pause-hero">
+    <div class="sheet-title">Zyklus beendet</div>
+    <div class="sheet-text">„${esc(cycle.name)}" lief bis ${formatDay(getCycleEndDate(cycle))}. Zeit für eine Messung und den nächsten Zyklus.</div>
+    <button class="btn btn-primary btn-full" style="margin-top:18px" onclick="openNewCycleModal()">Neuen Zyklus starten</button>
+  </div>`;
 }
 
 
@@ -1203,7 +1236,7 @@ function setOverride(dateStr, exId, value) {
   if (trimmed === '') {
     delete entry.overrideInt;
   } else {
-    const v = parseFloat(trimmed);
+    const v = parseNum(trimmed);
     if (isNaN(v) || v < 0) {
       delete entry.overrideInt;
     } else {
@@ -1473,7 +1506,7 @@ function exerciseFormHtml(p, ex) {
 // Liest das Formular; null, wenn Pflichtangaben fehlen.
 function readExerciseForm(p) {
   const name = document.getElementById(p + 'Name')?.value?.trim();
-  const intensity = parseFloat(document.getElementById(p + 'Int')?.value);
+  const intensity = parseNum(document.getElementById(p + 'Int')?.value);
   if (!name || isNaN(intensity) || intensity < 0) {
     alert('Bitte Name und einen gültigen Wert eingeben.');
     return null;
@@ -1517,7 +1550,7 @@ function addExercise() {
   const form = readExerciseForm('newEx');
   if (!form) return;
   const cycle = getActiveCycle();
-  cycle.exercises.push(applyExerciseForm({ id: Date.now().toString() }, form));
+  cycle.exercises.push(applyExerciseForm({ id: newId() }, form));
   saveData();
   closeModal();
   renderPlan();
@@ -1558,13 +1591,19 @@ function saveExerciseEdit(exId) {
 }
 
 function deleteExercise(exId) {
-  if (!confirm('Übung wirklich löschen?')) return;
   const cycle = getActiveCycle();
+  const ex = cycle.exercises.find(e => e.id === exId);
+  if (!ex) return;
+  // Wie oft sie schon abgehakt wurde – das geht mit verloren
+  const done = Object.values(cycle.sessions).reduce((n, list) => n + list.filter(e => entryId(e) === exId).length, 0);
+  if (!confirm(`„${ex.name}" löschen?` + (done ? `\n\nSie wurde ${done}× abgehakt; diese Einträge gehen mit verloren.` : ''))) return;
   cycle.exercises = cycle.exercises.filter(e => e.id !== exId);
   // also remove from sessions (both legacy strings and new objects)
   Object.keys(cycle.sessions).forEach(day => {
     cycle.sessions[day] = cycle.sessions[day].filter(e => entryId(e) !== exId);
   });
+  // und aus den geplanten Wochen
+  weekPlans(cycle).forEach(p => { p.items = p.items.filter(it => it.exId !== exId); });
   saveData();
   renderPlan();
 }
@@ -1707,7 +1746,7 @@ function repeatWeekTargets() {
 
 function updateWeekTarget(weekIdx, val) {
   const cycle = getActiveCycle();
-  cycle.weekTargets[weekIdx] = parseFloat(val) || 0;
+  cycle.weekTargets[weekIdx] = Math.max(0, parseNum(val) || 0);
   saveData();
   if (currentView === 'dashboard') renderDashboard();
 }
@@ -2063,7 +2102,10 @@ function renderSettings() {
         <div class="list-main">
           <div class="list-title">${cycle ? esc(cycle.name) : 'Kein aktiver Zyklus'}</div>
           <div class="list-sub">${cycle
-            ? (isCyclePaused(cycle) ? 'Pausiert' : `Woche ${getCurrentWeekIndex(cycle) + 1} von ${cycle.weeks || 12}`) + ` · bis ${formatDay(getCycleEndDate(cycle))}`
+            ? (isCyclePaused(cycle) ? 'Pausiert · bis ' + formatDay(getCycleEndDate(cycle))
+              : cycleStatus(cycle) === 'future' ? `Startet am ${formatDay(cycle.startDate)}`
+              : cycleStatus(cycle) === 'ended' ? `Beendet am ${formatDay(getCycleEndDate(cycle))}`
+              : `Woche ${getCurrentWeekIndex(cycle) + 1} von ${cycle.weeks || 12} · bis ${formatDay(getCycleEndDate(cycle))}`)
             : `${appData.cycles.length} ${appData.cycles.length === 1 ? 'Zyklus' : 'Zyklen'} gespeichert`}</div>
         </div>
         <span class="chev">›</span>

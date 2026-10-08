@@ -1442,6 +1442,8 @@ check('auch Ersetzen lässt sich zurücknehmen', gleich(toDocs(appData), toDocs(
   const geteiltMin = await decodePlan(await encodePlan(planFromCycle(zz, '', '')));
   eq('geteilte Pläne nehmen die Einheit mit', geteiltMin.unit, 'min');
   currentView = 'dashboard';
+  appData.activeCycleId = zz.id;
+  zz.startDate = toDateStr(new Date());
   renderDashboard();
   check('Übersicht beschriftet mit Trainingszeit und Minuten',
     el('dashContent').innerHTML.includes('Trainingszeit (min)') && /von [0-9]+ min/.test(el('dashContent').innerHTML));
@@ -1516,6 +1518,29 @@ check('auch Ersetzen lässt sich zurücknehmen', gleich(toDocs(appData), toDocs(
   appData.activeCycleId = 'F';
   togglePlanMode();
   check('Ausschalten', !isPlanMode(frei));
+
+  // ═══════════════════════════════════════════════
+  group('Fehlerkorrekturen aus der Fehlersuche');
+  // ═══════════════════════════════════════════════
+  const fk1 = neuerZyklus({ mode: 'plan', startDate: toDateStr(new Date()), exercises: [
+    { id: 'u1', name: 'Eins', categories: [], intensity: 2 }, { id: 'u2', name: 'Zwei', categories: [], intensity: 1 }],
+    weekPlans: [{ id: 'W', name: 'W', items: [{ exId: 'u1', days: [0] }, { exId: 'u2', days: [1] }] }], weekAssign: ['W', 'W', 'W', 'W'] });
+  deleteExercise('u2');
+  eq('gelöschte Übung verschwindet auch aus den Wochen', fk1.weekPlans[0].items, [{ exId: 'u1', days: [0] }]);
+  const tagX = toDateStr(new Date());
+  toggleDayEx(tagX, 'u1');
+  setOverride(tagX, 'u1', '4,5');
+  eq('Wert mit Komma wird richtig gelesen', fk1.sessions[tagX][0].overrideInt, 4.5);
+  fk1.startDate = addDays(tagX, 10);
+  currentView = 'dashboard'; renderDashboard();
+  check('Zyklus in der Zukunft: "Startet in 10 Tagen", kein Pausieren',
+    el('dashContent').innerHTML.includes('Startet in 10 Tagen') && !el('dashContent').innerHTML.includes('pauseCycle()'));
+  fk1.startDate = addDays(tagX, -100);
+  renderDashboard();
+  check('abgelaufener Zyklus: "Zyklus beendet" mit neuem Zyklus, keine Heute-Karte',
+    el('dashContent').innerHTML.includes('Zyklus beendet') && el('dashContent').innerHTML.includes('openNewCycleModal()') &&
+    !el('dashContent').innerHTML.includes('Heute ·'));
+  eq('Zustand', [cycleStatus(fk1), cycleStatus(Object.assign({}, fk1, { startDate: tagX }))], ['ended', 'running']);
 
   // ═══════════════════════════════════════════════
   group('Komma in Zahlen');
