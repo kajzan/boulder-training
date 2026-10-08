@@ -18,6 +18,7 @@ Konto werden sie zusätzlich zwischen Geräten abgeglichen (siehe unten).
 | `vendor/firebase.js` | Firebase-Bibliothek, gebündelt und lokal statt vom Google-Server |
 | `firestore.rules` | Sicherheitsregeln – in der Firebase-Konsole eintragen, siehe unten |
 | `firebase.json` | nur für den lokalen Firebase-Emulator in den Browsertests |
+| `version.js` | App-Version mit Datum – per `tools/version.sh` hochzählen |
 | `sw.js` | Service Worker – macht die App offline nutzbar |
 | `manifest.json` | macht die App installierbar |
 | `assets/fonts/` | Schriften, lokal statt von Google |
@@ -26,17 +27,16 @@ Konto werden sie zusätzlich zwischen Geräten abgeglichen (siehe unten).
 
 ## ⚠️ Nach jeder Änderung: Version hochzählen
 
-In `sw.js` steht oben:
+Vor jedem Veröffentlichen aus dem Hauptverzeichnis ausführen:
 
-```js
-const VERSION = 'v1';
+```sh
+sh tools/version.sh
 ```
 
-Diese Zahl **nach jeder Änderung** an `index.html`, `styles.css` oder einer
-der `.js`-Dateien
-erhöhen (`v2`, `v3`, …) und mit committen. Sonst behalten bereits installierte
-Geräte unter Umständen den alten Stand, weil sie ihre gespeicherte Fassung für
-aktuell halten.
+Das zählt die Version in `version.js` hoch und setzt Datum und Uhrzeit
+(deutsche Zeit). Beides steht unten in den Einstellungen. Der Service Worker
+liest dieselbe Datei; ohne neue Nummer behalten installierte Geräte unter
+Umständen den alten Stand.
 
 ## Vorlagen anpassen
 

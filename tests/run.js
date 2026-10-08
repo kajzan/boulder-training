@@ -4,6 +4,11 @@ const { install, group, check, eq, done } = require('./harness');
 const { el } = install();
 
 // ═══════════════════════════════════════════════
+group('Version');
+eq('Versionsdatum lesbar', formatVersionDate('2026-10-08 19:05'), '8. Okt 2026, 19:05 Uhr');
+check('version.js hat Nummer und Datum', /^\d+$/.test(APP_VERSION.name) && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(APP_VERSION.date));
+
+// ═══════════════════════════════════════════════
 group('Escaping');
 // ═══════════════════════════════════════════════
 eq('esc() deckt alle fünf Sonderzeichen ab', esc(`<>&"'`), '&lt;&gt;&amp;&quot;&#39;');

@@ -1,10 +1,12 @@
 /* Service Worker – macht die App offline nutzbar.
  *
- * WICHTIG BEIM DEPLOYEN: Nach jeder Änderung an index.html, styles.css oder
- * einer der .js-Dateien die VERSION unten hochzählen. Sonst behalten bereits installierte
- * Geräte unter Umständen den alten Stand.
+ * WICHTIG BEIM DEPLOYEN: Nach jeder Änderung `sh tools/version.sh` ausführen.
+ * Das zählt die Version in version.js hoch; die steckt hier im Namen des
+ * Zwischenspeichers. Sonst behalten bereits installierte Geräte unter
+ * Umständen den alten Stand.
  */
-const VERSION = 'v13';
+importScripts('./version.js');
+const VERSION = 'v' + APP_VERSION.name;
 const CACHE = 'boulder-' + VERSION;
 
 /* Alles, was die App zum Starten braucht. Wird bei der Installation
@@ -13,6 +15,7 @@ const APP_SHELL = [
   './',
   './index.html',
   './styles.css',
+  './version.js',
   './sync.js',
   './templates.js',
   './app.js',

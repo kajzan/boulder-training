@@ -76,6 +76,10 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
     ok(`Ansicht ${n} rendert`,
       await page.evaluate(() => document.querySelector('.view.active').innerText.trim().length > 0));
   }
+  ok('Version mit Datum in den Einstellungen',
+    /Version \d+ · \d+\. \w+ \d{4}, \d{2}:\d{2} Uhr/.test(await page.locator('.settings-foot').innerText()));
+  ok('Service Worker nutzt die Version als Speichername',
+    await page.evaluate(() => caches.keys().then(k => k.includes('boulder-v' + APP_VERSION.name))));
   ok('Konto-Zeile erscheint ohne Anmeldung', await page.locator('#cloudBox >> text=Anmelden').isVisible());
   await page.screenshot({ path: path.join(__dirname, 'shot-einstellungen.png'), fullPage: true });
   await page.click('#cloudBox .list-row');

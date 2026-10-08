@@ -1922,10 +1922,18 @@ function renderSettings() {
       </div>` : ''}
     </div>
 
-    <div class="settings-foot">Boulder Training</div>
+    <div class="settings-foot">Boulder Training${typeof APP_VERSION !== 'undefined'
+      ? `<br>Version ${esc(APP_VERSION.name)} · ${esc(formatVersionDate(APP_VERSION.date))}` : ''}</div>
   `;
   // Die Konto-Zeile füllt cloud.js; ohne Firebase bleibt der Platzhalter.
   if (window.renderCloudBox) window.renderCloudBox();
+}
+
+// "2026-10-08 19:52" → "8. Okt 2026, 19:52 Uhr"
+function formatVersionDate(str) {
+  const m = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}:\d{2})$/.exec(str || '');
+  if (!m) return str || '';
+  return `${parseInt(m[3], 10)}. ${MONTHS_DE[parseInt(m[2], 10) - 1]} ${m[1]}, ${m[4]} Uhr`;
 }
 
 // ── Zyklen verwalten ──
