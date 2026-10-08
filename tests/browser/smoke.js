@@ -214,6 +214,12 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
   await page.screenshot({ path: path.join(__dirname, 'shot-logbuch.png'), fullPage: true });
   await page.click('.log-chip:has-text("6B+")');
   ok('Antippen loescht', (await page.locator('.log-chip').count()) === 1);
+  await page.click('.list-row:has-text("Verlauf")');
+  await page.click('#logHistory .day-del');
+  await page.waitForTimeout(300);
+  ok('ganzen Tag im Verlauf geloescht', await page.evaluate(() => getAppData().ascents.length === 0));
+  await page.evaluate(() => closeModal());
+  await page.waitForTimeout(300);
 
   // Plan teilen (ohne Teilen-Menue im Testbrowser: Link in die Zwischenablage)
   await ctx.grantPermissions(['clipboard-read', 'clipboard-write']);
@@ -364,6 +370,48 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
     ok(`${name}: Escape schliesst das Fenster`, !(await gp.evaluate(() => document.getElementById('modalOverlay').classList.contains('open'))));
     await gross.close();
   }
+
+  // Wochenansicht: geplanten Tag verschieben
+  const aktivVorher = await page.evaluate(() => getAppData().activeCycleId);
+  await page.evaluate(() => {
+    const c = getDefaultCycle('Verschieben', 4); c.mode = 'plan'; c.startDate = toDateStr(new Date());
+    getAppData().cycles.push(c); getAppData().activeCycleId = c.id; applyTemplate(c, PLAN_TEMPLATES[1]); saveData(); switchView('dashboard');
+  });
+  await page.click('.week-row >> nth=1');
+  await page.waitForSelector('#weekView');
+  const planVorher = await page.evaluate(() => { const c = getActiveCycle(); return getWeekDates(c, 1).map(d => plannedItems(c, d).length); });
+  const von = planVorher.findIndex(n => n > 0), nach = planVorher.findIndex(n => n === 0);
+  await page.click(`#weekView .wv-day >> nth=${von} >> .wv-move`);
+  await page.screenshot({ path: path.join(__dirname, 'shot-verschieben.png') });
+  await page.click(`#weekView .wv-day >> nth=${nach}`);
+  const planDanach = await page.evaluate(() => { const c = getActiveCycle(); return getWeekDates(c, 1).map(d => plannedItems(c, d).length); });
+  ok('Trainingstag in der Woche verschoben', planDanach[von] === 0 && planDanach[nach] === planVorher[von], JSON.stringify([planVorher, planDanach]));
+  await page.click('#weekView button:text-is("Schließen")');
+  await page.waitForTimeout(300);
+
+  // Kalender-Export
+  await page.click('.tab-btn:nth-child(2)');
+  await page.click('.list-row:has-text("In den Kalender")');
+  const [ics] = await Promise.all([page.waitForEvent('download'), page.click('#modalContent button:text-is("Exportieren")')]);
+  const icsPfad = path.join(__dirname, 'test.ics');
+  await ics.saveAs(icsPfad);
+  const icsText = fs.readFileSync(icsPfad, 'utf8');
+  ok('Kalenderdatei mit Terminen', icsText.startsWith('BEGIN:VCALENDAR') && (icsText.match(/BEGIN:VEVENT/g) || []).length >= 10, String((icsText.match(/BEGIN:VEVENT/g) || []).length));
+  fs.unlinkSync(icsPfad);
+
+  // Plan fuer jemand anderen
+  await page.click('.tab-btn:nth-child(5)');
+  await page.click('.list-row:has-text("Plan für jemand anderen erstellen")');
+  await page.fill('#draftWho', 'Mara');
+  await page.selectOption('#draftFrom', 'tpl:einsteiger');
+  await page.click('button:text-is("Plan erstellen")');
+  await page.waitForTimeout(400);
+  ok('Entwurf im Trainingsplan', await page.locator('.draft-bar:has-text("Plan für Mara")').isVisible());
+  await page.screenshot({ path: path.join(__dirname, 'shot-entwurf.png'), fullPage: true });
+  await page.click('.draft-bar button:text-is("Fertig")');
+  ok('danach wieder der eigene Zyklus', await page.evaluate(() => getActiveCycle().name === 'Verschieben'));
+  ok('Entwurf in den Einstellungen', await page.locator('#settingsContent .list-row:has-text("Plan für Mara")').isVisible());
+  await page.evaluate(id => { const d = getAppData(); d.cycles = d.cycles.filter(c => c.name !== 'Verschieben' && !c.forOther); d.activeCycleId = id; saveData(); render(); }, aktivVorher);
 
   // Neue Version veroeffentlicht: Die App merkt es beim Zurueckkommen und laedt neu
   await page.click('.tab-btn:nth-child(1)');

@@ -887,3 +887,47 @@ textarea { resize: vertical; font-size: 14px; line-height: 1.4; }
   background: var(--red); color: #fff; font-size: 14px; font-weight: 600; cursor: pointer;
 }
 .log-today { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 16px 0; }
+
+/* Wochenansicht mit geplanten Tagen */
+.wv-day {
+  background: var(--surface2); border: 1px solid var(--border); border-radius: 10px;
+  padding: 10px 12px; margin-bottom: 8px; cursor: pointer; transition: border-color 0.15s, background 0.15s;
+}
+.wv-day.empty { padding: 8px 12px; opacity: 0.7; }
+.wv-day.target { border-style: dashed; border-color: var(--accent); }
+.wv-day.from { border-color: var(--accent); background: var(--accent-dim); }
+.wv-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13px; }
+.wv-today { color: var(--accent); font-weight: 500; font-size: 11px; margin-left: 4px; }
+.wv-amount { font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.wv-amount.done { color: var(--accent); font-weight: 600; }
+.wv-item { display: flex; justify-content: space-between; gap: 8px; padding: 4px 0 0; font-size: 13px; }
+.wv-item.planned { color: var(--text-muted); }
+.wv-val { font-family: 'DM Mono', monospace; font-size: 12px; color: var(--text-muted); flex-shrink: 0; }
+.wv-moved { color: var(--accent); font-size: 11px; }
+.wv-move {
+  margin-top: 8px; background: none; border: 1px solid var(--border); border-radius: 14px;
+  color: var(--text-muted); font-family: inherit; font-size: 12px; padding: 4px 10px; cursor: pointer;
+}
+.wv-hint { margin-top: 6px; font-size: 12px; color: var(--accent); }
+.wk-dots { display: flex; gap: 4px; margin-top: 6px; }
+.wk-dots span { width: 7px; height: 7px; border-radius: 50%; background: var(--border); }
+.wk-dots span.planned { background: none; box-shadow: inset 0 0 0 1.5px var(--accent); }
+.wk-dots span.done { background: var(--accent); }
+.day-del {
+  background: none; border: none; color: var(--text-dim); font-family: inherit; font-size: 11px;
+  margin-left: 8px; padding: 0; cursor: pointer; text-decoration: underline; text-underline-offset: 2px;
+}
+.log-day.swipe-content { background: var(--surface); }
+
+/* Plan für jemand anderen */
+.draft-bar {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 16px;
+  padding: 12px 14px; border-radius: var(--radius);
+  background: var(--accent-dim); border: 1px solid rgba(200,255,0,0.35);
+}
+.draft-bar > div { flex: 1; min-width: 0; }
+.draft-label { font-size: 11px; color: var(--accent); text-transform: uppercase; letter-spacing: 0.08em; }
+.draft-name { font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tl-grid { grid-template-columns: repeat(auto-fill, minmax(58px, 1fr)); }
+.tl-cell { padding: 7px 5px 6px 6px; }
+.tl-name { font-size: 9.5px; letter-spacing: -0.2px; }

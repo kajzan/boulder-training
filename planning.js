@@ -61,9 +61,8 @@ function weekIndexOfDate(cycle, dateStr) {
   return idx < 0 ? -1 : Math.floor(idx / 7);
 }
 
-// Was an einem Tag geplant ist: [{ ex, amount, note }]
-function plannedItems(cycle, dateStr) {
-  if (!isPlanMode(cycle)) return [];
+// Was laut Wochenplan an einem Tag dran ist – ohne Verschiebungen
+function basePlannedItems(cycle, dateStr) {
   const plan = weekPlanFor(cycle, weekIndexOfDate(cycle, dateStr));
   if (!plan) return [];
   const wd = weekdayOf(dateStr);
@@ -71,6 +70,44 @@ function plannedItems(cycle, dateStr) {
     .filter(it => (it.days || []).includes(wd))
     .map(it => ({ ex: cycle.exercises.find(e => e.id === it.exId), amount: itemAmount(cycle, it), note: it.note || '' }))
     .filter(x => x.ex);
+}
+
+// ── Trainingstage verschieben ──
+// cycle.dayMoves = { 'ursprünglicher Tag': 'neuer Tag' }. Ein verschobener
+// Tag ist leer; der Zieltag bekommt dessen Übungen zusätzlich.
+function dayMoves(cycle) {
+  return cycle && cycle.dayMoves && typeof cycle.dayMoves === 'object' ? cycle.dayMoves : {};
+}
+
+// Was an einem Tag geplant ist: [{ ex, amount, note, movedFrom? }]
+function plannedItems(cycle, dateStr) {
+  if (!isPlanMode(cycle)) return [];
+  const moves = dayMoves(cycle);
+  const own = moves[dateStr] ? [] : basePlannedItems(cycle, dateStr);
+  const moved = Object.keys(moves).filter(from => moves[from] === dateStr && from !== dateStr)
+    .flatMap(from => basePlannedItems(cycle, from).map(x => Object.assign({}, x, { movedFrom: from })));
+  const seen = new Set();
+  return own.concat(moved).filter(x => !seen.has(x.ex.id) && seen.add(x.ex.id));
+}
+
+// Die ursprünglichen Tage, deren Training gerade auf diesem Tag liegt
+function moveOrigins(cycle, dateStr) {
+  const moves = dayMoves(cycle);
+  const out = Object.keys(moves).filter(from => moves[from] === dateStr);
+  if (!moves[dateStr] && basePlannedItems(cycle, dateStr).length) out.unshift(dateStr);
+  return out;
+}
+
+function moveTrainingDay(from, to) {
+  const cycle = getActiveCycle();
+  if (!cycle || from === to) return;
+  const moves = Object.assign({}, dayMoves(cycle));
+  moveOrigins(cycle, from).forEach(origin => {
+    if (origin === to) delete moves[origin]; else moves[origin] = to;
+  });
+  cycle.dayMoves = moves;
+  if (!Object.keys(moves).length) delete cycle.dayMoves;
+  saveData();
 }
 
 function plannedExercises(cycle, dateStr) {
@@ -828,4 +865,116 @@ function applyTemplateToActive(tplId) {
   saveData();
   closeModal();
   if (currentView !== 'plan') switchView('plan'); else render();
+}
+
+// ═══════════════════════════════════════════════
+// KALENDER-EXPORT
+// ═══════════════════════════════════════════════
+// Die geplanten Trainingstage als .ics-Datei – lässt sich in jeden Kalender
+// übernehmen (iPhone, Google, Outlook). Mit Uhrzeit als Termin, sonst
+// ganztägig. Verschiebungen und Pausen sind berücksichtigt.
+let calOpts = { range: 'future', time: '18:00', duration: 120 };
+
+function plannedTrainingDays(cycle, from) {
+  const days = trainingDays(cycle, (cycle.weeks || 12) * 7);
+  return days.filter(d => d >= from).map(d => ({ date: d, items: plannedItems(cycle, d) })).filter(x => x.items.length);
+}
+
+function icsText(s) {
+  return String(s).replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
+}
+
+// Zeilen über 75 Bytes werden nach RFC 5545 umgebrochen (Folgezeile mit Leerzeichen)
+function icsFold(line) {
+  const enc = new TextEncoder();
+  if (enc.encode(line).length <= 75) return line;
+  const out = [];
+  let cur = '', bytes = 0;
+  for (const ch of line) {
+    const b = enc.encode(ch).length;
+    if (bytes + b > (out.length ? 74 : 75)) { out.push(cur); cur = ''; bytes = 0; }
+    cur += ch; bytes += b;
+  }
+  out.push(cur);
+  return out.join('\r\n ');
+}
+
+function buildIcs(cycle, opts) {
+  const from = opts.range === 'all' ? cycle.startDate : toDateStr(new Date());
+  const compact = d => d.replace(/-/g, '');
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
+  const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Boulder Training//DE', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH',
+    'X-WR-CALNAME:' + icsText('Training · ' + cycle.name)];
+  plannedTrainingDays(cycle, from).forEach(({ date, items }) => {
+    lines.push('BEGIN:VEVENT', `UID:${compact(date)}-${String(cycle.id).replace(/[^\w-]/g, '')}@boulder-training`, 'DTSTAMP:' + stamp);
+    if (opts.time) {
+      const [h, m] = opts.time.split(':').map(Number);
+      const start = new Date(parseDate(date).getTime() + (h * 60 + m) * 60000);
+      const end = new Date(start.getTime() + (opts.duration || 120) * 60000);
+      const loc = d => `${toDateStr(d).replace(/-/g, '')}T${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}00`;
+      lines.push('DTSTART:' + loc(start), 'DTEND:' + loc(end));
+    } else {
+      lines.push('DTSTART;VALUE=DATE:' + compact(date), 'DTEND;VALUE=DATE:' + compact(addDays(date, 1)));
+    }
+    const week = weekIndexOfDate(cycle, date);
+    lines.push('SUMMARY:' + icsText('Training: ' + items.map(x => x.ex.name).join(', ')));
+    lines.push('DESCRIPTION:' + icsText([`${cycle.name} · Woche ${week + 1}`]
+      .concat(items.map(x => `• ${x.ex.name} (${fmtExAmount(cycle, x.amount)})${x.note ? ' – ' + x.note : ''}`)).join('\n')));
+    lines.push('END:VEVENT');
+  });
+  lines.push('END:VCALENDAR');
+  return lines.map(icsFold).join('\r\n') + '\r\n';
+}
+
+function openCalendarExport() {
+  const cycle = getActiveCycle();
+  if (!cycle) return;
+  const from = calOpts.range === 'all' ? cycle.startDate : toDateStr(new Date());
+  const n = plannedTrainingDays(cycle, from).length;
+  openModal(`
+    <div class="modal-title" style="margin-bottom:4px">In den Kalender</div>
+    <div class="text-muted" style="margin-bottom:16px">Deine geplanten Trainingstage als Termine.</div>
+    <div class="field"><label>Zeitraum</label>
+      <div class="seg">
+        <button type="button" class="${calOpts.range === 'future' ? 'on' : ''}" onclick="calOpts.range='future';openCalendarExport()">Ab heute</button>
+        <button type="button" class="${calOpts.range === 'all' ? 'on' : ''}" onclick="calOpts.range='all';openCalendarExport()">Ganzer Zyklus</button>
+      </div>
+    </div>
+    <div class="row">
+      <div class="field"><label>Uhrzeit</label>
+        <input type="time" id="calTime" value="${calOpts.time}" onchange="calOpts.time=this.value"></div>
+      <div class="field"><label>Dauer</label>
+        <select id="calDur" onchange="calOpts.duration=parseInt(this.value,10)">
+          ${[60, 90, 120, 150, 180].map(m => `<option value="${m}" ${calOpts.duration === m ? 'selected' : ''}>${fmtNum(m / 60)} h</option>`).join('')}
+        </select></div>
+    </div>
+    <div class="check-row" onclick="calOpts.time=calOpts.time?'':'18:00';openCalendarExport()">
+      <div class="check-box ${calOpts.time ? '' : 'checked'}">${calOpts.time ? '' : CHECK_SVG}</div>
+      <div class="check-label">Ganztägig, ohne Uhrzeit</div>
+    </div>
+    <div class="group-note" style="margin:10px 0 16px">${n} ${n === 1 ? 'Trainingstag' : 'Trainingstage'}. Nach Änderungen am Plan einfach erneut exportieren – gleiche Tage werden im Kalender aktualisiert statt verdoppelt.</div>
+    <button class="btn btn-primary btn-full" ${n ? '' : 'disabled'} onclick="doCalendarExport()">Exportieren</button>
+    <button class="btn-link" onclick="closeModal()">Abbrechen</button>
+  `);
+  if (!calOpts.time) { const t = document.getElementById('calTime'); if (t) t.disabled = true; const dsel = document.getElementById('calDur'); if (dsel) dsel.disabled = true; }
+}
+
+async function doCalendarExport() {
+  const cycle = getActiveCycle();
+  if (!cycle) return;
+  const t = document.getElementById('calTime');
+  if (t && !t.disabled) calOpts.time = t.value;
+  const ics = buildIcs(cycle, calOpts);
+  const name = `training-${(cycle.name || 'plan').toLowerCase().replace(/[^a-z0-9äöüß]+/g, '-')}.ics`;
+  const file = typeof File === 'function' ? new File([ics], name, { type: 'text/calendar' }) : null;
+  // Auf dem iPhone öffnet das Teilen-Menü direkt "Zum Kalender hinzufügen"
+  if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: 'Training · ' + cycle.name }); closeModal(); return; }
+    catch (e) { if (e && e.name === 'AbortError') return; }
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([ics], { type: 'text/calendar' }));
+  a.download = name;
+  a.click();
+  closeModal();
 }

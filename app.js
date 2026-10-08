@@ -146,9 +146,24 @@ const DAYS_DE = ['Mo','Di','Mi','Do','Fr','Sa','So'];
 const DAYS_FULL = ['Montag','Dienstag','Mittwoch','Donnerstag','Freitag','Samstag','Sonntag'];
 const MONTHS_DE = ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
 
+// Während man im Trainingsplan einen Plan für jemand anderen bearbeitet
+// (draftEditId), gilt dieser als aktiv – alle Planungsfunktionen arbeiten
+// dann auf ihm. Beim Verlassen des Tabs endet das (siehe switchView).
+let draftEditId = null;
+
 function getActiveCycle() {
+  if (draftEditId) {
+    const draft = appData.cycles.find(c => c.id === draftEditId);
+    if (draft) return draft;
+    draftEditId = null;
+  }
   if (!appData.activeCycleId) return null;
   return appData.cycles.find(c => c.id === appData.activeCycleId) || null;
+}
+
+// Eigene Zyklen, ohne Pläne für andere
+function ownCycles() {
+  return appData.cycles.filter(c => !c.forOther);
 }
 
 // ── Session entry helpers (support old format [id,id] and new [{exId, overrideInt?}]) ──
@@ -539,6 +554,7 @@ function formatDateRange(d1, d2) {
 let currentView = 'dashboard';
 
 function switchView(name) {
+  if (name !== 'plan') draftEditId = null;
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.querySelectorAll('.tab-btn').forEach((b, i) => {
     b.classList.toggle('active', ['dashboard','plan','assessment','history','settings'][i] === name);
@@ -1016,6 +1032,8 @@ function renderWeekList(cycle, weekIdx, paused) {
           return plan ? ` <span class="week-plan-tag" style="color:${weekPlanColor(cycle, plan)}">● ${esc(plan.name)}</span>` : '';
         })()}</div>
         <div class="week-row-date">${formatDateRange(wd[0], wd[6])}${gap ? ` <span class="pause-note">· ${gap} ${gap === 1 ? 'Tag' : 'Tage'} Pause</span>` : ''}</div>
+        ${isPlanMode(cycle) || wd.some(d => (cycle.sessions[d] || []).length) ? `<div class="wk-dots">${wd.map(d =>
+          `<span class="${(cycle.sessions[d] || []).length ? 'done' : plannedItems(cycle, d).length ? 'planned' : ''}" title="${DAYS_DE[weekdayOf(d)]}"></span>`).join('')}</div>` : ''}
       </div>
       <div style="display:flex;align-items:center;gap:8px">
         <span style="font-family:'DM Mono',monospace;font-size:14px;color:var(--text-muted)">${fmtNum(wint)}/${fmtAmount(cycle, wtgt)}</span>
@@ -1306,61 +1324,93 @@ function formatMeasure(ex, m) {
 // ═══════════════════════════════════════════════
 // WEEK MODAL
 // ═══════════════════════════════════════════════
+// Eine Woche im Überblick: was schon trainiert ist und was noch geplant ist.
+// Geplante Tage lassen sich mit zwei Tipps auf einen anderen Tag legen.
+let weekMoveFrom = null;
+
 function openWeekModal(weekIdx) {
+  weekMoveFrom = null;
+  openModal(`<div id="weekView" data-week="${weekIdx}"></div>`);
+  renderWeekView(weekIdx);
+}
+
+function startMoveDay(weekIdx, dateStr) {
+  weekMoveFrom = weekMoveFrom === dateStr ? null : dateStr;
+  renderWeekView(weekIdx);
+}
+
+function finishMoveDay(weekIdx, to) {
+  if (weekMoveFrom) moveTrainingDay(weekMoveFrom, to);
+  weekMoveFrom = null;
+  renderWeekView(weekIdx);
+  render();
+}
+
+function renderWeekView(weekIdx) {
+  const box = document.getElementById('weekView');
   const cycle = getActiveCycle();
-  if (!cycle) return;
+  if (!box || !cycle) return;
   const days = getWeekDates(cycle, weekIdx);
   const target = getWeekTarget(cycle, weekIdx);
   const wInt = getWeekIntensity(cycle, weekIdx);
   const tol = unitInfo(cycle).tol;
   const iClass = intensityClass(wInt, target, tol);
   const allCats = getAllCategoriesInCycle(cycle);
+  const plan = weekPlanFor(cycle, weekIdx);
+  const today = toDateStr(new Date());
+  const moving = weekMoveFrom && days.includes(weekMoveFrom);
 
-  const content = `
-    <div class="modal-title">Woche ${weekIdx+1}</div>
+  box.innerHTML = `
+    <div class="modal-title" style="margin-bottom:4px">Woche ${weekIdx+1}${plan ? ` · <span style="color:${weekPlanColor(cycle, plan)}">${esc(plan.name)}</span>` : ''}</div>
+    <div class="text-muted" style="margin-bottom:14px">${formatDateRange(days[0], days[6])}</div>
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
       <span class="intensity-badge ${iClass}">${fmtNum(wInt)} / ${fmtAmount(cycle, target)}</span>
       <span class="text-muted">${intensityLabel(wInt, target, tol)}</span>
     </div>
-    <div style="margin-bottom:8px"><span class="text-muted">${formatDateRange(days[0], days[6])}</span></div>
-    <div style="font-size:11px;color:var(--text-dim);margin-bottom:12px">Tippe auf einen Tag, um Übungen einzutragen oder zu bearbeiten.</div>
-    <div class="divider" style="margin-top:0"></div>
-    ${days.map((dateStr, i) => {
+    ${moving ? `<div class="sheet-notice">Auf welchen Tag soll das Training von ${DAYS_FULL[weekdayOf(weekMoveFrom)]} verschoben werden?</div>` : ''}
+    ${days.map(dateStr => {
       const entries = cycle.sessions[dateStr] || [];
+      const planned = plannedItems(cycle, dateStr);
       const dayInt = entries.reduce((s, e) => s + getEffectiveIntensity(cycle, e), 0);
+      const plannedTotal = planned.reduce((s, x) => s + x.amount, 0);
       const d = parseDate(dateStr);
-      const dow = (d.getDay() + 6) % 7;
-      return `<div style="margin-bottom:10px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;cursor:pointer" onclick="closeModal();setTimeout(()=>openDayModal('${dateStr}', ${weekIdx}),250)">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:${entries.length>0?'6px':'0'}">
-          <strong style="font-size:13px">${DAYS_FULL[dow]}, ${d.getDate()}. ${MONTHS_DE[d.getMonth()]}</strong>
-          <span style="font-family:'DM Mono',monospace;font-size:12px;color:${entries.length>0?'var(--accent)':'var(--text-dim)'}">
-            ${entries.length > 0 ? fmtAmount(cycle, dayInt) : '+ eintragen'}
-          </span>
-        </div>
-        ${entries.length === 0
-          ? ''
-          : entries.map(entry => {
-              const ex = cycle.exercises.find(e => e.id === entryId(entry));
-              if (!ex) return '';
-              const eff = getEffectiveIntensity(cycle, entry);
-              const ov = entryOverride(entry);
-              const cats = exerciseCategories(ex);
-              return `<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12px">
-                <span style="display:flex;align-items:center;gap:5px">
-                  ${catDotsHtml(cats, allCats, 11)}
-                  <span>${esc(ex.name)}${formatMeasure(ex, entry) ? ` <span style="color:var(--text-dim)">· ${esc(formatMeasure(ex, entry))}</span>` : ''}</span>
-                </span>
-                <span style="font-family:'DM Mono',monospace;color:var(--text-muted)">
-                  ${ov !== null ? `<span style="color:var(--accent)">${fmtNum(eff)}</span> <span style="color:var(--text-dim);font-size:10px">(Plan: ${fmtNum(ex.intensity)})</span>` : fmtAmount(cycle, eff)}
-                </span>
-              </div>`;
-            }).join('')
-        }
+      const isFrom = moving && dateStr === weekMoveFrom;
+      const isTarget = moving && !isFrom;
+      const canMove = !moving && planned.length && !entries.length && dateStr >= today;
+      const head = `<div class="wv-head">
+          <strong>${DAYS_FULL[weekdayOf(dateStr)]}, ${d.getDate()}. ${MONTHS_DE[d.getMonth()]}${dateStr === today ? ' <span class="wv-today">Heute</span>' : ''}</strong>
+          <span class="wv-amount ${entries.length ? 'done' : ''}">${entries.length ? fmtAmount(cycle, dayInt) : planned.length ? 'geplant · ' + fmtAmount(cycle, plannedTotal) : isPausedDay(cycle, dateStr) ? 'Pause' : ''}</span>
+        </div>`;
+      const body = entries.length
+        ? entries.map(entry => {
+            const ex = cycle.exercises.find(e => e.id === entryId(entry));
+            if (!ex) return '';
+            const eff = getEffectiveIntensity(cycle, entry);
+            const cats = exerciseCategories(ex);
+            return `<div class="wv-item">
+              <span style="display:flex;align-items:center;gap:5px">${catDotsHtml(cats, allCats, 11)}
+                <span>${esc(ex.name)}${formatMeasure(ex, entry) ? ` <span style="color:var(--text-dim)">· ${esc(formatMeasure(ex, entry))}</span>` : ''}</span></span>
+              <span class="wv-val">${fmtAmount(cycle, eff)}</span>
+            </div>`;
+          }).join('')
+        : planned.map(x => `<div class="wv-item planned">
+            <span>${esc(x.ex.name)}${x.movedFrom ? ` <span class="wv-moved">· von ${DAYS_DE[weekdayOf(x.movedFrom)]}</span>` : ''}</span>
+            <span class="wv-val">${fmtExAmount(cycle, x.amount)}</span>
+          </div>`).join('');
+      const action = isTarget
+        ? `onclick="finishMoveDay(${weekIdx}, '${dateStr}')"`
+        : isFrom ? `onclick="startMoveDay(${weekIdx}, '${dateStr}')"`
+        : `onclick="closeModal();setTimeout(()=>openDayModal('${dateStr}', ${weekIdx}),250)"`;
+      return `<div class="wv-day ${isTarget ? 'target' : ''} ${isFrom ? 'from' : ''} ${!entries.length && !planned.length ? 'empty' : ''}" ${action}>
+        ${head}${body}
+        ${canMove ? `<button type="button" class="wv-move" onclick="event.stopPropagation();startMoveDay(${weekIdx}, '${dateStr}')">↔ Verschieben</button>` : ''}
+        ${isTarget ? `<div class="wv-hint">Hierher verschieben</div>` : ''}
       </div>`;
     }).join('')}
-    <button class="btn btn-ghost btn-full" onclick="closeModal()">Schließen</button>
+    ${moving ? `<button class="btn btn-ghost btn-full" onclick="startMoveDay(${weekIdx}, weekMoveFrom)">Abbrechen</button>`
+      : `<div class="group-note" style="text-align:center;margin-bottom:12px">Tag antippen zum Eintragen.</div>
+         <button class="btn btn-ghost btn-full" onclick="closeModal()">Schließen</button>`}
   `;
-  openModal(content);
 }
 
 // ═══════════════════════════════════════════════
@@ -1385,6 +1435,11 @@ function renderPlan() {
     : '';
 
   el.innerHTML = `
+    ${cycle.forOther ? `<div class="draft-bar">
+      <div><div class="draft-label">Plan für jemand anderen</div><div class="draft-name">${esc(cycle.name)}</div></div>
+      <button class="btn btn-primary btn-sm" onclick="openSharePlanModal()">Teilen</button>
+      <button class="btn btn-ghost btn-sm" onclick="closeDraft()">Fertig</button>
+    </div>` : ''}
     ${isCyclePaused(cycle) ? `<div class="list-group" style="margin-bottom:16px">
       <div class="list-row" onclick="resumeCycle()">
         <span class="list-icon">${PAUSE_ICON}</span>
@@ -1451,6 +1506,11 @@ function renderPlan() {
         <div class="list-main"><div class="list-title">Wochenplan einschalten</div><div class="list-sub">Feste Trainingstage, Wochen und Vorlagen</div></div>
         <span class="chev">›</span>
       </div>`}
+      ${plan && weekPlans(cycle).length ? `<div class="list-row" onclick="openCalendarExport()">
+        <span class="list-icon">${CALENDAR_ICON}</span>
+        <div class="list-main"><div class="list-title">In den Kalender</div><div class="list-sub">Trainingstage als Termine exportieren</div></div>
+        <span class="chev">›</span>
+      </div>` : ''}
       ${cycle.exercises.length ? `<div class="list-row" onclick="openSharePlanModal()">
         <span class="list-icon">${SHARE_ICON}</span>
         <div class="list-main"><div class="list-title">Plan teilen</div><div class="list-sub">Als Link, z.B. an deine Schüler</div></div>
@@ -1756,13 +1816,13 @@ function updateWeekTarget(weekIdx, val) {
 // ═══════════════════════════════════════════════
 function renderHistory() {
   const el = document.getElementById('historyContent');
-  if (appData.cycles.length === 0) {
+  if (ownCycles().length === 0) {
     el.innerHTML = renderLogbook();
     focusLogGrades();
     return;
   }
 
-  const sorted = [...appData.cycles].sort((a,b) => b.startDate.localeCompare(a.startDate));
+  const sorted = ownCycles().sort((a,b) => b.startDate.localeCompare(a.startDate));
   el.innerHTML = renderLogbook() + `<div class="section-hdr"><h2>Zyklen</h2></div>` +
     sorted.map(cycle => {
       const wks = cycle.weeks || 12;
@@ -2029,14 +2089,24 @@ function renderLogHistory() {
     ${months.map(m => `
       <div class="group-label" style="margin-top:14px">${esc(monthName(m.key))}</div>
       <div class="list-group">
-        ${m.days.map(d => `<div class="log-day">
-          <div class="log-day-name">${label(d)} <span>${byDay.get(d).length}</span></div>
+        ${m.days.map(d => `<div class="swipe-row" data-delete="removeAscentDay('${d}')"><div class="swipe-action">Löschen</div>
+          <div class="log-day swipe-content">
+          <div class="log-day-name">${label(d)} <span>${byDay.get(d).length} <button type="button" class="day-del" onclick="removeAscentDay('${d}')" aria-label="Ganzen Tag löschen">Tag löschen</button></span></div>
           <div class="log-chips">${byDay.get(d).sort((x, y) => y.grade - x.grade).map(a => `<button type="button" class="log-chip ${a.style === 'flash' ? 'flash' : ''}"
             onclick="removeAscent('${esc(a.id)}')">${esc(ascentGrade(a))}${a.style === 'flash' ? '<span class="log-flash">⚡</span>' : ''}</button>`).join('')}</div>
-        </div>`).join('')}
+        </div></div>`).join('')}
       </div>`).join('') || '<div class="text-muted">Noch keine Einträge.</div>'}
-    <div class="group-note" style="text-align:center;margin-top:12px">Eintrag antippen, um ihn zu löschen.</div>
+    <div class="group-note" style="text-align:center;margin-top:12px">Boulder antippen löscht ihn, einen Tag nach links wischen löscht den ganzen Tag.</div>
     <button class="btn btn-ghost btn-full" style="margin-top:14px" onclick="closeModal()">Fertig</button>`;
+}
+
+function removeAscentDay(date) {
+  const n = appData.ascents.filter(a => a.date === date && a.style !== 'project').length;
+  if (!n || !confirm(`Alle ${n} Boulder vom ${formatDay(date)} löschen?`)) { renderLogHistory(); return; }
+  appData.ascents = appData.ascents.filter(a => !(a.date === date && a.style !== 'project'));
+  saveData();
+  renderHistory();
+  renderLogHistory();
 }
 
 function quickAddAscent(grade) {
@@ -2127,6 +2197,22 @@ function renderSettings() {
       </div>
     </div>
 
+    <div class="group-label">Pläne für andere</div>
+    <div class="list-group">
+      ${appData.cycles.filter(c => c.forOther).map(c => `<div class="swipe-row" data-delete="deleteDraft('${c.id}')">
+        <div class="swipe-action">Löschen</div>
+        <div class="swipe-content list-row" onclick="editDraft('${c.id}')">
+          <div class="list-main"><div class="list-title">${esc(c.name)}</div>
+            <div class="list-sub">${c.weeks || 12} Wochen · ${weekPlans(c).length} ${weekPlans(c).length === 1 ? 'Wochenart' : 'Wochenarten'}</div></div>
+          <span class="chev">›</span>
+        </div>
+      </div>`).join('')}
+      <div class="list-row" onclick="openNewDraftModal()">
+        <div class="list-main"><div class="list-title" style="color:var(--accent)">Plan für jemand anderen erstellen</div>
+          <div class="list-sub">Für Schüler oder Freunde – als Link verschicken</div></div>
+      </div>
+    </div>
+
     <div class="group-label">Daten</div>
     <div class="list-group">
       <div class="list-row" onclick="exportData()">
@@ -2166,7 +2252,7 @@ function openCyclesModal() {
 function renderCyclesSheet() {
   const box = document.getElementById('cyclesSheet');
   if (!box) return;
-  const cycles = [...appData.cycles].sort((a, b) => b.startDate.localeCompare(a.startDate));
+  const cycles = ownCycles().sort((a, b) => b.startDate.localeCompare(a.startDate));
   box.innerHTML = `
     <div class="modal-title">Zyklen</div>
     ${cycles.length ? `<div class="list-group">
@@ -2335,6 +2421,80 @@ function cloneExercise(ex) {
   return out;
 }
 
+// ── Pläne für andere ──
+function openNewDraftModal() {
+  const own = ownCycles();
+  openModal(`
+    <div class="modal-title" style="margin-bottom:4px">Plan für jemand anderen</div>
+    <div class="text-muted" style="margin-bottom:16px;line-height:1.5">Ein eigener Entwurf, getrennt von deinem Training. Fertig geplant verschickst du ihn als Link.</div>
+    <div class="field"><label>Für wen?</label>
+      <input type="text" id="draftWho" placeholder="z.B. Lisa" maxlength="40"></div>
+    <div class="row">
+      <div class="field"><label>Wochen</label><input type="number" id="draftWeeks" min="1" max="52" value="8"></div>
+      <div class="field"><label>Gezählt in</label>
+        <select id="draftUnit">${Object.keys(CYCLE_UNITS).map(k => `<option value="${k}">${CYCLE_UNITS[k].name}</option>`).join('')}</select></div>
+    </div>
+    <div class="field"><label>Start mit</label>
+      <select id="draftFrom">
+        <option value="">Leer – Wochen auswählen</option>
+        <optgroup label="Vorlagen">${PLAN_TEMPLATES.map(t => `<option value="tpl:${t.id}">${esc(t.name)}</option>`).join('')}</optgroup>
+        ${own.length ? `<optgroup label="Kopie von">${own.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</optgroup>` : ''}
+      </select>
+    </div>
+    <button class="btn btn-primary btn-full" onclick="createDraft()">Plan erstellen</button>
+    <button class="btn-link" onclick="closeModal()">Abbrechen</button>
+  `);
+}
+
+function createDraft() {
+  const who = (document.getElementById('draftWho')?.value || '').trim();
+  const weeks = Math.max(1, Math.min(52, parseInt(document.getElementById('draftWeeks')?.value, 10) || 8));
+  const unit = document.getElementById('draftUnit')?.value || 'int';
+  const from = document.getElementById('draftFrom')?.value || '';
+  const cycle = getDefaultCycle(who ? `Plan für ${who}` : 'Plan für jemand anderen', weeks);
+  cycle.id = newId();
+  cycle.forOther = who || '?';
+  cycle.mode = 'plan';
+  if (unit !== 'int') cycle.unit = unit;
+  const tpl = getTemplate(from);
+  if (tpl) applyTemplate(cycle, tpl);
+  else if (from) {
+    const src = appData.cycles.find(c => c.id === from);
+    if (src) {
+      const idMap = {};
+      cycle.exercises = src.exercises.map(ex => { const c = cloneExercise(ex); idMap[ex.id] = c.id; return c; });
+      copyPlanStructure(src, cycle, idMap);
+      if (cycleUnit(src) !== 'int') cycle.unit = cycleUnit(src); else delete cycle.unit;
+    }
+  }
+  appData.cycles.push(cycle);
+  saveData();
+  closeModal();
+  editDraft(cycle.id);
+  if (!cycle.exercises.length) setTimeout(openAddWeekSheet, 300);
+}
+
+function editDraft(id) {
+  switchView('plan');
+  draftEditId = id;
+  planBrush = null;
+  render();
+}
+
+function closeDraft() {
+  draftEditId = null;
+  switchView('settings');
+}
+
+function deleteDraft(id) {
+  const c = appData.cycles.find(x => x.id === id);
+  if (!c || !confirm(`„${c.name}" löschen?`)) { render(); return; }
+  appData.cycles = appData.cycles.filter(x => x.id !== id);
+  if (draftEditId === id) draftEditId = null;
+  saveData();
+  render();
+}
+
 function togglePlanMode() {
   const cycle = getActiveCycle();
   if (!cycle) return;
@@ -2360,7 +2520,8 @@ function deleteCycle(id) {
   if (!confirm(`Zyklus "${cycle.name}" wirklich endgültig löschen?\n\nAlle zugehörigen Trainingsdaten gehen verloren.`)) return;
   appData.cycles = appData.cycles.filter(c => c.id !== id);
   if (appData.activeCycleId === id) {
-    appData.activeCycleId = appData.cycles.length > 0 ? appData.cycles[appData.cycles.length - 1].id : null;
+    const own = ownCycles();
+    appData.activeCycleId = own.length > 0 ? own[own.length - 1].id : null;
   }
   saveData();
   render();
@@ -3028,7 +3189,7 @@ function getPreviousAssessment(dateStr, excludeId) {
 // Der Zyklus, in den ein Datum fällt – dient als Startpunkt, solange es noch
 // keine frühere Messung gibt.
 function findCycleForDate(dateStr) {
-  return appData.cycles.find(c =>
+  return ownCycles().find(c =>
     dateStr >= c.startDate && dateStr <= getCycleEndDate(c)) || null;
 }
 

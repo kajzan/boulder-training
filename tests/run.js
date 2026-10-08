@@ -260,7 +260,7 @@ openTestProgressModal('t1');   clean('openTestProgressModal', el('modalContent')
 openAssessmentModal('a1');     clean('openAssessmentModal',   el('modalContent').innerHTML);
 openTestModal('t1');           clean('openTestModal',         el('modalContent').innerHTML);
 openCycleDetail(cyc.id);       clean('openCycleDetail',       el('modalContent').innerHTML);
-openWeekModal(0);              clean('openWeekModal',         el('modalContent').innerHTML);
+openWeekModal(0);              clean('openWeekModal',         el('weekView').innerHTML);
 clean('buildDayModalContent', buildDayModalContent(getWeekDates(cyc, 0)[0]));
 
 // ═══════════════════════════════════════════════
@@ -1294,15 +1294,17 @@ const lb = el('historyContent').innerHTML;
 check('höchster Grad 7A', lb.includes('>7A<'));
 check('auf der Seite nur der heutige Tag, der Rest im Verlauf', lb.includes('2 heute') && !lb.includes('19. Jan') && lb.includes('3 Boulder an 2 Tagen'));
 openLogHistory();
-check('Verlauf nach Monaten mit allen Tagen', el('logHistory').innerHTML.includes('Mo, 19. Jan') && el('logHistory').innerHTML.includes('>Heute <span>2</span>'));
+check('Verlauf nach Monaten mit allen Tagen', el('logHistory').innerHTML.includes('Mo, 19. Jan') && el('logHistory').innerHTML.includes('>Heute <span>2 '));
+removeAscentDay(toDateStr(new Date()));
+eq('ganzen Tag löschen', appData.ascents.filter(a => a.style !== 'project').map(a => a.date), ['2026-01-19']);
 check('alte Projekte und Namen erscheinen nicht', !lb.includes('Dach') && !lb.includes("removeAscent('proj')"));
 logScaleSel = 'vscale';
 renderHistory();
 check('Skala umschaltbar', el('historyContent').innerHTML.includes('quickAddAscent(0)">V0<'));
 logScaleSel = null;
-const erster = appData.ascents[0].id;
-removeAscent(erster);
-eq('antippen löscht (nach Rückfrage)', appData.ascents.length, 3);
+const vorLoeschen = appData.ascents.length;
+removeAscent(appData.ascents[0].id);
+eq('antippen löscht (nach Rückfrage)', appData.ascents.length, vorLoeschen - 1);
 check('Logbuch reist durch den Abgleich', gleich(fromDocs(toDocs(appData)).ascents, kopie(appData.ascents).sort((a, b) => a.id < b.id ? -1 : 1)));
 } finally {
   globalThis.Date = EchtesDate;
@@ -1541,6 +1543,63 @@ check('auch Ersetzen lässt sich zurücknehmen', gleich(toDocs(appData), toDocs(
     el('dashContent').innerHTML.includes('Zyklus beendet') && el('dashContent').innerHTML.includes('openNewCycleModal()') &&
     !el('dashContent').innerHTML.includes('Heute ·'));
   eq('Zustand', [cycleStatus(fk1), cycleStatus(Object.assign({}, fk1, { startDate: tagX }))], ['ended', 'running']);
+
+  // ═══════════════════════════════════════════════
+  group('Trainingstage verschieben, Kalender, Pläne für andere');
+  // ═══════════════════════════════════════════════
+  const mv = neuerZyklus({ mode: 'plan', startDate: '2026-10-05', weeks: 2, weekTargets: [0, 0],
+    exercises: [{ id: 'm1', name: 'Limit', categories: [], intensity: 3 }, { id: 'm2', name: 'Ausgleich, Schulter', categories: [], intensity: 1 }],
+    weekPlans: [{ id: 'A', name: 'A', items: [{ exId: 'm1', days: [0], note: 'Projekte; hart' }, { exId: 'm2', days: [2] }] }], weekAssign: ['A', 'A'] });
+  moveTrainingDay('2026-10-05', '2026-10-06');   // Mo → Di
+  eq('verschobener Tag ist leer, der neue hat das Training', [plannedItems(mv, '2026-10-05').length, plannedItems(mv, '2026-10-06').map(x => [x.ex.id, x.movedFrom])],
+    [0, [['m1', '2026-10-05']]]);
+  check('nur diese Woche: nächster Montag bleibt', plannedItems(mv, '2026-10-12').length === 1);
+  moveTrainingDay('2026-10-06', '2026-10-07');   // weiter auf Mi, wo schon Ausgleich ist
+  eq('weiter verschoben: Mittwoch hat beides', plannedItems(mv, '2026-10-07').map(x => x.ex.id).sort(), ['m1', 'm2']);
+  eq('Kette wird nicht länger', mv.dayMoves, { '2026-10-05': '2026-10-07' });
+  moveTrainingDay('2026-10-07', '2026-10-05');   // alles vom Mittwoch auf Montag
+  eq('zurück auf den ursprünglichen Tag hebt die Verschiebung auf', mv.dayMoves, { '2026-10-07': '2026-10-05' });
+  moveTrainingDay('2026-10-05', '2026-10-07');
+  eq('alles vom Montag (eigenes + verschobenes) auf Mittwoch', mv.dayMoves, { '2026-10-05': '2026-10-07' });
+  moveTrainingDay('2026-10-07', '2026-10-05');
+  moveTrainingDay('2026-10-05', '2026-10-05');
+  delete mv.dayMoves;
+  openWeekModal(0);
+  check('Wochenansicht zeigt geplante Tage mit Verschieben', el('weekView').innerHTML.includes('geplant') || el('weekView').innerHTML.includes('startMoveDay'));
+  check('Wochenliste zeigt geplante Tage als Punkte', (() => { mv.startDate = toDateStr(new Date()); renderDashboard(); return el('dashContent').innerHTML.includes('wk-dots'); })());
+  mv.startDate = '2026-10-05';
+
+  calOpts = { range: 'all', time: '18:30', duration: 90 };
+  const ics = buildIcs(mv, calOpts);
+  check('Kalenderdatei gültig aufgebaut', ics.startsWith('BEGIN:VCALENDAR\r\n') && ics.trim().endsWith('END:VCALENDAR') && ics.includes('\r\n'));
+  eq('je Trainingstag ein Termin', (ics.match(/BEGIN:VEVENT/g) || []).length, 4);
+  check('mit Uhrzeit und Dauer', ics.includes('DTSTART:20261005T183000') && ics.includes('DTEND:20261005T200000'));
+  check('Sonderzeichen maskiert', ics.includes('Ausgleich\\, Schulter') && ics.includes('Projekte\\; hart'));
+  check('keine Zeile über 75 Zeichen', ics.split('\r\n').every(l => new TextEncoder().encode(l).length <= 75));
+  calOpts.time = '';
+  check('ganztägig', buildIcs(mv, calOpts).includes('DTSTART;VALUE=DATE:20261005') && buildIcs(mv, calOpts).includes('DTEND;VALUE=DATE:20261006'));
+  const uid1 = buildIcs(mv, calOpts).match(/UID:(.*)/)[1];
+  check('gleiche UID bei erneutem Export (kein Verdoppeln)', buildIcs(mv, calOpts).includes('UID:' + uid1));
+
+  // Plan für jemand anderen
+  const eigenAktiv = appData.activeCycleId;
+  el('draftWho').value = 'Mara'; el('draftWeeks').value = '6'; el('draftUnit').value = 'h'; el('draftFrom').value = 'tpl:einsteiger';
+  createDraft();
+  const draft = appData.cycles.find(c => c.forOther === 'Mara');
+  check('Entwurf angelegt, eigener Zyklus bleibt aktiv', draft && appData.activeCycleId === eigenAktiv && draft.name === 'Plan für Mara');
+  check('im Trainingsplan wird der Entwurf bearbeitet', getActiveCycle() === draft && el('planContent').innerHTML.includes('Plan für jemand anderen'));
+  eq('Entwurf in Stunden mit Vorlage', [draft.unit, weekPlans(draft).length, draft.weeks], ['h', 3, 6]);
+  switchView('dashboard');
+  check('anderer Tab: wieder der eigene Zyklus', getActiveCycle().id === eigenAktiv);
+  renderHistory();
+  check('Entwurf erscheint nicht unter Zyklen', !el('historyContent').innerHTML.includes('Plan für Mara'), (h => h.slice(Math.max(0, h.indexOf('Plan für Mara') - 300), h.indexOf('Plan für Mara') + 20))(el('historyContent').innerHTML));
+  renderSettings();
+  check('Entwurf in den Einstellungen', el('settingsContent').innerHTML.includes('Plan für Mara'));
+  const eigen = appData.cycles.filter(c => !c.forOther).map(c => c.id);
+  eigen.forEach(id => deleteCycle(id));
+  check('nach Löschen aller eigenen Zyklen wird kein Entwurf aktiv', appData.activeCycleId === null);
+  deleteDraft(draft.id);
+  check('Entwurf gelöscht', !appData.cycles.some(c => c.forOther));
 
   // ═══════════════════════════════════════════════
   group('Komma in Zahlen');

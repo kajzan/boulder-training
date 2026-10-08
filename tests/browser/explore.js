@@ -325,6 +325,33 @@ const note = (scenario, msg) => { problems.push(`[${scenario}] ${msg}`); };
     });
   });
 
+  // ── 22. Verschieben über Pausen und Wochengrenzen, Kalender, Entwürfe ──
+  await step('verschieben', async () => {
+    await page.evaluate(() => {
+      __fresh();
+      const c = getDefaultCycle('M', 4); c.mode = 'plan'; c.startDate = addDays(toDateStr(new Date()), -3);
+      getAppData().cycles.push(c); getAppData().activeCycleId = c.id; applyTemplate(c, PLAN_TEMPLATES[1]); saveData();
+      const w = getWeekDates(c, 1);
+      moveTrainingDay(w[0], w[6]); moveTrainingDay(w[6], getWeekDates(c, 2)[0]);   // auch über die Woche hinaus
+      openWeekModal(1); startMoveDay(1, w[2]); finishMoveDay(1, w[3]);
+      pauseCycle(); resumeCycle();
+      openCalendarExport(); buildIcs(c, { range: 'all', time: '', duration: 60 });
+      const ics = buildIcs(c, { range: 'future', time: '07:15', duration: 180 });
+      if (!/BEGIN:VEVENT/.test(ics)) throw new Error('keine Termine');
+    });
+  });
+  await step('entwürfe', async () => {
+    await page.evaluate(() => {
+      const el = id => document.getElementById(id);
+      openNewDraftModal(); el('draftWho').value = '<Kim>'; el('draftFrom').value = ''; createDraft();
+      closeModal();
+      addPresetWeek(getActiveCycle(), weekPresets()[0]); saveData(); render();
+      switchView('dashboard'); switchView('settings');
+      openNewDraftModal(); el('draftWho').value = ''; el('draftFrom').value = getAppData().cycles[0].id; createDraft();
+      closeDraft();
+    });
+  });
+
   console.log(problems.length ? problems.join('\n') : 'KEINE PROBLEME');
   if (problems.length) process.exitCode = 1;
   await browser.close(); server.close();
