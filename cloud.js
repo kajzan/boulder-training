@@ -19,9 +19,11 @@
  */
 import {
   initializeApp, getAuth, connectAuthEmulator, onAuthStateChanged,
-  signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, signOut,
+  signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail,
+  sendEmailVerification, reauthenticateWithCredential, EmailAuthProvider, deleteUser, signOut,
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
-  connectFirestoreEmulator, collection, doc, onSnapshot, writeBatch
+  connectFirestoreEmulator, collection, doc, onSnapshot, getDocs, writeBatch,
+  FieldPath, deleteField
 } from './vendor/firebase.js';
 
 const FIREBASE_CONFIG = {
@@ -74,26 +76,49 @@ function writeSync() {
   try { localStorage.setItem(SYNC_KEY, JSON.stringify({ uid: state.user.uid, base: state.base })); } catch (e) {}
 }
 
-function dataRef(key) {
-  return doc(db, 'users', state.user.uid, 'data', key);
+function docRef(id) {
+  return doc(db, 'users', state.user.uid, 'data', id);
 }
 
 // ── Schreiben ──
-function push(diff) {
-  const ops = Object.keys(diff.set).map(k => ['set', k, diff.set[k]])
-    .concat(diff.del.map(k => ['del', k]));
+// writes: Ergebnis von storageWrites(); rawDeletes: Einzeldokumente aus der
+// Zeit vor der Bündelung, die nach dem Umzug weg können.
+function commitWrites(writes, rawDeletes) {
+  const ops = writes.map(w => ['group', w]).concat((rawDeletes || []).map(id => ['raw', id]));
   for (let i = 0; i < ops.length; i += BATCH_LIMIT) {
     const batch = writeBatch(db);
-    ops.slice(i, i + BATCH_LIMIT).forEach(([op, k, v]) => {
-      if (op === 'set') batch.set(dataRef(k), v);
-      else batch.delete(dataRef(k));
+    ops.slice(i, i + BATCH_LIMIT).forEach(([art, x]) => {
+      if (art === 'raw') { batch.delete(docRef(x)); return; }
+      if (x.removeDoc) { batch.delete(docRef(x.id)); return; }
+      // Nur die betroffenen Felder schreiben. Jedes Feld wird dabei ganz
+      // ersetzt, nicht vermischt – sonst bliebe etwa eine zurückgenommene
+      // Intensitätsänderung im alten Wert stehen.
+      const k = {};
+      const paths = [];
+      Object.keys(x.set).forEach(key => { k[key] = x.set[key]; paths.push(new FieldPath('k', key)); });
+      x.del.forEach(key => { k[key] = deleteField(); paths.push(new FieldPath('k', key)); });
+      batch.set(docRef(x.id), { k }, { mergeFields: paths });
     });
     // Offline bleibt das Versprechen offen, bis der Server bestätigt. Die
     // Änderung liegt aber schon im Zwischenspeicher und geht nicht verloren.
     batch.commit().catch(err => setError(describeError(err)));
   }
+}
+
+function push(diff) {
+  commitWrites(storageWrites(diff, state.base));
   state.base = applyDiff(state.base, diff);
   writeSync();
+}
+
+// Einzeldokumente aus v7 in die gebündelte Ablage umziehen. Unbekannte Arten
+// bleiben, wo sie sind – sie stammen dann nicht von uns.
+function migrateLegacy(legacy, docs) {
+  const known = legacy.filter(id => SYNC_TYPES.has(syncKeyType(id)));
+  if (!known.length) return;
+  const set = {};
+  known.forEach(id => { if (docs[id] !== undefined) set[id] = docs[id]; });
+  commitWrites(storageWrites({ set, del: [] }, docs), known);
 }
 
 // Von der App nach jedem lokalen Speichern aufgerufen
@@ -105,8 +130,9 @@ window.cloudAfterSave = function () {
 
 // ── Lesen ──
 function onServerState(snap) {
-  const server = {};
-  snap.docs.forEach(d => { server[d.id] = d.data(); });
+  const raw = {};
+  snap.docs.forEach(d => { raw[d.id] = d.data(); });
+  const { docs: server, legacy } = flattenStorage(raw);
 
   if (snap.metadata.fromCache) {
     state.status = 'offline';
@@ -124,7 +150,11 @@ function onServerState(snap) {
   let plan;
   if (!state.ready) {
     const saved = readSync();
-    if (saved && saved.uid === state.user.uid && saved.base) {
+    // Ein Gerät mit v7 hat die gebündelten Dokumente nicht verstanden und
+    // sie roh als Stand gespeichert. Damit lässt sich nicht vergleichen –
+    // dann lieber wie bei einer ersten Verbindung vom Konto ausgehen.
+    const baseOk = saved && saved.base && !Object.keys(saved.base).some(isStorageGroup);
+    if (saved && saved.uid === state.user.uid && baseOk) {
       // Dieses Gerät war schon verbunden: Offline-Änderungen nachreichen
       state.base = saved.base;
       plan = planSync(state.base, local, server);
@@ -148,9 +178,12 @@ function onServerState(snap) {
   if (!isEmptyDiff(plan.push)) {
     state.base = server;
     push(plan.push);
+    // Der gemeldete Stand war von vor diesem Schreiben – noch nicht "synchronisiert"
+    if (state.status === 'synced') state.status = 'pending';
   }
   state.base = plan.result;
   writeSync();
+  if (legacy.length && !snap.metadata.fromCache) migrateLegacy(legacy, plan.result);
 
   if (syncCanon(plan.result) !== syncCanon(local)) {
     replaceAppData(fromDocs(plan.result));
@@ -183,7 +216,26 @@ onAuthStateChanged(auth, user => {
   state.status = user ? 'connecting' : 'idle';
   if (user) startSync();
   renderCloudBox();
+  // Der gespeicherte Anmeldestand kennt eine inzwischen bestätigte Adresse
+  // noch nicht. Mit Netz einmal nachfragen.
+  if (user && !user.emailVerified && navigator.onLine) refreshVerification(false);
 });
+
+// Holt den Bestätigungsstand vom Server. Erst ein frisches Anmelde-Token trägt
+// ihn auch zu Firestore; danach den Abgleich neu starten.
+async function refreshVerification(laut) {
+  const user = auth.currentUser;
+  if (!user) return;
+  await user.reload();
+  if (user.emailVerified) {
+    await user.getIdToken(true);
+    stopSync();
+    startSync();
+  } else if (laut) {
+    throw { message: 'Die Adresse ist noch nicht bestätigt. Bitte den Link in der Mail antippen.' };
+  }
+  renderCloudBox();
+}
 
 // ── Anmeldung ──
 function describeError(err) {
@@ -198,8 +250,13 @@ function describeError(err) {
     'auth/user-not-found': 'E-Mail oder Passwort stimmt nicht.',
     'auth/too-many-requests': 'Zu viele Versuche. Bitte kurz warten.',
     'auth/network-request-failed': 'Keine Verbindung. Anmelden geht nur mit Internet.',
-    'permission-denied': 'Kein Zugriff auf die Daten. Sind die Sicherheitsregeln in Firebase eingetragen?'
+    'auth/requires-recent-login': 'Bitte zur Sicherheit das Passwort eingeben.'
   };
+  if (code === 'permission-denied') {
+    return state.user && !state.user.emailVerified
+      ? 'Bitte bestätige zuerst deine E-Mail-Adresse, dann werden deine Daten abgeglichen.'
+      : 'Kein Zugriff auf die Daten. Sind die Sicherheitsregeln in Firebase eingetragen?';
+  }
   return texte[code] || (err && err.message) || String(err);
 }
 
@@ -228,8 +285,66 @@ async function withBusy(fn) {
 window.cloudSignIn = () => withBusy((email, password) =>
   signInWithEmailAndPassword(auth, email, password));
 
-window.cloudSignUp = () => withBusy((email, password) =>
-  createUserWithEmailAndPassword(auth, email, password));
+// Nach dem Anlegen eine Bestätigungsmail: Sie belegt, dass die Adresse
+// wirklich dem Nutzer gehört. Sonst könnte jemand die Adresse eines anderen
+// besetzen.
+window.cloudSignUp = () => withBusy(async (email, password) => {
+  const cred = await createUserWithEmailAndPassword(auth, email, password);
+  await sendEmailVerification(cred.user);
+});
+
+window.cloudCheckVerified = () => withBusy(() => refreshVerification(true));
+
+window.cloudResendVerification = () => withBusy(async () => {
+  await sendEmailVerification(auth.currentUser);
+  alert('Wir haben dir die Bestätigungsmail noch einmal geschickt.');
+});
+
+// ── Konto löschen ──
+window.cloudDeleteAccountStart = () => {
+  openModal(`
+    <div class="modal-title">Konto löschen</div>
+    <div class="text-muted" style="margin-bottom:14px;line-height:1.5">
+      Dein Konto und alle deine Daten in der Cloud werden endgültig gelöscht.
+      Auf diesem Gerät bleiben deine Daten erhalten, andere Geräte gleichen
+      danach nicht mehr ab.
+    </div>
+    <div class="field"><label>Passwort zur Bestätigung</label>
+      <input type="password" id="cloudDelPw" autocomplete="current-password"></div>
+    <div id="cloudDelErr" style="font-size:12px;color:var(--red);margin-bottom:10px"></div>
+    <div class="row">
+      <button class="btn btn-ghost" onclick="closeModal()">Abbrechen</button>
+      <button class="btn btn-danger" id="cloudDelBtn" onclick="cloudDeleteAccountConfirm()">Endgültig löschen</button>
+    </div>`);
+};
+
+window.cloudDeleteAccountConfirm = async () => {
+  const user = auth.currentUser;
+  const pw = document.getElementById('cloudDelPw')?.value || '';
+  const btn = document.getElementById('cloudDelBtn');
+  const err = document.getElementById('cloudDelErr');
+  if (!user) return;
+  if (btn) { btn.disabled = true; btn.textContent = 'Wird gelöscht …'; }
+  try {
+    // Firebase verlangt für das Löschen eine frische Anmeldung
+    await reauthenticateWithCredential(user, EmailAuthProvider.credential(user.email, pw));
+    stopSync();
+    const snap = await getDocs(collection(db, 'users', user.uid, 'data'));
+    for (let i = 0; i < snap.docs.length; i += BATCH_LIMIT) {
+      const batch = writeBatch(db);
+      snap.docs.slice(i, i + BATCH_LIMIT).forEach(d => batch.delete(d.ref));
+      await batch.commit();
+    }
+    await deleteUser(user);
+    try { localStorage.removeItem(SYNC_KEY); } catch (e) {}
+    closeModal();
+    alert('Dein Konto und alle Daten in der Cloud sind gelöscht. Auf diesem Gerät bleiben deine Daten erhalten.');
+  } catch (e) {
+    if (err) err.textContent = describeError(e);
+    if (btn) { btn.disabled = false; btn.textContent = 'Endgültig löschen'; }
+    if (auth.currentUser && !state.unsubscribe) startSync();
+  }
+};
 
 window.cloudResetPassword = () => withBusy(async email => {
   if (!email) throw { message: 'Bitte zuerst die E-Mail-Adresse eingeben.' };
@@ -297,11 +412,25 @@ function renderCloudBox() {
     <div class="card">
       <div style="font-weight:600;font-size:15px;margin-bottom:4px;overflow:hidden;text-overflow:ellipsis">${esc(state.user.email || '')}</div>
       <div style="font-size:12px;color:${s.color};margin-bottom:12px">${esc(s.text)}</div>
-      <button class="btn btn-ghost btn-sm" onclick="cloudSignOut()">Abmelden</button>
-      ${backup ? `<button class="btn btn-ghost btn-sm" style="margin-left:6px" onclick="cloudDownloadBackup()">Stand vor der Anmeldung sichern</button>` : ''}
+      ${state.user.emailVerified ? '' : `
+        <div style="font-size:12px;line-height:1.5;padding:10px 12px;margin-bottom:12px;border-radius:var(--radius-sm);
+                    background:var(--accent-dim);border:1px solid var(--accent)">
+          Bitte bestätige deine E-Mail-Adresse über den Link in der Mail, die wir dir geschickt haben.
+          Danach hier „Bestätigt" tippen.
+          <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
+            <button class="btn btn-primary btn-sm" onclick="cloudCheckVerified()" ${state.busy ? 'disabled' : ''}>Bestätigt</button>
+            <button class="btn btn-ghost btn-sm" onclick="cloudResendVerification()" ${state.busy ? 'disabled' : ''}>Mail erneut senden</button>
+          </div>
+        </div>`}
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn btn-ghost btn-sm" onclick="cloudSignOut()">Abmelden</button>
+        ${backup ? `<button class="btn btn-ghost btn-sm" onclick="cloudDownloadBackup()">Stand vor der Anmeldung sichern</button>` : ''}
+      </div>
+      <button class="btn btn-ghost btn-full mt-8" style="font-size:12px;border:none;background:none;color:var(--red)"
+        onclick="cloudDeleteAccountStart()">Konto löschen</button>
     </div>`;
 }
 window.renderCloudBox = renderCloudBox;
 
-if (EMULATOR) window.__cloud = { auth, db, state, doc, collection, onSnapshot };
+if (EMULATOR) window.__cloud = { auth, db, state, doc, collection, onSnapshot, getDocs, writeBatch };
 renderCloudBox();

@@ -54,6 +54,12 @@ Passwort) liegen die Daten zusätzlich in Firebase (Projekt `boulder-training`,
 Standort Frankfurt) und werden zwischen Geräten abgeglichen, auch nach
 Offline-Phasen.
 
+Abgeglichen wird erst nach bestätigter E-Mail-Adresse. In Firestore liegen
+die Daten gebündelt: ein Dokument je Zyklus und eines für Tests, Messungen und
+Einstellungen (siehe `sync.js`, Abschnitt „Ablage in Firestore"). Das hält die
+Lesekosten klein, weil Firestore nach über 30 Minuten Pause jedes Dokument neu
+berechnet.
+
 Die Sicherheitsregeln stehen in `firestore.rules`. Sie werden **nicht**
 automatisch übernommen: Nach jeder Änderung den Inhalt in der Firebase-Konsole
 unter Firestore → Regeln einfügen und veröffentlichen.

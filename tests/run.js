@@ -886,6 +886,78 @@ check('offline geloeschte Uebung bleibt geloescht',
   !zy(fromDocs(plan.result)).exercises.some(e => e.id === 'x2'));
 
 // ═══════════════════════════════════════════════
+group('Ablage in Firestore');
+// ═══════════════════════════════════════════════
+// Bildet nach, wie Firestore die Schreibvorgaenge anwendet: Felder werden
+// einzeln ersetzt oder entfernt, removeDoc loescht das ganze Dokument.
+function speichere(ablage, writes, rawDeletes) {
+  const neu = kopie(ablage);
+  writes.forEach(w => {
+    if (w.removeDoc) { delete neu[w.id]; return; }
+    const d = neu[w.id] || { k: {} };
+    Object.keys(w.set).forEach(k => { d.k[k] = kopie(w.set[k]); });
+    w.del.forEach(k => { delete d.k[k]; });
+    neu[w.id] = d;
+  });
+  (rawDeletes || []).forEach(id => { delete neu[id]; });
+  return neu;
+}
+
+eq('Zyklus, Uebung und Haken liegen im Dokument ihres Zyklus',
+  ['cycle:c1', 'exercise:c1:e1', 'entry:c1:2026-03-02:e1'].map(storageGroup), ['c~c1', 'c~c1', 'c~c1']);
+eq('Tests, Messungen und Einstellungen liegen gemeinsam',
+  ['test:t1', 'assessment:a1', 'settings:app'].map(storageGroup), ['misc', 'misc', 'misc']);
+
+const ablage = speichere({}, storageWrites(diffDocs({}, bestandDocs), {}));
+eq('ein Dokument je Zyklus plus eines fuer den Rest', Object.keys(ablage).sort(), ['c~c1', 'c~c2', 'misc']);
+check('auslesen ergibt dieselben Eintraege', gleich(flattenStorage(ablage).docs, bestandDocs));
+eq('nichts Altes zu migrieren', flattenStorage(ablage).legacy, []);
+
+// Ein Haken weg: nur dieses Feld, das Dokument bleibt
+const ohneHaken = kopie(BESTAND);
+ohneHaken.cycles[0].sessions['2026-06-01'] = [{ exId: 'e1' }];
+const wHaken = storageWrites(diffDocs(bestandDocs, toDocs(ohneHaken)), bestandDocs);
+eq('ein entfernter Haken betrifft genau ein Dokument', wHaken.map(w => w.id), ['c~c2']);
+eq('und entfernt genau ein Feld', wHaken[0].del, ['entry:c2:2026-06-01:e2']);
+check('das Dokument bleibt bestehen', !wHaken[0].removeDoc);
+
+// Zyklus geloescht: das ganze Dokument geht
+const ohneZyklus = kopie(BESTAND);
+ohneZyklus.cycles = ohneZyklus.cycles.filter(c => c.id !== 'c1');
+const wZyklus = storageWrites(diffDocs(bestandDocs, toDocs(ohneZyklus)), bestandDocs);
+check('geloeschter Zyklus entfernt sein Dokument',
+  wZyklus.some(w => w.id === 'c~c1' && w.removeDoc));
+check('und laesst den Rest stehen', !wZyklus.some(w => w.id !== 'c~c1' && w.removeDoc));
+
+// Zwei Geraete schreiben verschiedene Felder desselben Dokuments
+const basisAblage = speichere({}, storageWrites(diffDocs({}, toDocs(START)), {}));
+const handyDiff = diffDocs(toDocs(START), toDocs((() => { const d = kopie(START); abhaken(d, '2026-09-08', 'x2'); return d; })()));
+const laptopDiff = diffDocs(toDocs(START), toDocs((() => { const d = kopie(START); abhaken(d, '2026-09-08', 'x3'); return d; })()));
+const nachBeiden = speichere(speichere(basisAblage, storageWrites(handyDiff, toDocs(START))),
+                             storageWrites(laptopDiff, toDocs(START)));
+eq('beide Haken bleiben auch in der gebuendelten Ablage',
+  abgehakt(fromDocs(flattenStorage(nachBeiden).docs), '2026-09-08'), ['x2', 'x3']);
+
+// Umzug aus v7: dort lag jeder Eintrag als eigenes Dokument
+const v7 = {};
+Object.keys(bestandDocs).forEach(k => { v7[k] = bestandDocs[k]; });
+let gelesen = flattenStorage(v7);
+check('alte Einzeldokumente werden gelesen', gleich(gelesen.docs, bestandDocs));
+eq('und zum Umzug gemeldet', gelesen.legacy.length, Object.keys(bestandDocs).length);
+
+// Gemischter Stand waehrend des Umzugs: die gebuendelte Fassung gilt
+const gemischt = Object.assign({}, ablage, { 'test:t1': Object.assign({}, bestandDocs['test:t1'], { name: 'alt' }) });
+gelesen = flattenStorage(gemischt);
+eq('bei doppeltem Eintrag gilt die gebuendelte Fassung', gelesen.docs['test:t1'].name, 'Max Hang');
+eq('der alte Eintrag wird trotzdem zum Aufraeumen gemeldet', gelesen.legacy, ['test:t1']);
+
+// Umzug ausgefuehrt wie in cloud.js
+const umzug = storageWrites({ set: Object.assign({}, bestandDocs), del: [] }, bestandDocs);
+const nachUmzug = speichere(v7, umzug, Object.keys(bestandDocs));
+eq('nach dem Umzug nur noch gebuendelte Dokumente', Object.keys(nachUmzug).sort(), ['c~c1', 'c~c2', 'misc']);
+check('und kein Eintrag ging verloren', gleich(flattenStorage(nachUmzug).docs, bestandDocs));
+
+// ═══════════════════════════════════════════════
 group('Abgleich-Modell: echte App-Daten');
 // ═══════════════════════════════════════════════
 // Daten, wie die App sie selbst erzeugt - nicht von Hand gebaut. IDs beruhen
