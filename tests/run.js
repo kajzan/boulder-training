@@ -1253,33 +1253,34 @@ saveExerciseEdit(neu.id);
 check('Messwert abwählen entfernt Einheit', !('measure' in neu) && !('unit' in neu) && neu.desc === '5 × 10 s');
 
 group('Logbuch');
+heuteIst('2026-01-21');
 appData.ascents = [];
+logScaleSel = null; logDate = null; logFlash = false;
 renderHistory();
-check('leeres Logbuch erklärt sich', el('historyContent').innerHTML.includes('Grad-Pyramide'));
-function eintragen(werte) {
-  el('ascDate').value = werte.date; el('ascScale').value = werte.scaleId || 'font';
-  el('ascGrade').value = String(werte.grade); el('ascStyle').dataset.val = werte.style;
-  el('ascPlace').dataset.val = werte.place || 'halle';
-  el('ascName').value = werte.name || ''; el('ascNote').value = '';
-  saveAscent(werte.id || null);
-}
-eintragen({ date: '2026-01-19', grade: 7, style: 'flash' });            // 6C
-eintragen({ date: '2026-01-19', grade: 7, style: 'top' });
-eintragen({ date: '2026-01-20', grade: 9, style: 'top', name: '<Dach>' });   // 7A
-eintragen({ date: '2026-01-21', grade: 11, style: 'project' });          // 7B
-eq('drei Tops, ein Projekt', appData.ascents.length, 4);
+check('leeres Logbuch erklärt sich', el('historyContent').innerHTML.includes('daraus entsteht deine Pyramide'));
+check('Grad-Leiste zum Antippen', el('historyContent').innerHTML.includes('quickAddAscent(7)'));
+quickAddAscent(7);                                     // 6C Top heute
+logFlash = true; quickAddAscent(7);                    // 6C Flash
+eq('ein Tipp trägt ein, Flash gilt nur einmal', appData.ascents.map(a => [a.date, a.grade, a.style, a.scaleId]),
+  [['2026-01-21', 7, 'top', 'font'], ['2026-01-21', 7, 'flash', 'font']]);
+check('Flash schaltet sich danach wieder aus', logFlash === false);
+logDate = '2026-01-19'; quickAddAscent(9);             // 7A an einem anderen Tag
+logDate = null;
+appData.ascents.push({ id: 'proj', date: '2026-01-20', scaleId: 'font', grade: 11, style: 'project', place: 'fels', name: '<Dach>' });
 eq('Pyramide ohne Projekte, höchster Grad oben',
   gradePyramid('font'), [{ grade: 9, flash: 0, top: 1 }, { grade: 7, flash: 1, top: 1 }]);
 renderHistory();
 const lb = el('historyContent').innerHTML;
-check('Höchster Grad 7A, bester Flash 6C', lb.includes('>7A<') && lb.includes('>6C<'));
-check('Namen werden maskiert', lb.includes('&lt;Dach&gt;') && !lb.includes('<Dach>'));
-check('neuester Eintrag steht oben', lb.indexOf('7B') < lb.indexOf('&lt;Dach&gt;'));
-const projekt = appData.ascents.find(a => a.style === 'project');
-eintragen({ id: projekt.id, date: '2026-01-25', grade: 11, style: 'top' });
-eq('Projekt geschafft: aus dem Projekt wird ein Top', gradePyramid('font')[0], { grade: 11, flash: 0, top: 1 });
-deleteAscent(projekt.id);
-eq('Löschen entfernt den Eintrag', appData.ascents.length, 3);
+check('höchster Grad 7A', lb.includes('>7A<'));
+check('Tage: Heute und ein anderer Tag', lb.includes('>Heute <span>2</span>') && lb.includes('Mo, 19. Jan'));
+check('alte Projekte und Namen erscheinen nicht', !lb.includes('Dach') && !lb.includes("removeAscent('proj')"));
+logScaleSel = 'vscale';
+renderHistory();
+check('Skala umschaltbar', el('historyContent').innerHTML.includes('quickAddAscent(0)">V0<'));
+logScaleSel = null;
+const erster = appData.ascents[0].id;
+removeAscent(erster);
+eq('antippen löscht (nach Rückfrage)', appData.ascents.length, 3);
 check('Logbuch reist durch den Abgleich', gleich(fromDocs(toDocs(appData)).ascents, kopie(appData.ascents).sort((a, b) => a.id < b.id ? -1 : 1)));
 } finally {
   globalThis.Date = EchtesDate;

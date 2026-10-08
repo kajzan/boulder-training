@@ -1737,6 +1737,7 @@ function renderHistory() {
   const el = document.getElementById('historyContent');
   if (appData.cycles.length === 0) {
     el.innerHTML = renderLogbook();
+    focusLogGrades();
     return;
   }
 
@@ -1780,6 +1781,7 @@ function renderHistory() {
         </div>
       </div>`;
     }).join('');
+  focusLogGrades();
 }
 
 function openCycleDetail(cycleId) {
@@ -1879,59 +1881,128 @@ function gradePyramid(scaleId) {
   return grades.map(g => ({ grade: g, flash: counts[g].flash, top: counts[g].top }));
 }
 
-function renderPyramid(scaleId, showScaleName) {
+// ── Logbuch-Ansicht ──
+// Bewusst schlicht: Grad antippen, fertig. Ein Tipp trägt einen Top für
+// heute ein; mit "Flash" vorher als Flash. Gelöscht wird durch Antippen
+// eines Eintrags. Ort, Name und Projekte gibt es nicht mehr – ältere
+// Einträge damit bleiben erhalten, Projekte zählen nicht.
+let logFlash = false;
+let logScaleSel = null;
+let logDate = null;          // null = heute
+let logAdded = null;         // zuletzt eingetragen – für die kurze Bestätigung
+
+function logScale() {
+  if (logScaleSel) return logScaleSel;
+  const last = sortedAscents()[0];
+  return last && SCALES[last.scaleId] ? last.scaleId : 'font';
+}
+
+// Der Grad, um den sich das Klettern gerade dreht: Median der letzten 20 Tops
+function typicalGrade(scaleId) {
+  const g = sortedAscents().filter(a => a.scaleId === scaleId && a.style !== 'project').slice(0, 20).map(a => a.grade).sort((x, y) => x - y);
+  return g.length ? g[Math.floor(g.length / 2)] : Math.min(4, SCALES[scaleId].steps.length - 1);
+}
+
+function renderPyramid(scaleId) {
   const steps = (SCALES[scaleId] || SCALES.font).steps;
   const rows = gradePyramid(scaleId);
   if (!rows.length) return '';
-  const shown = rows.slice(0, 8);
+  const shown = rows.slice(0, 6);
   const max = Math.max(...shown.map(r => r.flash + r.top));
-  const tops = rows.reduce((s, r) => s + r.flash + r.top, 0);
-  const flashes = rows.reduce((s, r) => s + r.flash, 0);
-  const bestFlash = rows.find(r => r.flash > 0);
+  const total = rows.reduce((s, r) => s + r.flash + r.top, 0);
   return `<div class="card">
-    <div class="card-title">Pyramide${showScaleName ? ' · ' + esc((SCALES[scaleId] || SCALES.font).name) : ''}</div>
-    <div class="stats-row" style="grid-template-columns:1fr 1fr 1fr">
-      <div class="stat-card"><div class="stat-val">${steps[rows[0].grade]}</div><div class="stat-lbl">Höchster Grad</div></div>
-      <div class="stat-card"><div class="stat-val">${bestFlash ? steps[bestFlash.grade] : '–'}</div><div class="stat-lbl">Bester Flash</div></div>
-      <div class="stat-card"><div class="stat-val">${tops}</div><div class="stat-lbl">Tops, davon ${flashes} Flash</div></div>
+    <div class="log-summary">
+      <div><div class="log-big">${steps[rows[0].grade]}</div><div class="stat-lbl">Höchster Grad</div></div>
+      <div style="text-align:right"><div class="log-big">${total}</div><div class="stat-lbl">${total === 1 ? 'Boulder' : 'Boulder'} gesamt</div></div>
     </div>
     ${shown.map(r => `<div class="pyr-row">
       <span class="pyr-grade">${steps[r.grade]}</span>
-      <span class="pyr-bar">
-        <span style="width:${r.flash / max * 100}%;background:var(--accent)"></span><span style="width:${r.top / max * 100}%;background:var(--green-dark)"></span>
-      </span>
+      <span class="pyr-bar"><span style="width:${(r.flash + r.top) / max * 100}%"></span></span>
       <span class="pyr-count">${r.flash + r.top}</span>
     </div>`).join('')}
-    <div style="display:flex;gap:14px;font-size:11px;color:var(--text-muted);margin-top:8px;justify-content:center">
-      <span><span class="pyr-key" style="background:var(--accent)"></span>Flash</span>
-      <span><span class="pyr-key" style="background:var(--green-dark)"></span>Top</span>
-    </div>
   </div>`;
 }
 
 function renderLogbook() {
-  const header = `<div class="section-hdr" style="margin-top:0"><h2>Logbuch</h2>
-    <button class="btn btn-primary btn-sm" onclick="openAscentModal()">+ Boulder</button></div>`;
-  const list = sortedAscents();
-  if (!list.length) {
-    return header + `<div class="card text-muted" style="line-height:1.5">Trag hier ein, was du gebouldert hast – mit Grad, Flash oder Top. Daraus entsteht deine Grad-Pyramide.</div>`;
-  }
-  // Skalen in der Reihenfolge ihrer letzten Verwendung
-  const scales = [];
-  list.forEach(a => { if (!scales.includes(a.scaleId)) scales.push(a.scaleId); });
-  const shown = logShowAll ? list : list.slice(0, LOG_PREVIEW);
-  return header +
-    scales.map(sc => renderPyramid(sc, scales.length > 1)).join('') +
-    `<div class="card">
-      <div class="card-title">Zuletzt</div>
-      ${shown.map(a => `<div class="log-row" onclick="openAscentModal('${esc(a.id)}')" style="cursor:pointer">
-        <span class="text-muted" style="width:52px;flex-shrink:0">${formatDay(a.date)}</span>
-        <span class="log-grade">${esc(ascentGrade(a))}</span>
-        <span class="log-style log-${esc(a.style)}">${ASCENT_STYLES[a.style] || ''}</span>
-        <span class="log-name">${esc([ASCENT_PLACES[a.place], a.name].filter(Boolean).join(' · '))}</span>
-      </div>`).join('')}
-      ${list.length > LOG_PREVIEW ? `<button class="btn btn-ghost btn-full btn-sm" style="margin-top:10px" onclick="logShowAll=!logShowAll;renderHistory()">${logShowAll ? 'Weniger anzeigen' : `Alle ${list.length} anzeigen`}</button>` : ''}
-    </div>`;
+  const scaleId = logScale();
+  const steps = SCALES[scaleId].steps;
+  const today = toDateStr(new Date());
+  const day = logDate || today;
+  const typical = typicalGrade(scaleId);
+
+  // Einträge nach Tag
+  const byDay = new Map();
+  sortedAscents().filter(a => a.style !== 'project').forEach(a => {
+    if (!byDay.has(a.date)) byDay.set(a.date, []);
+    byDay.get(a.date).push(a);
+  });
+  const days = [...byDay.keys()].sort((x, y) => y.localeCompare(x));
+  const shownDays = logShowAll ? days : days.slice(0, 6);
+  const chip = a => `<button type="button" class="log-chip ${a.style === 'flash' ? 'flash' : ''} ${logAdded === a.id ? 'new' : ''}"
+      onclick="removeAscent('${esc(a.id)}')" title="Antippen zum Löschen">${esc(ascentGrade(a))}${a.style === 'flash' ? '<span class="log-flash">⚡</span>' : ''}</button>`;
+  const dayLabel = d => d === today ? 'Heute' : d === addDays(today, -1) ? 'Gestern' : `${DAYS_DE[weekdayOf(d)]}, ${formatDay(d)}`;
+
+  return `
+    <div class="section-hdr" style="margin-top:0"><h2>Logbuch</h2>
+      <div class="seg seg-mini">${Object.keys(SCALES).map(k =>
+        `<button type="button" class="${k === scaleId ? 'on' : ''}" onclick="logScaleSel='${k}';renderHistory()">${k === 'font' ? 'Font' : k === 'vscale' ? 'V' : 'Halle'}</button>`).join('')}</div>
+    </div>
+
+    <div class="card log-add">
+      <div class="log-add-hdr">
+        <span class="card-title" style="margin:0">${day === today ? 'Heute' : dayLabel(day)} geschafft</span>
+        <button type="button" class="log-flash-toggle ${logFlash ? 'on' : ''}" onclick="logFlash=!logFlash;renderHistory()">⚡ Flash</button>
+      </div>
+      <div class="log-grades" data-focus="${typical}">
+        ${steps.map((g, i) => `<button type="button" class="log-grade" onclick="quickAddAscent(${i})">${g}</button>`).join('')}
+      </div>
+      <div class="log-add-foot">
+        <span>Grad antippen zum Eintragen</span>
+        <label class="log-date">${day === today ? 'Anderer Tag' : 'Tag'}
+          <input type="date" value="${day}" max="${today}" onchange="logDate=this.value===toDateStr(new Date())?null:this.value;renderHistory()">
+        </label>
+      </div>
+    </div>
+
+    ${days.length ? `
+      ${renderPyramid(scaleId)}
+      <div class="list-group">
+        ${shownDays.map(d => `<div class="log-day">
+          <div class="log-day-name">${dayLabel(d)} <span>${byDay.get(d).length}</span></div>
+          <div class="log-chips">${byDay.get(d).sort((x, y) => y.grade - x.grade).map(chip).join('')}</div>
+        </div>`).join('')}
+      </div>
+      ${days.length > 6 ? `<button class="btn-link" onclick="logShowAll=!logShowAll;renderHistory()">${logShowAll ? 'Weniger anzeigen' : `Alle ${days.length} Tage anzeigen`}</button>` : ''}
+      <div class="group-note" style="text-align:center">Eintrag antippen, um ihn zu löschen.</div>`
+    : `<div class="text-muted" style="text-align:center;padding:10px 20px 4px;line-height:1.5">Tipp nach jedem geschafften Boulder kurz auf seinen Grad – daraus entsteht deine Pyramide.</div>`}`;
+}
+
+function quickAddAscent(grade) {
+  const a = { id: newId(), date: logDate || toDateStr(new Date()), scaleId: logScale(), grade, style: logFlash ? 'flash' : 'top' };
+  appData.ascents.push(a);
+  logAdded = a.id;
+  logFlash = false;
+  saveData();
+  renderHistory();
+  if (navigator.vibrate) navigator.vibrate(10);
+  setTimeout(() => { if (logAdded === a.id) { logAdded = null; } }, 1500);
+}
+
+function removeAscent(id) {
+  const a = appData.ascents.find(x => x.id === id);
+  if (!a) return;
+  if (!confirm(`${ascentGrade(a)}${a.style === 'flash' ? ' (Flash)' : ''} vom ${formatDay(a.date)} löschen?`)) return;
+  appData.ascents = appData.ascents.filter(x => x.id !== id);
+  saveData();
+  renderHistory();
+}
+
+// Die Grad-Leiste so schieben, dass der übliche Grad sichtbar ist
+function focusLogGrades() {
+  const row = document.querySelector && document.querySelector('.log-grades');
+  if (!row || !row.children) return;
+  const btn = row.children[parseInt(row.dataset.focus, 10) || 0];
+  if (btn) row.scrollLeft = Math.max(0, btn.offsetLeft - row.clientWidth / 2 + btn.offsetWidth / 2);
 }
 
 // ── Kleine Umschalter (Flash/Top/Projekt, Halle/Board/Fels) ──
@@ -1947,94 +2018,6 @@ function pickSeg(id, val) {
   if (el.querySelectorAll) el.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === val));
 }
 
-function gradeOptions(scaleId, current) {
-  return (SCALES[scaleId] || SCALES.font).steps.map((g, i) =>
-    `<option value="${i}" ${i === current ? 'selected' : ''}>${g}</option>`).join('');
-}
-
-function onAscentScaleChange() {
-  const scaleId = document.getElementById('ascScale').value;
-  const sel = document.getElementById('ascGrade');
-  const max = (SCALES[scaleId] || SCALES.font).steps.length - 1;
-  sel.innerHTML = gradeOptions(scaleId, Math.min(parseInt(sel.value, 10) || 0, max));
-}
-
-function openAscentModal(id) {
-  const a = id ? appData.ascents.find(x => x.id === id) : null;
-  // Neue Einträge übernehmen Skala, Grad und Ort vom letzten – meist trägt
-  // man mehrere Boulder aus derselben Session ein.
-  const last = sortedAscents()[0];
-  const d = a || {
-    date: toDateStr(new Date()),
-    scaleId: last ? last.scaleId : 'font',
-    grade: last ? last.grade : 3,
-    style: 'top',
-    place: last ? last.place : 'halle'
-  };
-  openModal(`
-    <div class="modal-title">${a ? 'Eintrag bearbeiten' : 'Boulder eintragen'}</div>
-    <div class="row">
-      <div class="field">
-        <label>Skala</label>
-        <select id="ascScale" onchange="onAscentScaleChange()">
-          ${Object.keys(SCALES).map(k => `<option value="${k}" ${k === d.scaleId ? 'selected' : ''}>${SCALES[k].name}</option>`).join('')}
-        </select>
-      </div>
-      <div class="field">
-        <label>Grad</label>
-        <select id="ascGrade">${gradeOptions(d.scaleId, d.grade)}</select>
-      </div>
-    </div>
-    <div class="field"><label>Stil</label>${segHtml('ascStyle', ASCENT_STYLES, d.style)}</div>
-    <div class="field"><label>Ort</label>${segHtml('ascPlace', ASCENT_PLACES, d.place)}</div>
-    <div class="field">
-      <label>Datum</label>
-      <input type="date" id="ascDate" value="${d.date}">
-    </div>
-    <div class="field">
-      <label>Name (optional)</label>
-      <input type="text" id="ascName" value="${a && a.name ? esc(a.name) : ''}" placeholder="z.B. Gelbe Platte, Sektor B">
-    </div>
-    <div class="field">
-      <label>Notiz (optional)</label>
-      <input type="text" id="ascNote" value="${a && a.note ? esc(a.note) : ''}" placeholder="z.B. Fersenhaken war der Schlüssel">
-    </div>
-    <div class="row" style="margin-top:4px">
-      <button class="btn btn-ghost" onclick="closeModal()">Abbrechen</button>
-      <button class="btn btn-primary" onclick="saveAscent(${a ? `'${esc(a.id)}'` : 'null'})">Speichern</button>
-    </div>
-    ${a ? `<button class="btn btn-danger btn-full" style="margin-top:10px" onclick="deleteAscent('${esc(a.id)}')">Löschen</button>` : ''}
-  `);
-}
-
-function saveAscent(id) {
-  const date = document.getElementById('ascDate')?.value;
-  if (!date) { alert('Bitte ein Datum wählen.'); return; }
-  const data = {
-    date,
-    scaleId: document.getElementById('ascScale').value,
-    grade: parseInt(document.getElementById('ascGrade').value, 10) || 0,
-    style: document.getElementById('ascStyle').dataset.val || 'top',
-    place: document.getElementById('ascPlace').dataset.val || 'halle'
-  };
-  const name = document.getElementById('ascName')?.value?.trim();
-  const note = document.getElementById('ascNote')?.value?.trim();
-  const existing = id ? appData.ascents.find(x => x.id === id) : null;
-  const target = existing || { id: newId() };
-  Object.assign(target, data);
-  if (name) target.name = name; else delete target.name;
-  if (note) target.note = note; else delete target.note;
-  if (!existing) appData.ascents.push(target);
-  saveData();
-  closeModal();
-}
-
-function deleteAscent(id) {
-  if (!confirm('Eintrag wirklich löschen?')) return;
-  appData.ascents = appData.ascents.filter(x => x.id !== id);
-  saveData();
-  closeModal();
-}
 
 // ═══════════════════════════════════════════════
 // SETTINGS VIEW

@@ -763,3 +763,48 @@ textarea { resize: vertical; font-size: 14px; line-height: 1.4; }
 .today-amt { font-family: 'DM Mono', monospace; font-size: 12px; color: var(--accent); margin-left: 4px; }
 .ex-note { font-size: 12px; color: var(--accent); margin-top: 3px; line-height: 1.4; opacity: 0.9; }
 .week-plan-tag { font-family: inherit; font-size: 11px; margin-left: 4px; }
+
+/* ═══ LOGBUCH (einfach) ═══ */
+.log-add { padding: 14px 0 12px; }
+.log-add-hdr { display: flex; align-items: center; justify-content: space-between; padding: 0 16px 10px; }
+.log-flash-toggle {
+  background: var(--surface2); border: 1px solid var(--border); color: var(--text-muted);
+  border-radius: 16px; padding: 5px 12px; font-family: inherit; font-size: 13px; cursor: pointer;
+}
+.log-flash-toggle.on { background: var(--accent); border-color: var(--accent); color: #000; font-weight: 600; }
+.log-grades {
+  display: flex; gap: 8px; overflow-x: auto; padding: 4px 16px 6px;
+  scroll-snap-type: x proximity; scrollbar-width: none; -webkit-overflow-scrolling: touch;
+}
+.log-grades::-webkit-scrollbar { display: none; }
+.log-grade {
+  flex: 0 0 auto; min-width: 58px; height: 58px; border-radius: 14px; scroll-snap-align: center;
+  background: var(--surface2); border: 1px solid var(--border); color: var(--text);
+  font-family: 'DM Mono', monospace; font-size: 17px; font-weight: 500; cursor: pointer;
+  transition: transform 0.1s, background 0.15s;
+}
+.log-grade:active { transform: scale(0.9); background: var(--accent); color: #000; }
+.log-add-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 8px 16px 0; font-size: 11px; color: var(--text-dim);
+}
+.log-date { position: relative; color: var(--accent); font-size: 12px; margin: 0; cursor: pointer; }
+.log-date input { position: absolute; inset: 0; opacity: 0; width: 100%; padding: 0; cursor: pointer; }
+.log-summary { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 12px; }
+.log-big { font-family: 'DM Mono', monospace; font-size: 26px; color: var(--accent); line-height: 1.1; }
+.pyr-bar { flex: 1; height: 10px; background: var(--surface2); border-radius: 5px; overflow: hidden; display: block; }
+.pyr-bar span { display: block; height: 100%; background: var(--accent); border-radius: 5px; }
+.log-day { padding: 12px 16px; }
+.log-day + .log-day { border-top: 1px solid var(--border); }
+.log-day-name { font-size: 13px; color: var(--text-muted); margin-bottom: 8px; display: flex; justify-content: space-between; }
+.log-day-name span { font-family: 'DM Mono', monospace; color: var(--text-dim); }
+.log-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.log-chip {
+  display: inline-flex; align-items: center; gap: 3px;
+  background: var(--surface2); border: 1px solid var(--border); color: var(--text);
+  border-radius: 8px; padding: 5px 9px; font-family: 'DM Mono', monospace; font-size: 13px; cursor: pointer;
+}
+.log-chip.flash { border-color: rgba(200,255,0,0.4); color: var(--accent); }
+.log-flash { font-size: 10px; }
+.log-chip.new { animation: pop 0.5s ease; border-color: var(--accent); }
+@keyframes pop { 0% { transform: scale(0.6); opacity: 0; } 60% { transform: scale(1.12); } 100% { transform: scale(1); } }

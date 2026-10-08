@@ -184,21 +184,17 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
   }));
   await page.click('button:text-is("Fertig")');
 
-  // Logbuch
+  // Logbuch: Grad antippen, fertig
   await page.click('.tab-btn:nth-child(4)');
-  await page.click('button:text-is("+ Boulder")');
-  await page.selectOption('#ascGrade', { label: '6B+' });
-  await page.click('#ascStyle button:text-is("Flash")');
-  await page.fill('#ascName', 'Gelbe Platte');
-  await page.screenshot({ path: path.join(__dirname, 'shot-boulder.png') });
-  await page.click('button:text-is("Speichern")');
-  await page.waitForTimeout(400);
-  await page.click('button:text-is("+ Boulder")');
-  await page.click('button:text-is("Speichern")');
-  await page.waitForTimeout(400);
-  ok('Pyramide zeigt den hoechsten Grad', await page.locator('.stat-val:text-is("6B+")').first().isVisible());
-  ok('zwei Eintraege im Logbuch', (await page.locator('.log-row').count()) === 2);
+  await page.click('.log-grade:text-is("6B+")');
+  await page.click('.log-flash-toggle');
+  await page.click('.log-grade:text-is("6C")');
+  ok('zwei Tipps, zwei Eintraege', (await page.locator('.log-chip').count()) === 2 &&
+    await page.locator('.log-chip.flash:has-text("6C")').isVisible());
+  ok('Pyramide zeigt den hoechsten Grad', await page.locator('.log-big:text-is("6C")').isVisible());
   await page.screenshot({ path: path.join(__dirname, 'shot-logbuch.png'), fullPage: true });
+  await page.click('.log-chip:has-text("6B+")');
+  ok('Antippen loescht', (await page.locator('.log-chip').count()) === 1);
 
   // Plan teilen (ohne Teilen-Menue im Testbrowser: Link in die Zwischenablage)
   await ctx.grantPermissions(['clipboard-read', 'clipboard-write']);
