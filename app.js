@@ -564,12 +564,10 @@ function renderIntensityChart(cycle) {
   const niceMax = Math.ceil(rawMax / step) * step;
   const numSteps = Math.round(niceMax / step);
 
-  // SVG dimensions. Ab 17 Wochen wird das Diagramm breiter als der
-  // Bildschirm und lässt sich seitlich schieben – sonst wären die Balken
-  // fadendünn und nicht mehr antippbar.
-  const PX_PER_WEEK = 20;
-  const scroll = W > 16;
-  const w = scroll ? 28 + 12 + W * PX_PER_WEEK : 320, h = 180;
+  // SVG dimensions. Auch 52 Wochen passen in die Breite: Die Werte einer
+  // Woche zeigt das Abtasten mit Finger oder Maus (siehe chartScrub), dafür
+  // muss niemand einen schmalen Balken genau treffen.
+  const w = 320, h = 180;
   const padL = 28, padR = 12, padT = 16, padB = 30;
   const chartW = w - padL - padR;
   const chartH = h - padT - padB;
@@ -595,7 +593,7 @@ function renderIntensityChart(cycle) {
   }
 
   // X axis labels: even numbers with sensible spacing
-  const labelStep = W <= 1 ? 1 : (W <= 12 || scroll) ? 2 : 4;
+  const labelStep = W <= 1 ? 1 : W <= 12 ? 2 : W <= 24 ? 4 : W <= 48 ? 8 : 10;
   const xLabels = [];
   if (W === 1) {
     xLabels.push(`<text x="${xFor(0)}" y="${h - 14}" font-size="9" fill="var(--text-dim)" text-anchor="middle" font-family="DM Mono, monospace">1</text>`);
@@ -626,17 +624,20 @@ function renderIntensityChart(cycle) {
 
   // Target line (accent dashed) + dots
   const targetPath = targets.map((v, i) => `${i === 0 ? 'M' : 'L'} ${xFor(i)} ${yFor(v)}`).join(' ');
-  const targetDots = targets.map((v, i) => `<circle cx="${xFor(i)}" cy="${yFor(v)}" r="2.5" fill="var(--accent)"/>`).join('');
+  const targetDots = targets.map((v, i) => `<circle cx="${xFor(i)}" cy="${yFor(v)}" r="${W > 24 ? 1.2 : 2.5}" fill="var(--accent)"/>`).join('');
 
   // Interactive tooltip: transparent touch targets + floating tooltip group
   const chartId = 'intChart';
+  // Unsichtbare Spalten je Woche – tragen die Werte für die Anzeige
   const touchTargets = Array.from({length: W}, (_, i) => {
     const cx = xFor(i);
     const tx = padL + i * stepX;
     const topY = yFor(Math.max(targets[i], actuals[i], 0.01));
-    return `<rect x="${tx.toFixed(1)}" y="${padT}" width="${stepX.toFixed(1)}" height="${chartH}" fill="transparent" data-wk="${i}" data-act="${actuals[i]}" data-tgt="${targets[i]}" data-cx="${cx.toFixed(1)}" data-ty="${topY.toFixed(1)}" onclick="showChartTooltip(this,'${chartId}')"/>`;
+    return `<rect x="${tx.toFixed(1)}" y="${padT}" width="${stepX.toFixed(1)}" height="${chartH}" fill="transparent" data-wk="${i}" data-act="${actuals[i]}" data-tgt="${targets[i]}" data-cx="${cx.toFixed(1)}" data-ty="${topY.toFixed(1)}"/>`;
   });
-  const tipGroup = `<g id="${chartId}_tip" style="display:none" pointer-events="none"><rect id="${chartId}_bg" x="0" y="0" width="72" height="30" rx="3" fill="#0a0a0a" opacity="0.85"/><text id="${chartId}_ta" x="0" y="0" font-size="8.5" fill="#fff" font-family="DM Mono,monospace"></text><text id="${chartId}_tt" x="0" y="0" font-size="8.5" fill="var(--accent)" font-family="DM Mono,monospace"></text></g>`;
+  const unitShort = unitInfo(cycle).short;
+  const tipGroup = `<line id="${chartId}_hl" x1="0" x2="0" y1="${padT}" y2="${h - padB}" stroke="var(--text)" stroke-width="0.6" opacity="0.5" style="display:none" pointer-events="none"/>
+    <g id="${chartId}_tip" style="display:none" pointer-events="none" data-unit="${unitShort}"><rect id="${chartId}_bg" x="0" y="0" width="78" height="42" rx="4" fill="#0a0a0a" opacity="0.9"/><text id="${chartId}_tw" x="0" y="0" font-size="8.5" fill="var(--text-muted)" font-family="DM Mono,monospace"></text><text id="${chartId}_ta" x="0" y="0" font-size="8.5" fill="#fff" font-family="DM Mono,monospace"></text><text id="${chartId}_tt" x="0" y="0" font-size="8.5" fill="var(--accent)" font-family="DM Mono,monospace"></text></g>`;
 
   // Current week marker
   const cwX = xFor(currentWeek);
@@ -669,12 +670,11 @@ function renderIntensityChart(cycle) {
   return `
     <div class="card">
       <div class="card-title">${cycleUnit(cycle) === 'int' ? 'Intensitätsverlauf' : `Trainingszeit (${unitInfo(cycle).short})`}</div>
-      ${scroll ? `<div class="chart-wrap">
-        <svg class="chart-axis" viewBox="0 0 ${padL} ${h}" style="width:${Math.round(padL * 1.1)}px;height:auto">${yLabels.join('')}</svg>
-        <div class="chart-scroll" data-focus="${(xFor(currentWeek) / w).toFixed(3)}">` : ''}
-      <svg id="${chartId}" viewBox="0 0 ${w} ${h}" style="${scroll ? `width:${Math.round(w * 1.1)}px;max-width:none` : 'width:100%'};height:auto;display:block" preserveAspectRatio="xMidYMid meet">
+      <svg id="${chartId}" class="scrub-chart" viewBox="0 0 ${w} ${h}" style="width:100%;height:auto;display:block" preserveAspectRatio="xMidYMid meet"
+        data-padl="${padL}" data-stepx="${stepX}" data-weeks="${W}"
+        onpointerdown="chartScrub(event, this, true)" onpointermove="chartScrub(event, this, false)" onpointerleave="chartLeave(event, this)">
         ${gridLines.join('')}
-        ${scroll ? '' : yLabels.join('')}
+        ${yLabels.join('')}
         ${currentMarker}
         ${bars.join('')}
         <path d="${targetPath}" stroke="var(--accent)" stroke-width="1.5" fill="none" stroke-dasharray="4,3" opacity="0.95"/>
@@ -683,7 +683,7 @@ function renderIntensityChart(cycle) {
         ${touchTargets.join('')}
         ${tipGroup}
       </svg>
-      ${scroll ? '</div></div>' : ''}
+      <div class="chart-hint">${'ontouchstart' in (typeof window !== 'undefined' ? window : {}) ? 'Finger auf das Diagramm legen und seitlich wischen' : 'Mit der Maus über eine Woche fahren'}</div>
       <div style="display:flex;gap:10px 14px;font-size:11px;margin-top:6px;justify-content:center;flex-wrap:wrap">
         ${targetLegend}
         ${legendCats}
@@ -695,32 +695,72 @@ function renderIntensityChart(cycle) {
 // ═══════════════════════════════════════════════
 // CHART TOOLTIP
 // ═══════════════════════════════════════════════
+// ── Diagramm abtasten ──
+// Finger auflegen und seitlich wischen (oder mit der Maus darüberfahren):
+// Die Anzeige folgt der Woche darunter. Ein kurzer Tipp auf die bereits
+// gezeigte Woche blendet sie wieder aus.
+function chartWeekAt(e, svg) {
+  const rect = svg.getBoundingClientRect();
+  const vb = (svg.getAttribute('viewBox') || '0 0 320 180').split(' ').map(parseFloat);
+  const vx = (e.clientX - rect.left) / rect.width * vb[2];
+  const padL = parseFloat(svg.dataset.padl), stepX = parseFloat(svg.dataset.stepx);
+  const weeks = parseInt(svg.dataset.weeks, 10);
+  return Math.max(0, Math.min(weeks - 1, Math.floor((vx - padL) / stepX)));
+}
+
+function chartScrub(e, svg, down) {
+  // Maus: schon beim Drüberfahren. Finger: solange er aufliegt.
+  if (!down && e.pointerType !== 'mouse' && !(e.buttons & 1)) return;
+  const wk = chartWeekAt(e, svg);
+  const tip = document.getElementById(svg.id + '_tip');
+  if (down && e.pointerType !== 'mouse' && tip && tip.style.display !== 'none' && tip.getAttribute('data-active') === String(wk)) {
+    hideChartTooltip(svg.id);
+    return;
+  }
+  const el = svg.querySelector(`rect[data-wk="${wk}"]`);
+  if (el) showChartTooltip(el, svg.id);
+}
+
+function chartLeave(e, svg) {
+  if (e.pointerType === 'mouse') hideChartTooltip(svg.id);
+}
+
+function hideChartTooltip(id) {
+  const tip = document.getElementById(id + '_tip');
+  const hl = document.getElementById(id + '_hl');
+  if (tip) tip.style.display = 'none';
+  if (hl) hl.style.display = 'none';
+}
+
 function showChartTooltip(el, id) {
   const tip = document.getElementById(id + '_tip');
   if (!tip) return;
   const wk = el.getAttribute('data-wk');
-  // Toggle off if same bar tapped again
-  if (tip.getAttribute('data-active') === wk && tip.style.display !== 'none') {
-    tip.style.display = 'none'; return;
-  }
   tip.setAttribute('data-active', wk);
   const act = parseFloat(el.getAttribute('data-act'));
   const tgt = parseFloat(el.getAttribute('data-tgt'));
   const cx  = parseFloat(el.getAttribute('data-cx'));
   const ty0 = parseFloat(el.getAttribute('data-ty'));
-  const fmt = v => (v === Math.floor(v)) ? v.toString() : v.toFixed(1).replace(/\.0$/, '');
+  const unit = tip.getAttribute('data-unit') ? ' ' + tip.getAttribute('data-unit') : '';
+  const fmt = v => fmtNum(Math.round(v * 10) / 10) + unit;
   const bg  = document.getElementById(id + '_bg');
+  const tw  = document.getElementById(id + '_tw');
   const ta  = document.getElementById(id + '_ta');
   const tt  = document.getElementById(id + '_tt');
-  const TW = 72, TH = 30, P = 5;
+  const hl  = document.getElementById(id + '_hl');
+  const TW = 78, TH = 42, P = 6;
   const svgW = parseFloat((document.getElementById(id).getAttribute('viewBox') || '0 0 320').split(' ')[2]) || 320;
-  const tx = Math.max(P, Math.min(svgW - TW - P, cx - TW / 2));
-  const ty = Math.max(P, ty0 - TH - 6);
+  // Neben die Linie, damit der Finger die Anzeige nicht verdeckt
+  const tx = cx + 8 + TW <= svgW - 2 ? cx + 8 : cx - 8 - TW;
+  const ty = Math.max(4, Math.min(ty0 - TH / 2, 180 - 30 - TH));
   bg.setAttribute('x', tx); bg.setAttribute('y', ty);
+  tw.textContent = 'Woche ' + (parseInt(wk, 10) + 1);
+  tw.setAttribute('x', tx + P); tw.setAttribute('y', ty + 12);
   ta.textContent = 'Ist:  ' + fmt(act);
-  ta.setAttribute('x', tx + P); ta.setAttribute('y', ty + 12);
+  ta.setAttribute('x', tx + P); ta.setAttribute('y', ty + 24);
   tt.textContent = 'Ziel: ' + fmt(tgt);
-  tt.setAttribute('x', tx + P); tt.setAttribute('y', ty + 24);
+  tt.setAttribute('x', tx + P); tt.setAttribute('y', ty + 36);
+  if (hl) { hl.setAttribute('x1', cx); hl.setAttribute('x2', cx); hl.style.display = 'block'; }
   tip.style.display = 'block';
 }
 
@@ -857,16 +897,8 @@ function renderDashboard() {
 
     ${renderWeekList(cycle, weekIdx, paused)}
   `;
-  focusChartScroll(el);
 }
 
-// Langes Diagramm so schieben, dass die aktuelle Woche in der Mitte steht
-function focusChartScroll(root) {
-  const box = root && root.querySelector && root.querySelector('.chart-scroll');
-  if (!box) return;
-  const f = parseFloat(box.dataset.focus) || 0;
-  box.scrollLeft = Math.max(0, f * box.scrollWidth - box.clientWidth / 2);
-}
 
 // Liste aller Wochen. Bei langen Zyklen nur die Umgebung der aktuellen
 // Woche, der Rest auf Wunsch – 52 Zeilen will niemand durchscrollen.

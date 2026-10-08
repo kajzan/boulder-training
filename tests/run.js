@@ -1362,7 +1362,8 @@ check('auch Ersetzen lässt sich zurücknehmen', gleich(toDocs(appData), toDocs(
   showAllWeeks = false;
   renderDashboard();
   const html = el('dashContent').innerHTML;
-  check('langes Diagramm ist verschiebbar', html.includes('chart-scroll'));
+  check('langes Diagramm passt in die Breite und lässt sich abtasten',
+    !html.includes('chart-scroll') && html.includes('chartScrub') && html.includes('data-weeks="52"'));
   eq('Wochenliste zeigt nur die Umgebung', (html.match(/class="week-row /g) || []).length, 5);
   check('mit Knopf für alle Wochen', html.includes('Alle 52 Wochen anzeigen'));
   showAllWeeks = true;
@@ -1377,8 +1378,7 @@ check('auch Ersetzen lässt sich zurücknehmen', gleich(toDocs(appData), toDocs(
   appData.cycles.push(kurz); appData.activeCycleId = 'K';
   renderDashboard();
   const kh = el('dashContent').innerHTML;
-  check('eine Woche: kein verschiebbares Diagramm, sinnvolle Überschrift',
-    !kh.includes('chart-scroll') && kh.includes('Die Woche') && !kh.includes('Alle 1 Wochen'));
+  check('eine Woche: sinnvolle Überschrift', kh.includes('Die Woche') && !kh.includes('Alle 1 Wochen'));
   renderPlan();
   check('Wochenziele als Raster, ohne Übertragen-Knopf', el('planContent').innerHTML.includes('target-grid') &&
     !el('planContent').innerHTML.includes('repeatWeekTargets'));

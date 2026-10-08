@@ -638,14 +638,13 @@ textarea { resize: vertical; font-size: 14px; line-height: 1.4; }
 }
 .pause-note { color: var(--accent); font-size: 12px; }
 
-/* Lange Zyklen: Diagramm seitlich verschiebbar */
-.chart-scroll {
-  overflow-x: auto; -webkit-overflow-scrolling: touch;
-  margin: 0 -16px; padding: 0 16px;
-  scrollbar-width: none;
+/* Diagramm abtasten: waagrechtes Wischen gehört dem Diagramm, senkrechtes
+   scrollt weiter die Seite */
+.scrub-chart {
+  touch-action: pan-y; cursor: crosshair;
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
 }
-.chart-scroll::-webkit-scrollbar { display: none; }
-.card .chart-scroll svg[viewBox] { max-width: none; margin: 0; }
+.chart-hint { text-align: center; font-size: 10px; color: var(--text-dim); margin-top: 4px; }
 
 /* Wochenziele als kompaktes Raster */
 .target-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
@@ -663,9 +662,3 @@ textarea { resize: vertical; font-size: 14px; line-height: 1.4; }
 }
 .target-cell.read { align-items: center; text-align: center; }
 .target-cell .tc-val { font-family: 'DM Mono', monospace; font-size: 13px; }
-.chart-wrap { position: relative; }
-.card .chart-wrap svg.chart-axis {
-  position: absolute; left: 0; top: 0; z-index: 1; margin: 0; max-width: none;
-  background: var(--surface);
-  box-shadow: -16px 0 0 var(--surface);   /* deckt auch den Kartenrand ab */
-}

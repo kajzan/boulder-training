@@ -264,8 +264,22 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
   });
   await page.click('.tab-btn:nth-child(1)');
   await page.waitForTimeout(300);
-  const sl = await page.evaluate(() => document.querySelector('.chart-scroll').scrollLeft);
-  ok('langes Diagramm steht bei der aktuellen Woche', sl > 200, String(sl));
+  // Maus: Drueberfahren zeigt die Woche
+  const cb = await page.locator('#intChart').boundingBox();
+  const xWoche = i => cb.x + (28 + (i + 0.5) * (280 / 52)) / 320 * cb.width;   // padL 28, Breite 280
+  await page.mouse.move(xWoche(30), cb.y + cb.height / 2);
+  ok('Maus ueber Woche 31 zeigt deren Werte', (await page.locator('#intChart_tw').textContent()) === 'Woche 31' &&
+    (await page.locator('#intChart_tt').textContent()).includes('300 min'));
+  await page.mouse.move(cb.x + cb.width / 2, cb.y - 40);
+  ok('Maus weg: Anzeige verschwindet', !(await page.locator('#intChart_tip').isVisible()));
+  // Finger: auflegen und seitlich wischen (Zeigerereignisse wie auf dem Handy)
+  await page.evaluate(({ a, b, y }) => {
+    const svg = document.getElementById('intChart');
+    const ev = (type, x, buttons) => svg.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerType: 'touch', clientX: x, clientY: y, buttons }));
+    ev('pointerdown', a, 1); ev('pointermove', (a + b) / 2, 1); ev('pointermove', b, 1); ev('pointerup', b, 0);
+  }, { a: xWoche(5), b: xWoche(20), y: cb.y + cb.height / 2 });
+  ok('Wischen mit dem Finger: Anzeige folgt bis Woche 21', (await page.locator('#intChart_tw').textContent()) === 'Woche 21' &&
+    await page.locator('#intChart_tip').isVisible());
   await page.screenshot({ path: path.join(__dirname, 'shot-lang.png'), fullPage: true });
   await page.click('.tab-btn:nth-child(2)');
   await page.screenshot({ path: path.join(__dirname, 'shot-lang-plan.png'), fullPage: true });
