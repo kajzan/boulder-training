@@ -137,7 +137,7 @@ const note = (scenario, msg) => { problems.push(`[${scenario}] ${msg}`); };
       switchView('plan'); openAddWeekSheet();
       weekPresets().forEach(p => togglePick(p.key));     // alle ankreuzen, auch Gleichnamige aus mehreren Vorlagen
       addPickedWeeks();
-      selectBrush(weekPlans(c)[1].id); paintWeek(0); paintWeek(0); paintWeek(11);
+      toggleWeekSel(0); toggleWeekSel(11); assignSelected(weekPlans(c)[1].id); selectAllWeeks(); clearWeekSel(); toggleWeekSel(3); assignSelected(null);
     });
   });
 

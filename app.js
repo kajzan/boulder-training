@@ -2477,7 +2477,7 @@ function createDraft() {
 function editDraft(id) {
   switchView('plan');
   draftEditId = id;
-  planBrush = null;
+  weekSel = [];
   render();
 }
 

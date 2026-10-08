@@ -255,20 +255,21 @@ function suggestExerciseDays(cycle) {
 // ═══════════════════════════════════════════════
 // ANSICHT IM TRAININGSPLAN
 // ═══════════════════════════════════════════════
-// Planen wie Ausmalen: Eine Wochenart auswählen (z.B. Aufbau) und dann die
-// Wochen antippen, die so aussehen sollen. Nochmal antippen nimmt sie
-// wieder heraus. Wochenarten lassen sich nach links wischen, um sie zu löschen.
-let planBrush = null;
+// Planen in zwei Tipps: Woche(n) antippen, dann die Wochenart, die dort
+// gelten soll. Ohne ausgewählte Woche öffnet ein Tipp auf die Wochenart
+// ihren Inhalt. Wochenarten lassen sich nach links wischen, um sie zu löschen.
+let weekSel = [];          // ausgewählte Zykluswochen (Index ab 0)
+let weekSelCycle = null;   // zu welchem Zyklus die Auswahl gehört
 
 function hexA(hex, a) {
   const n = parseInt(hex.slice(1), 16);
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
 }
 
-function currentBrush(cycle) {
-  const plans = weekPlans(cycle);
-  if (!plans.some(p => p.id === planBrush)) planBrush = plans.length ? plans[0].id : null;
-  return planBrush;
+function selectedWeeks(cycle) {
+  if (weekSelCycle !== cycle.id) { weekSel = []; weekSelCycle = cycle.id; }
+  weekSel = weekSel.filter(i => i < (cycle.weeks || 12));
+  return weekSel;
 }
 
 function renderPlanning(cycle) {
@@ -276,45 +277,51 @@ function renderPlanning(cycle) {
   const plans = weekPlans(cycle);
   const n = cycle.weeks || 12;
   const current = getCurrentWeekIndex(cycle);
-  const brush = currentBrush(cycle);
-  const brushPlan = weekPlanById(cycle, brush);
+  const sel = selectedWeeks(cycle);
 
   const tiles = Array.from({ length: n }, (_, i) => {
     const plan = weekPlanFor(cycle, i);
     const color = plan ? weekPlanColor(cycle, plan) : null;
-    return `<button type="button" class="tl-cell ${i === current ? 'current' : ''}" onclick="paintWeek(${i})"
-      style="${color ? `background:${hexA(color, 0.16)};border-color:${hexA(color, 0.5)}` : ''}">
+    const on = sel.includes(i);
+    return `<button type="button" class="tl-cell ${i === current ? 'current' : ''} ${on ? 'selected' : ''}" onclick="toggleWeekSel(${i})"
+      style="${color ? `background:${hexA(color, 0.16)};border-color:${hexA(color, 0.5)}` : ''}" aria-pressed="${on}">
       <span class="tl-num">${i + 1}</span>
       <span class="tl-name" style="${color ? `color:${color}` : ''}">${plan ? esc(shortWeekName(plan.name)) : ''}</span>
+      ${on ? `<span class="tl-check">${CHECK_SVG}</span>` : ''}
     </button>`;
   }).join('');
 
   const typeRows = plans.map(plan => {
     const color = weekPlanColor(cycle, plan);
-    const on = plan.id === brush;
     const days = planDays(plan);
     const count = weeksOfPlan(cycle, plan).length;
     return `<div class="swipe-row" data-delete="deleteWeekPlan('${plan.id}')">
       <div class="swipe-action">Löschen</div>
-      <div class="swipe-content list-row ${on ? 'brush-on' : ''}" onclick="selectBrush('${plan.id}')">
-        <span class="brush-dot" style="border-color:${color};${on ? `background:${color}` : ''}"></span>
+      <div class="swipe-content list-row ${sel.length ? 'assignable' : ''}" onclick="${sel.length ? `assignSelected('${plan.id}')` : `openWeekEditor('${plan.id}')`}">
+        <span class="brush-dot" style="border-color:${color};background:${color}"></span>
         <div class="list-main">
           <div class="list-title">${esc(plan.name)}</div>
           <div class="list-sub">${days.length ? days.map(d => DAYS_DE[d]).join(' ') : 'noch leer'} · ${fmtAmount(cycle, planTotal(cycle, plan))} · ${count} ${count === 1 ? 'Woche' : 'Wochen'}</div>
         </div>
-        <button type="button" class="edit-btn" onclick="event.stopPropagation();openWeekEditor('${plan.id}')" aria-label="${esc(plan.name)} bearbeiten">Bearbeiten</button>
+        ${sel.length ? `<span class="assign-hint">Zuordnen</span>`
+          : `<button type="button" class="edit-btn" onclick="event.stopPropagation();openWeekEditor('${plan.id}')" aria-label="${esc(plan.name)} bearbeiten">Bearbeiten</button>`}
       </div>
     </div>`;
   }).join('');
+
+  const hint = sel.length
+    ? `<div class="sel-bar">
+        <span><strong>${sel.length === 1 ? 'Woche ' + (sel[0] + 1) : sel.length + ' Wochen'}</strong> ausgewählt – tippe unten auf eine Wochenart.</span>
+        <span class="sel-actions"><a class="link" onclick="assignSelected(null)">Ohne Plan</a> · <a class="link" onclick="clearWeekSel()">Abbrechen</a></span>
+      </div>`
+    : `<div class="group-note" style="margin:12px 0 0">Tippe auf Wochen und dann auf eine Wochenart, um sie zuzuordnen. <a class="link" onclick="selectAllWeeks()">Alle auswählen</a></div>`;
 
   return `
     <div class="section-hdr"><h2>Planung</h2></div>
     ${plans.length ? `
       <div class="card">
         <div class="tl-grid">${tiles}</div>
-        <div class="group-note" style="margin:12px 0 0">${brushPlan
-          ? `Tippe auf Wochen, um sie als <strong style="color:${weekPlanColor(cycle, brushPlan)}">${esc(brushPlan.name)}</strong> zu planen.`
-          : 'Wähle unten eine Wochenart.'}</div>
+        ${hint}
       </div>
       <div class="list-group">
         ${typeRows}
@@ -323,7 +330,7 @@ function renderPlanning(cycle) {
           <div class="list-main"><div class="list-title" style="color:var(--accent)">Wochenart hinzufügen</div></div>
         </div>
       </div>
-      <div class="group-note">Nach links wischen zum Löschen.</div>`
+      <div class="group-note">Wochenart antippen zum Bearbeiten, nach links wischen zum Löschen.</div>`
     : `<div class="card plan-empty">
         <div class="plan-empty-title">Noch nichts geplant</div>
         <div class="text-muted" style="margin-bottom:14px;line-height:1.5">Wähle fertige Wochen aus – z.B. Aufbau, Belastung und Entlastung – und passe sie an.</div>
@@ -338,18 +345,36 @@ function shortWeekName(name) {
   return t || name;
 }
 
-function selectBrush(id) {
-  planBrush = id;
+function toggleWeekSel(i) {
+  const cycle = getActiveCycle();
+  if (!cycle) return;
+  if (!weekPlans(cycle).length) { openAddWeekSheet(); return; }
+  const sel = selectedWeeks(cycle);
+  const k = sel.indexOf(i);
+  if (k >= 0) sel.splice(k, 1); else sel.push(i);
   render();
 }
 
-function paintWeek(i) {
+function selectAllWeeks() {
+  const cycle = getActiveCycle();
+  if (!cycle) return;
+  selectedWeeks(cycle);
+  weekSel = Array.from({ length: cycle.weeks || 12 }, (_, i) => i);
+  render();
+}
+
+function clearWeekSel() {
+  weekSel = [];
+  render();
+}
+
+// Ordnet die ausgewählten Wochen einer Wochenart zu (null = ohne Plan)
+function assignSelected(planId) {
   const cycle = getActiveCycle();
   if (!cycle) return;
   ensureAssign(cycle);
-  const brush = currentBrush(cycle);
-  if (!brush) { openAddWeekSheet(); return; }
-  cycle.weekAssign[i] = cycle.weekAssign[i] === brush ? null : brush;
+  selectedWeeks(cycle).forEach(i => { cycle.weekAssign[i] = planId; });
+  weekSel = [];
   saveData();
   render();
 }
@@ -438,13 +463,11 @@ function addPickedWeeks() {
   const cycle = getActiveCycle();
   if (!cycle || !weekPicks.length) return;
   const presets = weekPresets();
-  let last = null;
   weekPicks.forEach(key => {
     const p = presets.find(x => x.key === key);
-    if (p) last = addPresetWeek(cycle, p) || last;
+    if (p) addPresetWeek(cycle, p);
   });
   weekPicks = [];
-  if (last) planBrush = last;
   cycle.mode = 'plan';
   saveData();
   closeModal();
@@ -762,7 +785,6 @@ function commitWeekDraft() {
 
 function weSave() {
   const plan = commitWeekDraft();
-  planBrush = plan.id;
   weekDraft = null;
   closeModal();
   render();

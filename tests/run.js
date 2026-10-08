@@ -1169,14 +1169,22 @@ eq('neue Übung am Freitag mit eigenem Wert und Hinweis', wp.weekPlans[0].items.
 eq('Speichern ändert die Zuordnung nicht', wp.weekAssign, ['P1', 'P1', 'P1', 'P2']);
 
 // Ausmalen: Wochenart wählen, Wochen antippen
-selectBrush('P2');
-paintWeek(1);
-eq('antippen malt die Woche mit der gewählten Art', wp.weekAssign, ['P1', 'P2', 'P1', 'P2']);
-paintWeek(1);
-eq('nochmal antippen nimmt sie heraus', wp.weekAssign, ['P1', null, 'P1', 'P2']);
+toggleWeekSel(1);
+check('Woche antippen wählt sie aus', el('planContent').innerHTML.includes('Woche 2</strong> ausgewählt'));
+assignSelected('P2');
+eq('dann Wochenart antippen ordnet sie zu', wp.weekAssign, ['P1', 'P2', 'P1', 'P2']);
+toggleWeekSel(0); toggleWeekSel(2); toggleWeekSel(2);
+assignSelected('P2');
+eq('mehrere auswählen, eine wieder abwählen', wp.weekAssign, ['P2', 'P2', 'P1', 'P2']);
+selectAllWeeks(); assignSelected(null);
+eq('alle auswählen, ohne Plan', wp.weekAssign, [null, null, null, null]);
+toggleWeekSel(0); clearWeekSel();
+check('Abbrechen leert die Auswahl', !el('planContent').innerHTML.includes('ausgewählt'));
+wp.weekAssign = ['P1', null, 'P1', 'P2'];
 renderPlan();
 check('Planung steht unter den Übungen', el('planContent').innerHTML.indexOf('Übungen') < el('planContent').innerHTML.indexOf('Planung'));
 check('Wochenarten lassen sich wegwischen', el('planContent').innerHTML.includes(`data-delete="deleteWeekPlan('P2')"`));
+check('ohne Auswahl öffnet die Wochenart ihren Editor', el('planContent').innerHTML.includes(`onclick="openWeekEditor('P2')"`));
 
 // Repertoire
 openWeekEditor('P1');

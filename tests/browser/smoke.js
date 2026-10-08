@@ -67,10 +67,16 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
     const h = [...document.querySelectorAll('#planContent .section-hdr h2')].map(x => x.textContent);
     return h.indexOf('Übungen') < h.indexOf('Planung');
   }));
-  // Ausmalen: Entlastung waehlen, Woche 1 antippen
+  // Erst Woche 2 antippen, dann Aufbauwoche: Woche 2 wird Aufbau
+  await page.click('.tl-cell >> nth=1');
+  ok('Woche 2 ausgewaehlt', await page.locator('.tl-cell.selected').count() === 1);
+  await page.screenshot({ path: path.join(__dirname, 'shot-auswahl.png') });
   await page.click('#planContent .list-row:has-text("Entlastungswoche")');
-  await page.click('.tl-cell >> nth=0');
-  ok('Woche 1 als Entlastung gemalt', await page.locator('.tl-cell >> nth=0 >> .tl-name').textContent() === 'Entlastung');
+  ok('Woche 2 als Entlastung zugeordnet', await page.locator('.tl-cell >> nth=1 >> .tl-name').textContent() === 'Entlastung' &&
+    await page.locator('.tl-cell.selected').count() === 0);
+  await page.click('.tl-cell >> nth=1');
+  await page.click('#planContent .list-row:has-text("Aufbauwoche")');
+  ok('und zurueck auf Aufbau', await page.locator('.tl-cell >> nth=1 >> .tl-name').textContent() === 'Aufbau');
   // Wegwischen: Belastungswoche nach links ziehen
   const zeile = await page.locator('#planContent .swipe-content:has-text("Belastungswoche")').boundingBox();
   await page.mouse.move(zeile.x + zeile.width - 30, zeile.y + zeile.height / 2);
