@@ -311,10 +311,10 @@ function renderPlanning(cycle) {
 
   const hint = sel.length
     ? `<div class="sel-bar">
-        <span><strong>${sel.length === 1 ? 'Woche ' + (sel[0] + 1) : sel.length + ' Wochen'}</strong> ausgewählt – tippe unten auf eine Wochenart.</span>
+        <span><strong>${sel.length === 1 ? 'Woche ' + (sel[0] + 1) : sel.length + ' Wochen'}</strong></span>
         <span class="sel-actions"><a class="link" onclick="assignSelected(null)">Ohne Plan</a> · <a class="link" onclick="clearWeekSel()">Abbrechen</a></span>
       </div>`
-    : `<div class="group-note" style="margin:12px 0 0">Tippe auf Wochen und dann auf eine Wochenart, um sie zuzuordnen. <a class="link" onclick="selectAllWeeks()">Alle auswählen</a></div>`;
+    : `<div class="sel-all"><a class="link" onclick="selectAllWeeks()">Alle auswählen</a></div>`;
 
   return `
     <div class="section-hdr"><h2>Planung</h2></div>
@@ -329,11 +329,9 @@ function renderPlanning(cycle) {
           <span class="brush-dot add">+</span>
           <div class="list-main"><div class="list-title" style="color:var(--accent)">Wochenart hinzufügen</div></div>
         </div>
-      </div>
-      <div class="group-note">Wochenart antippen zum Bearbeiten, nach links wischen zum Löschen.</div>`
+      </div>`
     : `<div class="card plan-empty">
         <div class="plan-empty-title">Noch nichts geplant</div>
-        <div class="text-muted" style="margin-bottom:14px;line-height:1.5">Wähle fertige Wochen aus – z.B. Aufbau, Belastung und Entlastung – und passe sie an.</div>
         <button class="btn btn-primary btn-full" onclick="openAddWeekSheet()">Wochen auswählen</button>
       </div>`}
   `;
@@ -383,11 +381,12 @@ function deleteWeekPlan(id) {
   const cycle = getActiveCycle();
   const plan = weekPlanById(cycle, id);
   if (!plan) return;
-  if (!confirm(`„${plan.name}" löschen?`)) { render(); return; }
+  if (!confirm(`„${plan.name}" löschen?`)) { render(); return false; }
   cycle.weekPlans = cycle.weekPlans.filter(p => p.id !== id);
   cycle.weekAssign = (cycle.weekAssign || []).map(x => x === id ? null : x);
   saveData();
   render();
+  return true;
 }
 
 // ── Wochenarten auswählen ──
@@ -429,8 +428,7 @@ function renderAddWeekSheet() {
   const presets = weekPresets();
   const groups = [...new Set(presets.map(p => p.group))];
   openModal(`
-    <div class="modal-title" style="margin-bottom:4px">Wochen auswählen</div>
-    <div class="text-muted" style="margin-bottom:16px">Fertig befüllt – danach kannst du alles anpassen.</div>
+    <div class="modal-title">Wochen auswählen</div>
     ${groups.map(g => `
       <div class="group-label" style="margin-top:14px">${esc(g)}</div>
       <div class="list-group">
@@ -438,6 +436,7 @@ function renderAddWeekSheet() {
           const row = `<div class="list-row ${p.lib ? 'swipe-content' : ''}" onclick="togglePick('${esc(p.key)}')">
             <span class="pick-box ${weekPicks.includes(p.key) ? 'on' : ''}">${weekPicks.includes(p.key) ? CHECK_SVG : ''}</span>
             <div class="list-main"><div class="list-title">${esc(p.name)}</div><div class="list-sub">${presetSummary(p)}</div></div>
+            ${p.lib ? `<button type="button" class="del-btn" onclick="event.stopPropagation();deleteLibraryWeek('${esc(p.lib.id)}')" aria-label="${esc(p.name)} löschen">×</button>` : ''}
           </div>`;
           return p.lib ? `<div class="swipe-row" data-delete="deleteLibraryWeek('${esc(p.lib.id)}')"><div class="swipe-action">Löschen</div>${row}</div>` : row;
         }).join('')}
@@ -626,7 +625,7 @@ function openWeekEditor(planId, opts = {}) {
       : (opts.allWeeks || !cycle.weekAssign.some(Boolean)) ? Array.from({ length: n }, (_, i) => i) : [],
     pickDay: null,
     sel: null,
-    notice: opts.fromHistory ? 'Vorgeschlagen aus deinem bisherigen Training – passe die Tage an.' : ''
+    notice: ''
   };
   openModal('<div id="weekEditor"></div>');
   renderWeekEditor();
@@ -690,6 +689,7 @@ function renderWeekEditor() {
     </div>
     <button class="btn btn-primary btn-full" style="margin-top:6px" onclick="weSave()">Speichern</button>
     <button class="btn btn-ghost btn-full" style="margin-top:10px" onclick="weToLibrary()">Im Repertoire speichern</button>
+    ${d.planId ? `<button class="btn-link" style="color:var(--red)" onclick="if(deleteWeekPlan('${d.planId}'))closeModal()">Wochenart löschen</button>` : ''}
     <button class="btn-link" onclick="closeModal()">Abbrechen</button>
   `;
 }
@@ -812,7 +812,7 @@ function weToLibrary() {
   const entry = { id: same ? same.id : newId(), name, unit: cycleUnit(cycle), exercises };
   if (same) Object.assign(same, entry); else appData.weekLibrary.push(entry);
   saveData();
-  d.notice = `„${name}" ist im Repertoire gespeichert und steht in jedem Zyklus zur Verfügung.`;
+  d.notice = `„${name}" im Repertoire gespeichert`;
   renderWeekEditor();
 }
 
@@ -821,7 +821,7 @@ function weToLibrary() {
 
 function deleteLibraryWeek(id) {
   const w = (appData.weekLibrary || []).find(x => x.id === id);
-  if (!w || !confirm(`„${w.name}" aus dem Repertoire löschen? Zyklen, die sie verwenden, bleiben unverändert.`)) { renderAddWeekSheet(); return; }
+  if (!w || !confirm(`„${w.name}" aus dem Repertoire löschen?`)) { renderAddWeekSheet(); return; }
   appData.weekLibrary = appData.weekLibrary.filter(x => x.id !== id);
   weekPicks = weekPicks.filter(k => k !== 'l:' + id);
   saveData();
@@ -834,7 +834,6 @@ function openTemplatePicker() {
   if (!cycle) return;
   openModal(`
     <div class="modal-title">Vorlage übernehmen</div>
-    <div class="text-muted" style="margin-bottom:16px;line-height:1.5">Übernimmt Übungen und Wochen samt Zuordnung in „${esc(cycle.name)}". Danach lässt sich alles anpassen.</div>
     <div class="list-group">
       ${PLAN_TEMPLATES.map(t => `<div class="list-row" onclick="openTemplateApply('${t.id}')">
         <div class="list-main">
@@ -873,7 +872,6 @@ function openTemplateApply(tplId) {
         return items.length ? `<div class="plan-day"><span class="plan-wd">${dn}</span><span>${items.map(it => esc(exName(it[0]))).join(', ')}</span></div>` : '';
       }).join('')}
     </div>`).join('')}
-    ${weekPlans(cycle).length ? `<div class="group-note" style="margin:0 0 12px">Deine bisherigen Wochen bleiben erhalten, die Zuordnung übernimmt die Vorlage.</div>` : ''}
     <button class="btn btn-primary btn-full" onclick="applyTemplateToActive('${tpl.id}')">In „${esc(cycle.name)}" übernehmen</button>
     <button class="btn-link" onclick="openTemplatePicker()">Zurück</button>
   `);
@@ -954,8 +952,7 @@ function openCalendarExport() {
   const from = calOpts.range === 'all' ? cycle.startDate : toDateStr(new Date());
   const n = plannedTrainingDays(cycle, from).length;
   openModal(`
-    <div class="modal-title" style="margin-bottom:4px">In den Kalender</div>
-    <div class="text-muted" style="margin-bottom:16px">Deine geplanten Trainingstage als Termine.</div>
+    <div class="modal-title">In den Kalender</div>
     <div class="field"><label>Zeitraum</label>
       <div class="seg">
         <button type="button" class="${calOpts.range === 'future' ? 'on' : ''}" onclick="calOpts.range='future';openCalendarExport()">Ab heute</button>
@@ -974,7 +971,7 @@ function openCalendarExport() {
       <div class="check-box ${calOpts.time ? '' : 'checked'}">${calOpts.time ? '' : CHECK_SVG}</div>
       <div class="check-label">Ganztägig, ohne Uhrzeit</div>
     </div>
-    <div class="group-note" style="margin:10px 0 16px">${n} ${n === 1 ? 'Trainingstag' : 'Trainingstage'}. Nach Änderungen am Plan einfach erneut exportieren – gleiche Tage werden im Kalender aktualisiert statt verdoppelt.</div>
+    <div class="group-note" style="margin:10px 0 16px">${n} ${n === 1 ? 'Trainingstag' : 'Trainingstage'}</div>
     <button class="btn btn-primary btn-full" ${n ? '' : 'disabled'} onclick="doCalendarExport()">Exportieren</button>
     <button class="btn-link" onclick="closeModal()">Abbrechen</button>
   `);

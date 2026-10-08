@@ -1148,7 +1148,7 @@ check('Beschreibung wird maskiert', el('dashContent').innerHTML.includes('&lt;b&
 check('Wochenliste zeigt die geplante Woche', el('dashContent').innerHTML.includes('● Aufbau'));
 heuteIst('2026-01-22');
 renderDashboard();
-check('Ruhetag nennt den nächsten Trainingstag', el('dashContent').innerHTML.includes('Als Nächstes – Montag'));
+check('Ruhetag nennt den nächsten Trainingstag', el('dashContent').innerHTML.includes('Montag: '));
 heuteIst('2026-01-26');
 toggleDayEx('2026-01-26', 'b');
 eq('Abhaken in der Deload-Woche zählt den geplanten Wert', wp.sessions['2026-01-26'][0], { exId: 'b', overrideInt: 1 });
@@ -1170,7 +1170,7 @@ eq('Speichern ändert die Zuordnung nicht', wp.weekAssign, ['P1', 'P1', 'P1', 'P
 
 // Ausmalen: Wochenart wählen, Wochen antippen
 toggleWeekSel(1);
-check('Woche antippen wählt sie aus', el('planContent').innerHTML.includes('Woche 2</strong> ausgewählt'));
+check('Woche antippen wählt sie aus', el('planContent').innerHTML.includes('<strong>Woche 2</strong>') && weekSel.includes(1));
 assignSelected('P2');
 eq('dann Wochenart antippen ordnet sie zu', wp.weekAssign, ['P1', 'P2', 'P1', 'P2']);
 toggleWeekSel(0); toggleWeekSel(2); toggleWeekSel(2);
@@ -1285,7 +1285,7 @@ heuteIst('2026-01-21');
 appData.ascents = [];
 logScaleSel = null; logDate = null; logFlash = false;
 renderHistory();
-check('leeres Logbuch erklärt sich', el('historyContent').innerHTML.includes('daraus entsteht deine Pyramide'));
+check('leeres Logbuch zeigt nur die Grad-Leiste', el('historyContent').innerHTML.includes('log-grade') && !el('historyContent').innerHTML.includes('Verlauf'));
 check('Grad-Leiste zum Antippen', el('historyContent').innerHTML.includes('quickAddAscent(7)'));
 quickAddAscent(7);                                     // 6C Top heute
 logFlash = true; quickAddAscent(7);                    // 6C Flash
@@ -1518,7 +1518,7 @@ check('auch Ersetzen lässt sich zurücknehmen', gleich(toDocs(appData), toDocs(
   currentView = 'settings';
   togglePlanMode();
   check('Einschalten öffnet eine Woche mit Vorschlag aus dem bisherigen Training',
-    isPlanMode(frei) && el('weekEditor').innerHTML.includes('Vorgeschlagen aus deinem bisherigen Training'));
+    isPlanMode(frei) && !!el('weekEditor').innerHTML && weekDraft && weekDraft.items.length > 0);
   eq('vorgeschlagene Tage', weekDraft.items, [{ exId: 'f1', days: [0, 4] }, { exId: 'f2', days: [2] }]);
   weSave();
   eq('gilt in allen Wochen', frei.weekAssign.filter(Boolean).length, 4);

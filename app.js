@@ -354,11 +354,7 @@ function buildCategoryChips(inputId, multi) {
   if (!cycle) return '';
   const allCats = getAllCategoriesInCycle(cycle).filter(c => c !== 'Sonstige');
   if (allCats.length === 0) return '';
-  const hint = multi
-    ? 'Vorhandene Kategorien (tippen zum An- und Abwählen):'
-    : 'Vorhandene Kategorien (tippen zum Übernehmen):';
-  return `<div style="font-size:11px;color:var(--text-muted);margin-top:8px;margin-bottom:4px">${hint}</div>
-  <div id="chips_${inputId}" style="display:flex;flex-wrap:wrap;gap:6px">
+  return `<div id="chips_${inputId}" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">
     ${renderCategoryChips(inputId, multi)}
   </div>`;
 }
@@ -775,7 +771,6 @@ function renderIntensityChart(cycle) {
         ${touchTargets.join('')}
         ${tipGroup}
       </svg>
-      <div class="chart-hint">${'ontouchstart' in (typeof window !== 'undefined' ? window : {}) ? 'Finger auf das Diagramm legen und seitlich wischen' : 'Mit der Maus über eine Woche fahren'}</div>
       <div style="display:flex;gap:10px 14px;font-size:11px;margin-top:6px;justify-content:center;flex-wrap:wrap">
         ${targetLegend}
         ${legendCats}
@@ -868,21 +863,17 @@ function renderDashboard() {
     el.innerHTML = `
       <div class="empty" style="padding-bottom:20px">
         <div class="empty-icon">🧗</div>
-        <div>Noch kein aktiver Trainingszyklus.<br>Wie möchtest du trainieren?</div>
+        <div>Wie möchtest du trainieren?</div>
       </div>
       <div class="choice-card" onclick="openNewCycleModal('plan')">
         <div class="choice-title">Mit Wochenplan</div>
-        <div class="choice-text">Feste Trainingstage, die App zeigt dir, was heute dran ist. Mit fertigen Vorlagen zum Anpassen.</div>
       </div>
       <div class="choice-card" onclick="openNewCycleModal('free')">
         <div class="choice-title">Frei</div>
-        <div class="choice-text">Du trägst ein, was du trainiert hast – ohne festen Plan.</div>
       </div>
       <div class="choice-card" onclick="openImportPlanModal()">
         <div class="choice-title">Plan von deinem Trainer</div>
-        <div class="choice-text">Füge den Link ein, den du bekommen hast.</div>
-      </div>
-      <div class="text-muted" style="text-align:center;font-size:11px;margin-top:4px">Lässt sich später in den Einstellungen umstellen.</div>`;
+      </div>`;
     document.getElementById('navSub').textContent = 'Kein aktiver Zyklus';
     return;
   }
@@ -931,7 +922,7 @@ function renderDashboard() {
     <div class="pause-hero">
       <div class="pause-icon">${PAUSE_ICON}</div>
       <div class="sheet-title">Training pausiert</div>
-      <div class="sheet-text">${cycle.pausedAt > today ? 'Ab morgen' : cycle.pausedAt === today ? 'Seit heute' : `Seit ${formatDay(cycle.pausedAt)} · ${pausedDaysBetween(cycle, cycle.pausedAt, today)} Tage`}. Danach geht es mit <strong>Woche ${trainingPosition(cycle).week + 1}, Tag ${trainingPosition(cycle).day + 1}</strong> weiter – der Zyklus verlängert sich um jeden Pausentag.</div>
+      <div class="sheet-text">${cycle.pausedAt > today ? 'Ab morgen' : cycle.pausedAt === today ? 'Seit heute' : `Seit ${formatDay(cycle.pausedAt)} · ${pausedDaysBetween(cycle, cycle.pausedAt, today)} Tage`} · weiter mit Woche ${trainingPosition(cycle).week + 1}, Tag ${trainingPosition(cycle).day + 1}</div>
       <button class="btn btn-primary btn-full" style="margin-top:18px" onclick="resumeCycle()">Training fortsetzen</button>
     </div>` : '';
 
@@ -994,12 +985,12 @@ function renderStatusCard(cycle, status) {
     const n = daysBetween(today, cycle.startDate);
     return `<div class="pause-hero">
       <div class="sheet-title">Startet ${n === 1 ? 'morgen' : `in ${n} Tagen`}</div>
-      <div class="sheet-text">Am ${DAYS_FULL[weekdayOf(cycle.startDate)]}, ${formatDay(cycle.startDate)} beginnt Woche 1 von ${cycle.weeks || 12}.</div>
+      <div class="sheet-text">${DAYS_FULL[weekdayOf(cycle.startDate)]}, ${formatDay(cycle.startDate)} · ${cycle.weeks || 12} Wochen</div>
     </div>`;
   }
   return `<div class="pause-hero">
     <div class="sheet-title">Zyklus beendet</div>
-    <div class="sheet-text">„${esc(cycle.name)}" lief bis ${formatDay(getCycleEndDate(cycle))}. Zeit für eine Messung und den nächsten Zyklus.</div>
+    <div class="sheet-text">${esc(cycle.name)} · ${formatDateRange(cycle.startDate, getCycleEndDate(cycle))}</div>
     <button class="btn btn-primary btn-full" style="margin-top:18px" onclick="openNewCycleModal()">Neuen Zyklus starten</button>
   </div>`;
 }
@@ -1078,7 +1069,7 @@ function renderTodayCard(cycle, today) {
   if (!weekPlans(cycle).length) {
     return `<button type="button" class="card card-btn" onclick="startPlanning(getActiveCycle())">
       <div class="card-title">Heute · ${dayName}</div>
-      <div class="text-muted">Noch keine Woche geplant. <span style="color:var(--accent)">Wochenplan einrichten ›</span></div>
+      <div style="color:var(--accent)">Wochenplan einrichten ›</div>
     </button>`;
   }
 
@@ -1092,7 +1083,7 @@ function renderTodayCard(cycle, today) {
     const thisWeek = weekPlanFor(cycle, weekIndexOfDate(cycle, today));
     return `<button type="button" class="card card-btn" onclick="openDayModal('${today}')">
       <div class="card-title">Heute · ${thisWeek ? 'Ruhetag' : dayName}</div>
-      <div class="text-muted">${thisWeek ? '' : 'Diese Woche ist ohne Plan. '}${next ? 'Als Nächstes – ' + next : ''}</div>
+      <div class="text-muted">${[thisWeek ? '' : 'Ohne Plan', next].filter(Boolean).join(' · ')}</div>
     </button>`;
   }
 
@@ -1142,7 +1133,6 @@ function buildDayModalContent(dateStr, returnToWeek) {
       <div class="pause-hero" style="background:none;border:none;padding-top:4px">
         <div class="pause-icon">${PAUSE_ICON}</div>
         <div class="sheet-title">${title}</div>
-        <div class="sheet-text">Das Training ist pausiert. Setze es fort, um wieder Übungen einzutragen.</div>
         <button class="btn btn-primary btn-full" style="margin-top:18px" onclick="closeModal();resumeCycle()">Training fortsetzen</button>
         <button class="btn-link" onclick="closeModal()">Schließen</button>
       </div>`;
@@ -1367,7 +1357,7 @@ function renderWeekView(weekIdx) {
       <span class="intensity-badge ${iClass}">${fmtNum(wInt)} / ${fmtAmount(cycle, target)}</span>
       <span class="text-muted">${intensityLabel(wInt, target, tol)}</span>
     </div>
-    ${moving ? `<div class="sheet-notice">Auf welchen Tag soll das Training von ${DAYS_FULL[weekdayOf(weekMoveFrom)]} verschoben werden?</div>` : ''}
+    ${moving ? `<div class="sheet-notice">${DAYS_FULL[weekdayOf(weekMoveFrom)]} verschieben nach …</div>` : ''}
     ${days.map(dateStr => {
       const entries = cycle.sessions[dateStr] || [];
       const planned = plannedItems(cycle, dateStr);
@@ -1408,8 +1398,7 @@ function renderWeekView(weekIdx) {
       </div>`;
     }).join('')}
     ${moving ? `<button class="btn btn-ghost btn-full" onclick="startMoveDay(${weekIdx}, weekMoveFrom)">Abbrechen</button>`
-      : `<div class="group-note" style="text-align:center;margin-bottom:12px">Tag antippen zum Eintragen.</div>
-         <button class="btn btn-ghost btn-full" onclick="closeModal()">Schließen</button>`}
+      : `<button class="btn btn-ghost btn-full" onclick="closeModal()">Schließen</button>`}
   `;
 }
 
@@ -1443,8 +1432,8 @@ function renderPlan() {
     ${isCyclePaused(cycle) ? `<div class="list-group" style="margin-bottom:16px">
       <div class="list-row" onclick="resumeCycle()">
         <span class="list-icon">${PAUSE_ICON}</span>
-        <div class="list-main"><div class="list-title">Training pausiert</div><div class="list-sub">Tippen zum Fortsetzen</div></div>
-        <span class="chev">›</span>
+        <div class="list-main"><div class="list-title">Training pausiert</div></div>
+        <span style="color:var(--accent);font-size:15px;flex-shrink:0">Fortsetzen</span>
       </div></div>` : ''}
     ${planFrom}
     <div class="section-hdr" style="margin-top:0">
@@ -1467,7 +1456,6 @@ function renderPlan() {
                 <div class="exercise-name">${esc(ex.name)}</div>
                 <div style="font-size:11px;color:var(--text-muted);margin-top:2px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
                   ${cats.length ? catLabelsHtml(cats, allCats, 14) : ''}
-                  ${cats.length ? '' : `<span>Tippen zum Bearbeiten</span>`}
                   ${ex.measure ? `<span style="color:var(--text-dim)">· Messwert</span>` : ''}
                 </div>
                 ${ex.desc ? `<div class="ex-desc">${esc(ex.desc)}</div>` : ''}
@@ -1478,9 +1466,6 @@ function renderPlan() {
           `}).join('') + `</div>`;
         })()
     }
-    ${cycle.exercises.length > 1
-      ? `<div style="font-size:11px;color:var(--text-dim);text-align:center;margin-top:2px;margin-bottom:8px">Am Anfasser links ziehen, um die Reihenfolge zu ändern.</div>`
-      : ''}
     ${plan ? renderPlanning(cycle) : ''}
 
     ${plan ? '' : `
@@ -1503,17 +1488,17 @@ function renderPlan() {
     <div class="list-group" style="margin-top:20px">
       ${plan ? '' : `<div class="list-row" onclick="togglePlanMode()">
         <span class="list-icon">${CALENDAR_ICON}</span>
-        <div class="list-main"><div class="list-title">Wochenplan einschalten</div><div class="list-sub">Feste Trainingstage, Wochen und Vorlagen</div></div>
+        <div class="list-main"><div class="list-title">Wochenplan einschalten</div></div>
         <span class="chev">›</span>
       </div>`}
       ${plan && weekPlans(cycle).length ? `<div class="list-row" onclick="openCalendarExport()">
         <span class="list-icon">${CALENDAR_ICON}</span>
-        <div class="list-main"><div class="list-title">In den Kalender</div><div class="list-sub">Trainingstage als Termine exportieren</div></div>
+        <div class="list-main"><div class="list-title">In den Kalender</div></div>
         <span class="chev">›</span>
       </div>` : ''}
       ${cycle.exercises.length ? `<div class="list-row" onclick="openSharePlanModal()">
         <span class="list-icon">${SHARE_ICON}</span>
-        <div class="list-main"><div class="list-title">Plan teilen</div><div class="list-sub">Als Link, z.B. an deine Schüler</div></div>
+        <div class="list-main"><div class="list-title">Plan teilen</div></div>
         <span class="chev">›</span>
       </div>` : ''}
     </div>
@@ -1542,7 +1527,6 @@ function exerciseFormHtml(p, ex) {
         oninput="refreshCategoryChips('${p}Cat', true)">
       ${datalist}
       ${buildCategoryChips(p + 'Cat', true)}
-      <div style="font-size:11px;color:var(--text-dim);margin-top:6px">Mehrere durch Komma trennen. Der Wert wird gleichmäßig auf sie aufgeteilt.</div>
     </div>
     <div class="field">
       <label>${unitInfo(cycle).amount}</label>
@@ -1556,7 +1540,6 @@ function exerciseFormHtml(p, ex) {
       <div class="check-box ${measure ? 'checked' : ''}" id="${p}Measure" data-on="${measure ? '1' : '0'}">${measure ? CHECK_SVG : ''}</div>
       <div class="check-label">Messwert beim Abhaken erfassen</div>
     </div>
-    <div style="font-size:11px;color:var(--text-dim);margin:2px 0 10px 32px">Freiwillig, z.B. Zusatzgewicht oder Wiederholungen – mit Notiz für Varianten.</div>
     <div class="field" id="${p}UnitField" style="${measure ? '' : 'display:none'}">
       <label>Einheit</label>
       <input type="text" id="${p}Unit" value="${ex && ex.unit ? esc(ex.unit) : ''}" placeholder="z.B. kg, Wdh., s">
@@ -2040,7 +2023,7 @@ function renderLogbook() {
       </div>
       ${dayEntries.length ? `<div class="log-today">${dayEntries.map(chip).join('')}</div>` : ''}
       <div class="log-add-foot">
-        <span>${dayEntries.length ? `${dayEntries.length} ${day === today ? 'heute' : 'an diesem Tag'} · antippen zum Löschen` : 'Grad antippen zum Eintragen'}</span>
+        <span>${dayEntries.length ? `${dayEntries.length} ${day === today ? 'heute' : 'an diesem Tag'}` : ''}</span>
         <label class="log-date">${day === today ? 'Anderer Tag' : 'Tag'}
           <input type="date" value="${day}" max="${today}" onchange="logDate=this.value===toDateStr(new Date())?null:this.value;renderHistory()">
         </label>
@@ -2056,7 +2039,7 @@ function renderLogbook() {
           <span class="chev">›</span>
         </div>
       </div>`
-    : `<div class="text-muted" style="text-align:center;padding:10px 20px 4px;line-height:1.5">Tipp nach jedem geschafften Boulder kurz auf seinen Grad – daraus entsteht deine Pyramide.</div>`}`;
+    : ''}`;
 }
 
 // Alle Tage, nach Monaten gegliedert – in einem eigenen Fenster, damit die
@@ -2096,7 +2079,6 @@ function renderLogHistory() {
             onclick="removeAscent('${esc(a.id)}')">${esc(ascentGrade(a))}${a.style === 'flash' ? '<span class="log-flash">⚡</span>' : ''}</button>`).join('')}</div>
         </div></div>`).join('')}
       </div>`).join('') || '<div class="text-muted">Noch keine Einträge.</div>'}
-    <div class="group-note" style="text-align:center;margin-top:12px">Boulder antippen löscht ihn, einen Tag nach links wischen löscht den ganzen Tag.</div>
     <button class="btn btn-ghost btn-full" style="margin-top:14px" onclick="closeModal()">Fertig</button>`;
 }
 
@@ -2184,7 +2166,6 @@ function renderSettings() {
       <div class="list-row" onclick="togglePlanMode()">
         <div class="list-main">
           <div class="list-title">Wochenplan</div>
-          <div class="list-sub">${plan ? 'Feste Trainingstage' : 'Aus – freies Eintragen'}</div>
         </div>
         <span class="switch ${plan ? 'on' : ''}"></span>
       </div>` : ''}
@@ -2192,7 +2173,7 @@ function renderSettings() {
         <div class="list-main"><div class="list-title" style="color:var(--accent)">Neuen Zyklus starten</div></div>
       </div>
       <div class="list-row" onclick="openImportPlanModal()">
-        <div class="list-main"><div class="list-title">Plan importieren</div><div class="list-sub">Von deinem Trainer, per Link</div></div>
+        <div class="list-main"><div class="list-title">Plan importieren</div></div>
         <span class="chev">›</span>
       </div>
     </div>
@@ -2204,27 +2185,26 @@ function renderSettings() {
         <div class="swipe-content list-row" onclick="editDraft('${c.id}')">
           <div class="list-main"><div class="list-title">${esc(c.name)}</div>
             <div class="list-sub">${c.weeks || 12} Wochen · ${weekPlans(c).length} ${weekPlans(c).length === 1 ? 'Wochenart' : 'Wochenarten'}</div></div>
-          <span class="chev">›</span>
+          <button class="del-btn" onclick="event.stopPropagation();deleteDraft('${c.id}')" aria-label="${esc(c.name)} löschen">×</button>
         </div>
       </div>`).join('')}
       <div class="list-row" onclick="openNewDraftModal()">
-        <div class="list-main"><div class="list-title" style="color:var(--accent)">Plan für jemand anderen erstellen</div>
-          <div class="list-sub">Für Schüler oder Freunde – als Link verschicken</div></div>
+        <div class="list-main"><div class="list-title" style="color:var(--accent)">Plan für jemand anderen erstellen</div></div>
       </div>
     </div>
 
     <div class="group-label">Daten</div>
     <div class="list-group">
       <div class="list-row" onclick="exportData()">
-        <div class="list-main"><div class="list-title">Sicherung exportieren</div><div class="list-sub">Alle Daten als Datei</div></div>
+        <div class="list-main"><div class="list-title">Sicherung exportieren</div></div>
         <span class="chev">›</span>
       </div>
       <div class="list-row" onclick="importDataPrompt()">
-        <div class="list-main"><div class="list-title">Sicherung wiederherstellen</div><div class="list-sub">Aus einer Datei – hinzufügen oder ersetzen</div></div>
+        <div class="list-main"><div class="list-title">Sicherung wiederherstellen</div></div>
         <span class="chev">›</span>
       </div>
       ${undo ? `<div class="list-row" onclick="undoImport()">
-        <div class="list-main"><div class="list-title">Wiederherstellen rückgängig machen</div><div class="list-sub">Stand vom ${formatDay(toDateStr(new Date(undo.at)))} zurückholen</div></div>
+        <div class="list-main"><div class="list-title">Wiederherstellen rückgängig machen</div><div class="list-sub">Stand vom ${formatDay(toDateStr(new Date(undo.at)))}</div></div>
         <span class="chev">›</span>
       </div>` : ''}
     </div>
@@ -2267,8 +2247,7 @@ function renderCyclesSheet() {
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 002 2h6a2 2 0 002-2l1-12M9 7V4h6v3"/></svg>
           </button>
         </div>`).join('')}
-    </div>
-    <div class="group-note">Tippen zum Wechseln. Gelöschte Zyklen lassen sich nicht wiederherstellen.</div>`
+    </div>`
     : `<div class="text-muted" style="margin-bottom:14px">Noch keine Zyklen.</div>`}
     ${getActiveCycle() ? `<button class="btn btn-ghost btn-full" style="margin-top:14px;color:var(--red)" onclick="confirmEndCycle()">Aktiven Zyklus abschließen</button>` : ''}
     <button class="btn btn-ghost btn-full" style="margin-top:10px" onclick="closeModal()">Fertig</button>
@@ -2426,7 +2405,6 @@ function openNewDraftModal() {
   const own = ownCycles();
   openModal(`
     <div class="modal-title" style="margin-bottom:4px">Plan für jemand anderen</div>
-    <div class="text-muted" style="margin-bottom:16px;line-height:1.5">Ein eigener Entwurf, getrennt von deinem Training. Fertig geplant verschickst du ihn als Link.</div>
     <div class="field"><label>Für wen?</label>
       <input type="text" id="draftWho" placeholder="z.B. Lisa" maxlength="40"></div>
     <div class="row">
@@ -2584,24 +2562,20 @@ function importDataPrompt() {
 // source: Herkunft für die Anzeige, z.B. "Datei …" oder "Sicherung vom …"
 function openRestoreModal(data, source) {
   pendingRestore = data;
-  const synced = !!(window.cloudSignedIn && window.cloudSignedIn());
   openModal(`
     <div class="modal-title">Sicherung wiederherstellen</div>
     <div class="text-muted" style="margin-bottom:4px">${esc(source)}</div>
     <div class="text-muted" style="margin-bottom:16px;font-size:12px">${esc(dataSummary(data))}</div>
     <div class="list-group">
       <div class="list-row" onclick="applyRestore('merge')">
-        <div class="list-main"><div class="list-title">Hinzufügen</div>
-          <div class="list-sub" style="display:block">Übernimmt nur, was hier fehlt. Nichts wird gelöscht.</div></div>
+        <div class="list-main"><div class="list-title">Hinzufügen</div></div>
         <span class="chev">›</span>
       </div>
       <div class="list-row" onclick="applyRestore('replace')">
-        <div class="list-main"><div class="list-title" style="color:var(--red)">Ersetzen</div>
-          <div class="list-sub" style="display:block">Alles durch die Sicherung ersetzen${synced ? ' – auch im Konto und auf deinen anderen Geräten' : ''}.</div></div>
+        <div class="list-main"><div class="list-title" style="color:var(--red)">Alles ersetzen</div></div>
         <span class="chev">›</span>
       </div>
     </div>
-    <div class="group-note">Der jetzige Stand wird vorher gemerkt. In den Einstellungen kannst du das rückgängig machen.</div>
     <button class="btn btn-ghost btn-full" style="margin-top:14px" onclick="closeModal()">Abbrechen</button>`);
 }
 
@@ -2803,7 +2777,7 @@ function openSharePlanModal() {
   try { author = localStorage.getItem('boulderPlanAuthor') || ''; } catch (e) {}
   openModal(`
     <div class="modal-title">Plan teilen</div>
-    <div class="text-muted" style="margin-bottom:16px;line-height:1.5">„${esc(cycle.name)}" als Link verschicken, z.B. an deine Schüler. Sie übernehmen ihn in ihrer App als eigenen Zyklus. Mitgeschickt werden nur Übungen, Tage, Beschreibungen und Wochenziele – keine Trainingsdaten.</div>
+    <div class="text-muted" style="margin-bottom:16px">${esc(cycle.name)}</div>
     <div class="field"><label>Dein Name (optional)</label>
       <input type="text" id="sharePlanAuthor" maxlength="${PLAN_LIMITS.author}" value="${esc(author)}" placeholder="z.B. Trainerin Lisa"></div>
     <div class="field"><label>Hinweis (optional)</label>
@@ -2834,14 +2808,13 @@ async function sharePlan() {
   let copied = false;
   try { await navigator.clipboard.writeText(url); copied = true; } catch (e) {}
   if (box) box.innerHTML = `
-    <div class="sheet-notice">${copied ? 'Link kopiert – füge ihn in eine Nachricht ein.' : 'Kopiere diesen Link und schick ihn weiter:'}</div>
+    ${copied ? `<div class="sheet-notice">Link kopiert</div>` : ''}
     <div class="field"><input type="text" id="sharePlanUrl" readonly value="${esc(url)}" onclick="this.select()"></div>`;
 }
 
 function openImportPlanModal() {
   openModal(`
     <div class="modal-title">Plan importieren</div>
-    <div class="text-muted" style="margin-bottom:16px;line-height:1.5">Füge den Link ein, den du von deinem Trainer bekommen hast.</div>
     <div class="field">
       <textarea id="planCode" rows="3" placeholder="https://…#plan=…" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea>
     </div>
@@ -2898,7 +2871,7 @@ function openPlanPreview(plan, fromLink) {
     <div class="modal-title" style="margin-bottom:4px">${esc(plan.name)}</div>
     <div class="text-muted" style="margin-bottom:14px">${plan.author ? 'von ' + esc(plan.author) + ' · ' : ''}${plan.weeks} ${plan.weeks === 1 ? 'Woche' : 'Wochen'} · ${plan.exercises.length} Übungen · in ${unitInfo(plan).name}</div>
     ${fromLink && ios && !standalone ? `
-      <div class="sheet-notice" style="line-height:1.5">Nutzt du die App vom Home-Bildschirm? Dann kopiere den Link und füge ihn dort unter Einstellungen → Plan importieren ein.
+      <div class="sheet-notice" style="line-height:1.5">Für die App vom Home-Bildschirm: Link kopieren, dort unter Einstellungen → Plan importieren einfügen.
         <button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="navigator.clipboard.writeText(location.href.split('#')[0] + '#plan=' + (window.__planCode || ''));this.textContent='Kopiert'">Link kopieren</button>
       </div>` : ''}
     ${plan.note ? `<div class="card" style="font-size:14px;line-height:1.5">${esc(plan.note)}</div>` : ''}
@@ -2983,10 +2956,10 @@ const SCALES = {
 };
 
 const TEST_KINDS = {
-  number: 'Zahl – kg, Wdh., cm, km …',
-  time:   'Zeit – Sekunden oder mm:ss',
-  scale:  'Skala – ein Grad',
-  counts: 'Anzahl je Grad – z.B. 12 Siebener, 5 Achter'
+  number: 'Zahl',
+  time:   'Zeit',
+  scale:  'Grad',
+  counts: 'Anzahl je Grad'
 };
 
 // 'counts' speichert statt einer Zahl ein Objekt { Skalenindex: Anzahl },
@@ -3238,7 +3211,7 @@ function renderAssessment() {
       }).join('');
 
   const testList = tests.length === 0
-    ? `<div class="card text-muted" style="text-align:center;line-height:1.5">Noch keine Tests – z.B. „Max Hang 20 mm" oder „Max Klimmzüge".</div>`
+    ? ''
     : tests.map(t => {
         const cat = (t.category && t.category.trim()) ? t.category.trim() : '';
         const catColor = cat ? categoryColor(cat, allCats) : '#888';
@@ -3268,8 +3241,7 @@ function renderAssessment() {
       <h2>Tests</h2>
       <button class="btn ${tests.length ? 'btn-ghost' : 'btn-primary'} btn-sm" onclick="openTestModal()">+ Test</button>
     </div>
-    ${tests.length ? `<div class="list-group">${testList}</div>
-      <div class="group-note" style="text-align:center">Test antippen für seinen Verlauf.</div>` : testList}
+    ${tests.length ? `<div class="list-group">${testList}</div>` : ''}
 
     <div class="section-hdr">
       <h2>Messungen</h2>
@@ -3371,14 +3343,12 @@ function openTestModal(testId) {
       </div>
       <div class="check-label">Höherer Wert ist besser</div>
     </div>
-    <div style="font-size:11px;color:var(--text-dim);margin:2px 0 10px 32px">Ausschalten z.B. bei Finger-Boden-Abstand oder Pace.</div>
     <div class="check-row" id="testBwRow" onclick="toggleCheck('testBw')">
       <div class="check-box ${t && t.usesBodyweight ? 'checked' : ''}" id="testBw" data-on="${t && t.usesBodyweight ? '1' : '0'}">
         ${t && t.usesBodyweight ? CHECK_SVG : ''}
       </div>
       <div class="check-label">Körpergewicht einbeziehen</div>
     </div>
-    <div style="font-size:11px;color:var(--text-dim);margin:2px 0 10px 32px">Für Zusatzgewicht am Gurt. Rechnet Prozente auf der Gesamtlast statt auf dem Zusatzgewicht.</div>
     <div class="divider"></div>
     <div class="row">
       <button class="btn btn-ghost" onclick="closeModal()">Abbrechen</button>

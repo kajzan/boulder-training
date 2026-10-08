@@ -544,7 +544,6 @@ function renderCloudBox() {
           <div class="avatar">${ICON_USER}</div>
           <div class="list-main">
             <div class="list-title">Anmelden</div>
-            <div class="list-sub">Deine Daten auf allen Geräten</div>
           </div>
           <span class="chev">›</span>
         </div>`;
@@ -619,9 +618,6 @@ function renderSheet() {
     el.innerHTML = `
       <div class="sheet-head">
         <div class="sheet-title">${up ? 'Konto erstellen' : 'Willkommen zurück'}</div>
-        <div class="sheet-text">${up
-          ? 'Mit einem Konto sind deine Trainingsdaten auf all deinen Geräten – und sicher, falls das Handy verloren geht.'
-          : 'Melde dich an, um deine Daten auf diesem Gerät abzugleichen.'}</div>
       </div>
       <div class="seg" style="margin-bottom:16px">
         <button type="button" class="${up ? '' : 'on'}" onclick="cloudSwitchSheet('signin')">Anmelden</button>
@@ -641,9 +637,7 @@ function renderSheet() {
       ${error}
       <button class="btn btn-primary btn-full" onclick="${up ? 'cloudSignUp' : 'cloudSignIn'}()" ${busy}>
         ${state.busy ? 'Einen Moment …' : up ? 'Konto erstellen' : 'Anmelden'}</button>
-      ${up
-        ? `<div class="sheet-small">Wir schicken dir eine Mail, um deine Adresse zu bestätigen. Deine Daten auf diesem Gerät bleiben erhalten und werden mitgenommen.</div>`
-        : `<button class="btn-link" onclick="cloudResetPassword()" ${busy}>Passwort vergessen?</button>`}`;
+      ${up ? '' : `<button class="btn-link" onclick="cloudResetPassword()" ${busy}>Passwort vergessen?</button>`}`;
     return;
   }
 
@@ -652,12 +646,11 @@ function renderSheet() {
       <div class="sheet-hero">
         <div class="action-icon mail"><svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg></div>
         <div class="sheet-title">Bestätige deine E-Mail</div>
-        <div class="sheet-text">Wir haben eine Mail an <strong>${esc(u.email || '')}</strong> geschickt. Tippe auf den Link darin – danach geht es hier von selbst weiter.</div>
+        <div class="sheet-text"><strong>${esc(u.email || '')}</strong></div>
         <div class="waiting"><span class="action-spin small"></span>Warte auf Bestätigung …</div>
       </div>
       ${notice}${state.error && state.status !== 'error' ? error : ''}
       <button class="btn btn-ghost btn-full" onclick="cloudResendVerification()" ${busy}>Mail erneut senden</button>
-      <div class="sheet-small">Keine Mail? Schau im Spam-Ordner nach. Absender ist noreply@boulder-training.firebaseapp.com.</div>
       <button class="btn-link" onclick="closeModal()">Später</button>`;
     return;
   }
@@ -667,7 +660,6 @@ function renderSheet() {
       <div class="sheet-hero">
         ${ICON_OK}
         <div class="sheet-title">Alles bereit</div>
-        <div class="sheet-text">Deine E-Mail ist bestätigt. Deine Daten werden ab jetzt auf all deinen Geräten abgeglichen.</div>
       </div>
       <button class="btn btn-primary btn-full" onclick="closeModal()">Fertig</button>`;
     return;
@@ -678,7 +670,7 @@ function renderSheet() {
       <div class="sheet-hero">
         <div class="action-icon mail"><svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg></div>
         <div class="sheet-title">Mail ist unterwegs</div>
-        <div class="sheet-text">Über den Link in der Mail an <strong>${esc(state.formEmail || '')}</strong> legst du ein neues Passwort fest. Danach meldest du dich hier damit an.</div>
+        <div class="sheet-text"><strong>${esc(state.formEmail || '')}</strong></div>
       </div>
       <button class="btn btn-primary btn-full" onclick="cloudSwitchSheet('signin')">Zur Anmeldung</button>`;
     return;
@@ -688,7 +680,7 @@ function renderSheet() {
     el.innerHTML = `
       <div class="sheet-head">
         <div class="sheet-title">Konto löschen</div>
-        <div class="sheet-text">Dein Konto und alle deine Daten in der Cloud werden endgültig gelöscht. Auf diesem Gerät bleiben sie erhalten, andere Geräte gleichen nicht mehr ab.</div>
+        <div class="sheet-text">Alle Daten in der Cloud werden endgültig gelöscht.</div>
       </div>
       <div class="field"><label>Passwort zur Bestätigung</label>
         <input type="password" id="cloudDelPw" autocomplete="current-password"></div>
@@ -703,7 +695,6 @@ function renderSheet() {
       <div class="sheet-hero">
         ${ICON_OK}
         <div class="sheet-title">Konto gelöscht</div>
-        <div class="sheet-text">Dein Konto und alle Daten in der Cloud sind gelöscht. Auf diesem Gerät bleiben deine Daten erhalten.</div>
       </div>
       <button class="btn btn-primary btn-full" onclick="closeModal()">Fertig</button>`;
     return;
@@ -714,10 +705,9 @@ function renderSheet() {
     el.innerHTML = `
       <div class="sheet-head">
         <div class="sheet-title">Wöchentliche Sicherungen</div>
-        <div class="sheet-text">Einmal pro Woche legt die App eine Kopie deiner Daten im Konto ab. Wähle eine aus, um sie wiederherzustellen.</div>
       </div>
       ${list === null ? '<div class="waiting" style="display:flex;justify-content:center;margin:10px 0 20px"><span class="action-spin small"></span>Lade …</div>'
-        : list.length === 0 ? `<div class="text-muted" style="margin-bottom:16px">${esc(state.snapshotError || 'Noch keine Sicherung. Die erste entsteht automatisch beim nächsten Abgleich.')}</div>`
+        : list.length === 0 ? `<div class="text-muted" style="margin-bottom:16px">${esc(state.snapshotError || 'Noch keine Sicherung.')}</div>`
         : `<div class="list-group">${list.map(b => {
             let summary = '';
             try { summary = dataSummary(normalizeData(JSON.parse(b.json))); } catch (e) {}
@@ -743,10 +733,10 @@ function renderSheet() {
     </div>
     <div class="list-group">
       <div class="list-row" onclick="cloudShowSnapshots()">
-        <div class="list-main"><div class="list-title">Wöchentliche Sicherungen</div><div class="list-sub">Die letzten vier Wochen im Konto</div></div>
+        <div class="list-main"><div class="list-title">Wöchentliche Sicherungen</div></div>
         <span class="chev">›</span></div>
       ${backup ? `<div class="list-row" onclick="cloudDownloadBackup()">
-        <div class="list-main"><div class="list-title">Stand vor der Anmeldung</div><div class="list-sub">Als Datei sichern</div></div>
+        <div class="list-main"><div class="list-title">Stand vor der Anmeldung herunterladen</div></div>
         <span class="chev">›</span></div>` : ''}
       <div class="list-row" onclick="cloudSignOut()">
         <div class="list-main"><div class="list-title">Abmelden</div></div>
