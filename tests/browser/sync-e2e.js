@@ -139,6 +139,16 @@ const START = {
   await handy.page.click('.tab-btn:nth-child(2)');
   ok('Handy: Anzeige ist aktualisiert', await handy.page.locator('.exercise-name:has-text("Campus")').isVisible());
 
+  // ── 3b. Logbuch und Messwert reisen mit, das Logbuch in einem Dokument je Jahr ──
+  await laptop.page.evaluate(() => {
+    getAppData().ascents.push({ id: 'l1', date: '2026-09-08', scaleId: 'font', grade: 6, style: 'flash', place: 'halle' });
+    saveData();
+  });
+  await warteAuf(handy, () => getAppData().ascents.some(a => a.id === 'l1'));
+  ok('Handy: sieht den Logbuch-Eintrag vom Laptop', true);
+  const rohLog = await rohDokumente(await handy.page.evaluate(() => window.__cloud.state.user.uid));
+  ok('Firestore: Logbuch liegt im Jahresdokument', rohLog.includes('a~2026'), rohLog.join());
+
   // ── 4. Offline: beide haken am selben Tag Verschiedenes ab ──
   await handy.ctx.setOffline(true);
   await handy.page.evaluate(() => toggleDayEx('2026-09-08', 'x1'));

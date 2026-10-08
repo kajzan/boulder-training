@@ -17,13 +17,14 @@
  *   entry:<zyklus>:<datum>:<übung>
  *   test:<test>
  *   assessment:<messung>
+ *   ascent:<jahr>:<eintrag>     (Logbuch; das Jahr bestimmt die Ablage)
  *
  * Neue Felder auf oberster Ebene von appData müssen hier ergänzt werden,
  * sonst gehen sie beim Abgleich verloren. Der Hin-und-zurück-Test in
  * tests/run.js schlägt dann an.
  */
 
-const SYNC_TYPES = new Set(['settings', 'cycle', 'exercise', 'entry', 'test', 'assessment']);
+const SYNC_TYPES = new Set(['settings', 'cycle', 'exercise', 'entry', 'test', 'assessment', 'ascent']);
 
 // IDs werden kodiert eingesetzt: Ein ':' oder '/' in eingelesenen Altdaten
 // könnte sonst Schlüssel vermischen oder in Firestore einen Pfad aufspalten.
@@ -94,7 +95,15 @@ function toDocs(data) {
 
   (data.tests || []).forEach(t => { docs[syncKey('test', t.id)] = syncClean(t); });
   (data.assessments || []).forEach(a => { docs[syncKey('assessment', a.id)] = syncClean(a); });
+  (data.ascents || []).forEach(a => {
+    docs[syncKey('ascent', ascentYear(a), a.id)] = syncClean(a);
+  });
   return docs;
+}
+
+function ascentYear(a) {
+  const y = String((a && a.date) || '').slice(0, 4);
+  return /^\d{4}$/.test(y) ? y : '0000';
 }
 
 // ── Einträge → appData ──
@@ -108,7 +117,7 @@ function toDocs(data) {
 // während hier offline eine Übung dazukam) fallen weg. Beim nächsten
 // Abgleich werden sie dadurch auch aus dem Speicher entfernt.
 function fromDocs(docs) {
-  const data = { cycles: [], activeCycleId: null, tests: [], assessments: [] };
+  const data = { cycles: [], activeCycleId: null, tests: [], assessments: [], ascents: [] };
   const cycles = [];
   const exercisesByCycle = new Map();
   const entriesByCycle = new Map();
@@ -141,6 +150,9 @@ function fromDocs(docs) {
         break;
       case 'assessment':
         data.assessments.push(d);
+        break;
+      case 'ascent':
+        data.ascents.push(d);
         break;
       // Unbekannte Arten stammen von einer neueren App-Version. Sie haben hier
       // keinen Platz, werden aber auch nicht gelöscht (siehe diffDocs).
@@ -180,6 +192,7 @@ function fromDocs(docs) {
 
   data.tests.sort((a, b) => syncCmp(a.id, b.id));
   data.assessments.sort((a, b) => syncCmp(a.id, b.id));
+  data.ascents.sort((a, b) => syncCmp(a.id, b.id));
   return data;
 }
 
@@ -241,6 +254,9 @@ function hasUserData(docs) {
 // Feldern desselben Dokuments zusammen; zwei Geräte, die am selben Tag
 // Verschiedenes abhaken, verlieren also weiterhin nichts.
 //
+// Das Logbuch wächst am schnellsten und liegt deshalb in einem Dokument je
+// Jahr – so bleibt jedes weit unter der Größengrenze von 1 MB.
+//
 // Aufbau: users/<konto>/data/<gruppe> = { k: { <eintrag>: <daten>, … } }
 
 const STORAGE_MISC = 'misc';
@@ -250,11 +266,12 @@ function storageGroup(key) {
   if (t === 'cycle' || t === 'exercise' || t === 'entry') {
     return 'c~' + key.split(':')[1];   // die Zyklus-ID, schon kodiert
   }
+  if (t === 'ascent') return 'a~' + key.split(':')[1];   // das Jahr
   return STORAGE_MISC;
 }
 
 function isStorageGroup(id) {
-  return id === STORAGE_MISC || id.startsWith('c~');
+  return id === STORAGE_MISC || id.startsWith('c~') || id.startsWith('a~');
 }
 
 // Firestore-Dokumente → Einträge. Einzeldokumente aus der Zeit vor der

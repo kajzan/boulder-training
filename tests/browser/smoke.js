@@ -40,6 +40,24 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
   ok('Scope deckt den Unterpfad',
     await page.evaluate(() => navigator.serviceWorker.ready.then(r => r.scope.endsWith('/boulder-training/'))));
 
+  // Erster Start: Wahl zwischen Wochenplan und frei, Zyklus aus Vorlage
+  ok('erster Start bietet Wochenplan und frei an', (await page.locator('.choice-card').count()) === 2);
+  await page.screenshot({ path: path.join(__dirname, 'shot-start.png') });
+  await page.click('.choice-card:has-text("Mit Wochenplan")');
+  ok('Wochenplan ist vorgewaehlt', (await page.inputValue('#newCycleMode')) === 'plan');
+  await page.selectOption('#copyFromCycle', 'tpl:fortgeschritten');
+  ok('Vorlage setzt die Wochenzahl', (await page.inputValue('#newCycleWeeks')) === '12');
+  ok('Vorlage erklaert sich', (await page.locator('#copyInfo').innerText()).includes('Entlastungswoche'));
+  await page.screenshot({ path: path.join(__dirname, 'shot-vorlage.png') });
+  await page.click('button:text-is("Starten")');
+  await page.waitForTimeout(400);
+  ok('Uebersicht zeigt den heutigen Tag', await page.locator('.card-title:has-text("Heute")').isVisible());
+  await page.screenshot({ path: path.join(__dirname, 'shot-heute.png'), fullPage: true });
+  await page.click('.tab-btn:nth-child(2)');
+  ok('Trainingsplan zeigt den Wochenplan', await page.locator('.plan-day').count() === 3);
+  await page.screenshot({ path: path.join(__dirname, 'shot-plan.png'), fullPage: true });
+  await page.click('.tab-btn:nth-child(1)');
+
   await page.evaluate(() => {
     const c = getDefaultCycle('S', 4);
     c.exercises = [
@@ -53,7 +71,7 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
                 higherIsBetter: true, usesBodyweight: true }] });
     saveData();
   });
-  for (const [i, n] of [[1, 'Uebersicht'], [2, 'Trainingsplan'], [3, 'Assessment'], [4, 'Verlauf'], [5, 'Einstellungen']]) {
+  for (const [i, n] of [[1, 'Uebersicht'], [2, 'Trainingsplan'], [3, 'Assessment'], [4, 'Logbuch'], [5, 'Einstellungen']]) {
     await page.click(`.tab-btn:nth-child(${i})`);
     ok(`Ansicht ${n} rendert`,
       await page.evaluate(() => document.querySelector('.view.active').innerText.trim().length > 0));
@@ -73,6 +91,61 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
   ok('Sortieren per Ziehen', (await page.locator('#exerciseList .exercise-name').allInnerTexts()).join() ===
     'Hang,Dehnen,Aufwaermen');
 
+  // Wochenplan einschalten, Uebung mit Tagen und Messwert anlegen
+  await page.waitForTimeout(400);   // die Klicksperre nach dem Ziehen abwarten
+  await page.click('.tab-btn:nth-child(5)');
+  await page.click('.check-row:has-text("Wochenplan mit festen")');
+  await page.click('.tab-btn:nth-child(2)');
+  await page.click('button:text-is("+ Hinzufügen")');
+  await page.fill('#newExName', 'Klimmzug max');
+  await page.fill('#newExInt', '1');
+  for (const d of ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So']) await page.click(`#newExDays button:text-is("${d}")`);
+  await page.click('.check-row:has-text("Messwert beim Abhaken")');
+  await page.fill('#newExUnit', 'kg');
+  await page.screenshot({ path: path.join(__dirname, 'shot-uebung.png') });
+  await page.click('button:text-is("Hinzufügen")');
+  await page.waitForTimeout(400);
+  ok('Uebung zeigt ihre Tage', await page.locator('.exercise-item:has-text("Klimmzug max") >> text=Mo · Di').isVisible());
+
+  // Pausieren und fortsetzen (die Woche ist noch leer)
+  await page.evaluate(() => { const c = getActiveCycle(); c.startDate = toDateStr(new Date()); c.sessions = {}; saveData(); });
+  await page.click('.tab-btn:nth-child(1)');
+  await page.click('a:text-is("Pausieren")');
+  ok('Pause sichtbar', await page.locator('button:text-is("Training fortsetzen")').isVisible());
+  await page.screenshot({ path: path.join(__dirname, 'shot-pause.png'), fullPage: true });
+  await page.click('button:text-is("Training fortsetzen")');
+  ok('Pause beendet', await page.locator('a:text-is("Pausieren")').isVisible());
+
+  // Abhaken mit Messwert
+  await page.click('.card:has(.card-title:has-text("Heute"))');
+  await page.waitForTimeout(300);
+  await page.click('#modalContent .check-label:text-is("Klimmzug max")');
+  await page.fill('.measure-row input >> nth=0', '12,5');
+  await page.fill('.measure-row input >> nth=1', 'einarmig, Band');
+  await page.locator('.measure-row input >> nth=1').press('Tab');
+  await page.screenshot({ path: path.join(__dirname, 'shot-messwert.png') });
+  ok('Messwert gespeichert', await page.evaluate(() => {
+    const c = getActiveCycle(), e = (c.sessions[toDateStr(new Date())] || [])[0];
+    return !!e && e.value === 12.5 && e.note === 'einarmig, Band';
+  }));
+  await page.click('button:text-is("Fertig")');
+
+  // Logbuch
+  await page.click('.tab-btn:nth-child(4)');
+  await page.click('button:text-is("+ Boulder")');
+  await page.selectOption('#ascGrade', { label: '6B+' });
+  await page.click('#ascStyle button:text-is("Flash")');
+  await page.fill('#ascName', 'Gelbe Platte');
+  await page.screenshot({ path: path.join(__dirname, 'shot-boulder.png') });
+  await page.click('button:text-is("Speichern")');
+  await page.waitForTimeout(400);
+  await page.click('button:text-is("+ Boulder")');
+  await page.click('button:text-is("Speichern")');
+  await page.waitForTimeout(400);
+  ok('Pyramide zeigt den hoechsten Grad', await page.locator('.stat-val:text-is("6B+")').first().isVisible());
+  ok('zwei Eintraege im Logbuch', (await page.locator('.log-row').count()) === 2);
+  await page.screenshot({ path: path.join(__dirname, 'shot-logbuch.png'), fullPage: true });
+
   // Neustart ohne Netz
   await ctx.setOffline(true);
   await page.reload({ waitUntil: 'load' });
@@ -80,7 +153,7 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
   await page.click('.tab-btn:nth-child(2)');
   ok('Daten offline vorhanden', await page.locator('.exercise-name:has-text("Hang")').isVisible());
   ok('Reihenfolge ueberlebt den Neustart',
-    (await page.locator('#exerciseList .exercise-name').allInnerTexts()).join() === 'Hang,Dehnen,Aufwaermen');
+    (await page.locator('#exerciseList .exercise-name').allInnerTexts()).join() === 'Hang,Dehnen,Aufwaermen,Klimmzug max');
   await page.click('.tab-btn:nth-child(5)');
   ok('Konto-Kasten auch offline da', await page.locator('#cloudEmail').isVisible());
 

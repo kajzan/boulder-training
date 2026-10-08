@@ -582,6 +582,7 @@ function vergleichsform(data) {
   });
   d.tests.sort(nachId);
   d.assessments.sort(nachId);
+  d.ascents = (d.ascents || []).sort(nachId);
   return d;
 }
 
@@ -590,13 +591,14 @@ const BESTAND = {
   cycles: [
     { id: 'c2', name: 'Sommer', startDate: '2026-06-01', weeks: 2, weekTargets: [8, 9], notes: {},
       zukunftsfeld: { von: 'einer spaeteren Version' },
+      mode: 'plan', pausedWeeks: [1], pausedSince: 3,
       exercises: [
-        { id: 'e2', name: 'Campus', categories: ['Pull', 'Finger'], intensity: 3 },
-        { id: 'e1', name: 'Hangboard', categories: ['Finger'], intensity: 2 },
+        { id: 'e2', name: 'Campus', categories: ['Pull', 'Finger'], intensity: 3, days: [0, 4], desc: '3 Leitern' },
+        { id: 'e1', name: 'Hangboard', categories: ['Finger'], intensity: 2, measure: true, unit: 'kg' },
         { id: 'e3', name: 'Dehnen', categories: [], intensity: 1 }
       ],
       sessions: {
-        '2026-06-01': [{ exId: 'e1' }, { exId: 'e2', overrideInt: 4.5 }],
+        '2026-06-01': [{ exId: 'e1', value: -15, note: 'einarmig, Band' }, { exId: 'e2', overrideInt: 4.5 }],
         '2026-06-02': [],
         '2026-06-03': ['e3']
       } },
@@ -614,6 +616,10 @@ const BESTAND = {
     { id: 'a2', date: '2026-06-30', label: 'Ende', cycleId: 'c2', bodyweight: 71,
       results: [{ testId: 't1', value: 22, note: 'gut' }, { testId: 't3', value: { 6: 12, 7: 5 } }] },
     { id: 'a1', date: '2026-03-31', label: '', cycleId: null, bodyweight: 0, results: [] }
+  ],
+  ascents: [
+    { id: 'l2', date: '2027-01-03', scaleId: 'font', grade: 7, style: 'flash', place: 'halle' },
+    { id: 'l1', date: '2026-12-30', scaleId: 'vscale', grade: 4, style: 'project', place: 'fels', name: 'Dachkante', note: 'fast' }
   ]
 };
 
@@ -637,6 +643,18 @@ eq('das alte Format abgehakter Uebungen wird mit uebernommen',
   bestandDocs['entry:c2:2026-06-03:e3'], { exId: 'e3', cycleId: 'c2', date: '2026-06-03' });
 eq('eine geaenderte Intensitaet reist mit',
   (bestandDocs['entry:c2:2026-06-01:e2'] || {}).overrideInt, 4.5);
+eq('Messwert und Notiz beim Abhaken reisen mit',
+  [bestandDocs['entry:c2:2026-06-01:e1'].value, bestandDocs['entry:c2:2026-06-01:e1'].note], [-15, 'einarmig, Band']);
+eq('Logbuch-Eintraege tragen ihr Jahr im Schluessel',
+  schluessel.filter(k => k.startsWith('ascent:')).sort(), ['ascent:2026:l1', 'ascent:2027:l2']);
+eq('Logbuch liegt je Jahr in einem eigenen Dokument',
+  [storageGroup('ascent:2026:l1'), storageGroup('ascent:2027:l2')], ['a~2026', 'a~2027']);
+check('Logbuch-Dokumente gelten als Ablage, nicht als Altbestand',
+  isStorageGroup('a~2026') && flattenStorage({ 'a~2026': { k: { 'ascent:2026:l1': { id: 'l1' } } } }).legacy.length === 0);
+eq('Pausen, Wochenplan und Trainingstage reisen mit',
+  [bestandDocs['cycle:c2'].mode, bestandDocs['cycle:c2'].pausedWeeks, bestandDocs['cycle:c2'].pausedSince,
+   bestandDocs['exercise:c2:e2'].days],
+  ['plan', [1], 3, [0, 4]]);
 
 const zurueck = fromDocs(bestandDocs);
 eq('Zyklen nach Anlegezeitpunkt geordnet', zurueck.cycles.map(c => c.id), ['c1', 'c2']);
@@ -909,7 +927,7 @@ eq('Tests, Messungen und Einstellungen liegen gemeinsam',
   ['test:t1', 'assessment:a1', 'settings:app'].map(storageGroup), ['misc', 'misc', 'misc']);
 
 const ablage = speichere({}, storageWrites(diffDocs({}, bestandDocs), {}));
-eq('ein Dokument je Zyklus plus eines fuer den Rest', Object.keys(ablage).sort(), ['c~c1', 'c~c2', 'misc']);
+eq('ein Dokument je Zyklus und Logbuch-Jahr plus eines fuer den Rest', Object.keys(ablage).sort(), ['a~2026', 'a~2027', 'c~c1', 'c~c2', 'misc']);
 check('auslesen ergibt dieselben Eintraege', gleich(flattenStorage(ablage).docs, bestandDocs));
 eq('nichts Altes zu migrieren', flattenStorage(ablage).legacy, []);
 
@@ -954,7 +972,7 @@ eq('der alte Eintrag wird trotzdem zum Aufraeumen gemeldet', gelesen.legacy, ['t
 // Umzug ausgefuehrt wie in cloud.js
 const umzug = storageWrites({ set: Object.assign({}, bestandDocs), del: [] }, bestandDocs);
 const nachUmzug = speichere(v7, umzug, Object.keys(bestandDocs));
-eq('nach dem Umzug nur noch gebuendelte Dokumente', Object.keys(nachUmzug).sort(), ['c~c1', 'c~c2', 'misc']);
+eq('nach dem Umzug nur noch gebuendelte Dokumente', Object.keys(nachUmzug).sort(), ['a~2026', 'a~2027', 'c~c1', 'c~c2', 'misc']);
 check('und kein Eintrag ging verloren', gleich(flattenStorage(nachUmzug).docs, bestandDocs));
 
 // ═══════════════════════════════════════════════
@@ -1020,6 +1038,173 @@ try {
     Object.values(echtDocs).every(d => !syncCanon(d).includes('undefined')));
 } finally {
   Date.now = echteUhr;
+}
+
+// ═══════════════════════════════════════════════
+// Heute festlegen: Die Pausenlogik rechnet mit dem aktuellen Datum.
+const EchtesDate = Date;
+function heuteIst(str) {
+  const fest = new EchtesDate(str + 'T12:00:00').getTime();
+  globalThis.Date = class extends EchtesDate {
+    constructor(...a) { if (a.length) super(...a); else super(fest); }
+    static now() { return fest; }
+  };
+}
+function neuerZyklus(extra) {
+  const c = Object.assign({ id: 'p' + Math.random().toString(36).slice(2, 7), name: 'P', startDate: '2026-01-05',
+    weeks: 4, weekTargets: [1, 2, 3, 4], exercises: [{ id: 'x', name: 'Klimmzug max', categories: [], intensity: 1 }],
+    sessions: {}, notes: {} }, extra || {});
+  appData.cycles.push(c);
+  appData.activeCycleId = c.id;
+  return c;
+}
+
+try {
+group('Zyklus pausieren');
+heuteIst('2026-01-21');   // Mittwoch der dritten Woche (Kalenderwoche 2 ab Start)
+let pz = neuerZyklus();
+eq('ohne Pause: dritte Woche', getCurrentWeekIndex(pz), 2);
+pauseCycle();
+eq('leere Woche: Pause beginnt sofort', pz.pausedSince, 2);
+check('der Zyklus gilt als pausiert', isCyclePaused(pz));
+eq('danach geht es mit Woche 3 weiter', getCurrentWeekIndex(pz), 2);
+eq('Woche 3 rückt eine Woche nach hinten', getWeekDates(pz, 2)[0], '2026-01-26');
+eq('das Ende verschiebt sich um eine Woche', getCycleEndDate(pz), '2026-02-08');
+heuteIst('2026-02-04');   // zwei Wochen später fortsetzen
+eq('eine laufende Pause wächst mit (Woche 3 frühestens nächste Woche)', getWeekDates(pz, 2)[0], '2026-02-09');
+resumeCycle();
+eq('beim Fortsetzen werden die vergangenen Pausenwochen festgeschrieben', pz.pausedWeeks, [2, 3]);
+check('keine laufende Pause mehr', pz.pausedSince === undefined && !isCyclePaused(pz));
+eq('die laufende Woche ist wieder Woche 3', getCurrentWeekIndex(pz), 2);
+eq('Woche 3 beginnt in der laufenden Kalenderwoche', getWeekDates(pz, 2)[0], '2026-02-02');
+eq('die ersten Wochen bleiben, wo sie waren', getWeekDates(pz, 1)[0], '2026-01-12');
+
+heuteIst('2026-01-21');
+pz = neuerZyklus();
+pz.sessions['2026-01-19'] = [{ exId: 'x' }];
+pauseCycle();
+eq('schon trainiert: Pause beginnt erst nächste Woche', pz.pausedSince, 3);
+check('diese Woche läuft noch normal', !isCyclePaused(pz) && getCurrentWeekIndex(pz) === 2);
+resumeCycle();
+check('Abbrechen vor Beginn hinterlässt keine Pause', pz.pausedSince === undefined && pz.pausedWeeks === undefined);
+
+pz = neuerZyklus({ startDate: '2026-01-05', pausedSince: 2 });
+heuteIst('2026-01-19');
+pauseCycle();   // erneut pausieren in derselben Woche ändert nichts Schlimmes
+resumeCycle();
+check('pausieren und gleich fortsetzen: keine Pausenwoche', pz.pausedWeeks === undefined);
+
+heuteIst('2026-01-21');
+pz = neuerZyklus({ pausedSince: 2 });
+el('dashContent').innerHTML = '';
+currentView = 'dashboard';
+renderDashboard();
+check('Übersicht zeigt die Pause mit Fortsetzen-Knopf', el('dashContent').innerHTML.includes('resumeCycle()'));
+pz.pausedWeeks = [1]; delete pz.pausedSince;
+renderDashboard();
+check('Übersicht markiert die Pause zwischen den Wochen', el('dashContent').innerHTML.includes('Pause · 1 Woche'));
+
+group('Wochenplan');
+heuteIst('2026-01-21');   // Mittwoch
+const wp = neuerZyklus({ mode: 'plan', exercises: [
+  { id: 'a', name: 'Limit', categories: [], intensity: 3, days: [0] },
+  { id: 'b', name: 'Volumen', categories: [], intensity: 2, days: [2], desc: '<b>viel</b>' },
+  { id: 'c', name: 'Dehnen', categories: [], intensity: 1 }
+] });
+eq('Mittwoch geplant', plannedExercises(wp, '2026-01-21').map(e => e.id), ['b']);
+eq('freier Modus plant nichts', plannedExercises(Object.assign({}, wp, { mode: undefined }), '2026-01-21'), []);
+const tag = buildDayModalContent('2026-01-21');
+check('Tagesdialog zeigt Geplantes zuerst', tag.indexOf('Volumen') < tag.indexOf('Limit') && tag.includes('Geplant'));
+renderDashboard();
+check('Heute-Karte nennt die geplante Übung', el('dashContent').innerHTML.includes('Heute · Mittwoch'));
+check('Beschreibung wird maskiert', el('dashContent').innerHTML.includes('&lt;b&gt;viel'));
+heuteIst('2026-01-22');
+renderDashboard();
+check('Ruhetag nennt den nächsten Trainingstag', el('dashContent').innerHTML.includes('Als Nächstes – Montag: Limit'));
+togglePlanMode();
+check('Wochenplan lässt sich ausschalten', !isPlanMode(wp) && wp.exercises[0].days.length === 1);
+togglePlanMode();
+
+const tpl = PLAN_TEMPLATES[1];
+eq('Wochenziele der Vorlage im Rhythmus 3 + 1', templateTargets({ exercises: [{ intensity: 2, days: [0, 2] }] }, 5), [3.5, 4, 4.5, 2.5, 3.5]);
+el('newCycleName').value = '';
+el('newCycleDate').value = '2026-02-02';
+el('newCycleWeeks').value = '12';
+el('newCycleMode').value = 'plan';
+el('copyFromCycle').value = 'tpl:' + tpl.id;
+createCycle();
+const ausVorlage = getActiveCycle();
+check('Zyklus aus Vorlage ist im Wochenplan-Modus', ausVorlage.mode === 'plan');
+eq('übernimmt den Vorlagennamen', ausVorlage.name, tpl.name.split(' · ')[0]);
+eq('übernimmt alle Übungen mit Tagen', ausVorlage.exercises.map(e => e.days), tpl.exercises.map(e => e.days));
+check('Übungen bekommen eigene IDs und Kopien',
+  new Set(ausVorlage.exercises.map(e => e.id)).size === tpl.exercises.length &&
+  ausVorlage.exercises[0].days !== tpl.exercises[0].days);
+eq('Entlastungswoche ist leichter', ausVorlage.weekTargets[3] < ausVorlage.weekTargets[2], true);
+check('alle Vorlagen haben gültige Tage und Intensitäten', PLAN_TEMPLATES.every(t =>
+  t.exercises.every(e => e.days.length && e.days.every(d => d >= 0 && d <= 6) && e.intensity > 0)));
+
+group('Messwert beim Abhaken');
+heuteIst('2026-01-21');
+const mz = neuerZyklus({ exercises: [{ id: 'm', name: 'Klimmzug max', categories: [], intensity: 1, measure: true, unit: 'kg' }] });
+toggleDayEx('2026-01-19', 'm');
+check('ohne Wert abhaken geht', mz.sessions['2026-01-19'].length === 1 && mz.sessions['2026-01-19'][0].value === undefined);
+check('Eingabefelder erscheinen nach dem Abhaken', buildDayModalContent('2026-01-19').includes('setEntryValue'));
+setEntryValue('2026-01-19', 'm', '12,5');
+setEntryNote('2026-01-19', 'm', ' einarmig, Band ');
+eq('Wert mit Komma und Notiz gespeichert', mz.sessions['2026-01-19'][0], { exId: 'm', value: 12.5, note: 'einarmig, Band' });
+setEntryValue('2026-01-19', 'm', '');
+check('leerer Wert entfernt den Wert', mz.sessions['2026-01-19'][0].value === undefined);
+setEntryValue('2026-01-19', 'm', '15');
+const hist = getExerciseMeasurements('klimmzug MAX');
+check('Verlauf findet die Übung auch zyklusübergreifend über den Namen', hist.length >= 1 && hist[0].value === 15);
+eq('Anzeige mit Einheit und Notiz', formatMeasure(mz.exercises[0], hist[0]), '15 kg · einarmig, Band');
+check('ohne Messwert-Option keine Eingabefelder',
+  !buildDayModalContent('2026-01-21').includes('setEntryValue'));
+
+group('Übungsformular');
+el('newExName').value = 'Max Hang'; el('newExCat').value = 'Finger'; el('newExInt').value = '2';
+el('newExDesc').value = ''; el('newExUnit').value = 'kg'; el('newExMeasure').dataset.on = '1';
+addExercise();
+const neu = mz.exercises[mz.exercises.length - 1];
+eq('Messwert-Option und Einheit gespeichert', [neu.measure, neu.unit], [true, 'kg']);
+check('leere Beschreibung wird nicht gespeichert', !('desc' in neu));
+el('editExName').value = 'Max Hang'; el('editExCat').value = ''; el('editExInt').value = '2';
+el('editExDesc').value = '5 × 10 s'; el('editExUnit').value = 'kg'; el('editExMeasure').dataset.on = '0';
+saveExerciseEdit(neu.id);
+check('Messwert abwählen entfernt Einheit', !('measure' in neu) && !('unit' in neu) && neu.desc === '5 × 10 s');
+
+group('Logbuch');
+appData.ascents = [];
+renderHistory();
+check('leeres Logbuch erklärt sich', el('historyContent').innerHTML.includes('Grad-Pyramide'));
+function eintragen(werte) {
+  el('ascDate').value = werte.date; el('ascScale').value = werte.scaleId || 'font';
+  el('ascGrade').value = String(werte.grade); el('ascStyle').dataset.val = werte.style;
+  el('ascPlace').dataset.val = werte.place || 'halle';
+  el('ascName').value = werte.name || ''; el('ascNote').value = '';
+  saveAscent(werte.id || null);
+}
+eintragen({ date: '2026-01-19', grade: 7, style: 'flash' });            // 6C
+eintragen({ date: '2026-01-19', grade: 7, style: 'top' });
+eintragen({ date: '2026-01-20', grade: 9, style: 'top', name: '<Dach>' });   // 7A
+eintragen({ date: '2026-01-21', grade: 11, style: 'project' });          // 7B
+eq('drei Tops, ein Projekt', appData.ascents.length, 4);
+eq('Pyramide ohne Projekte, höchster Grad oben',
+  gradePyramid('font'), [{ grade: 9, flash: 0, top: 1 }, { grade: 7, flash: 1, top: 1 }]);
+renderHistory();
+const lb = el('historyContent').innerHTML;
+check('Höchster Grad 7A, bester Flash 6C', lb.includes('>7A<') && lb.includes('>6C<'));
+check('Namen werden maskiert', lb.includes('&lt;Dach&gt;') && !lb.includes('<Dach>'));
+check('neuester Eintrag steht oben', lb.indexOf('7B') < lb.indexOf('&lt;Dach&gt;'));
+const projekt = appData.ascents.find(a => a.style === 'project');
+eintragen({ id: projekt.id, date: '2026-01-25', grade: 11, style: 'top' });
+eq('Projekt geschafft: aus dem Projekt wird ein Top', gradePyramid('font')[0], { grade: 11, flash: 0, top: 1 });
+deleteAscent(projekt.id);
+eq('Löschen entfernt den Eintrag', appData.ascents.length, 3);
+check('Logbuch reist durch den Abgleich', gleich(fromDocs(toDocs(appData)).ascents, kopie(appData.ascents).sort((a, b) => a.id < b.id ? -1 : 1)));
+} finally {
+  globalThis.Date = EchtesDate;
 }
 
 done();

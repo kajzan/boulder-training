@@ -26,6 +26,7 @@ function getAppData() {
 // Übernimmt einen Stand, der von einem anderen Gerät kam. Bewusst ohne
 // saveData(): Der Stand stammt ja schon vom Konto und muss nicht zurück.
 function replaceAppData(data) {
+  if (!Array.isArray(data.ascents)) data.ascents = [];
   appData = data;
   localStorage.setItem(STORE_KEY, JSON.stringify(appData));
   render();
@@ -36,7 +37,8 @@ function getDefaultData() {
     cycles: [],
     activeCycleId: null,
     tests: [],        // [{id, name, kind, unit, scaleId, higherIsBetter, usesBodyweight, category}]
-    assessments: []   // [{id, date, label, cycleId, bodyweight, results:[{testId, value, note}]}]
+    assessments: [],  // [{id, date, label, cycleId, bodyweight, results:[{testId, value, note}]}]
+    ascents: []       // Logbuch: [{id, date, scaleId, grade, style, place, name?, note?}]
   };
 }
 
@@ -315,13 +317,89 @@ function refreshCategoryChips(inputId, multi) {
   if (box) box.innerHTML = renderCategoryChips(inputId, multi);
 }
 
+// ── Pausen ──
+// Ein Zyklus zählt Trainingswochen, keine Kalenderwochen. Pausierte Wochen
+// werden übersprungen, alle späteren rücken nach hinten – nach zwei Wochen
+// Urlaub geht es mit derselben Trainingswoche weiter, statt dass der Plan
+// davonläuft.
+//
+// Gezählt wird in Wochen ab dem Startdatum (0 = erste Woche):
+//   pausedWeeks  abgeschlossene Pausen, z.B. [5, 6]
+//   pausedSince  eine laufende Pause; reicht bis einschließlich heute
+function calendarWeekOf(cycle, dateStr) {
+  return Math.floor(daysBetween(cycle.startDate, dateStr) / 7);
+}
+
+function pausedWeekSet(cycle) {
+  const set = new Set((cycle.pausedWeeks || []).filter(n => Number.isInteger(n) && n >= 0));
+  if (Number.isInteger(cycle.pausedSince) && cycle.pausedSince >= 0) {
+    const now = calendarWeekOf(cycle, toDateStr(new Date()));
+    for (let o = cycle.pausedSince; o <= Math.max(now, cycle.pausedSince); o++) set.add(o);
+  }
+  return set;
+}
+
+// Die Kalenderwoche (ab Start), in der Trainingswoche weekIndex liegt.
+function weekOffset(cycle, weekIndex) {
+  const paused = pausedWeekSet(cycle);
+  if (paused.size === 0 || weekIndex < 0) return weekIndex;
+  let o = 0, n = -1;
+  for (;;) {
+    if (!paused.has(o) && ++n === weekIndex) return o;
+    o++;
+  }
+}
+
+function isCyclePaused(cycle) {
+  return pausedWeekSet(cycle).has(calendarWeekOf(cycle, toDateStr(new Date())));
+}
+
+// Erster Tag einer Kalenderwoche des Zyklus
+function calendarWeekStart(cycle, offset) {
+  const d = parseDate(cycle.startDate);
+  d.setDate(d.getDate() + offset * 7);
+  return toDateStr(d);
+}
+
+// Pausiert ab dieser Woche – oder ab der nächsten, falls diese Woche schon
+// trainiert wurde. Die Einträge sollen ihrer Trainingswoche nicht verloren gehen.
+function pauseCycle() {
+  const cycle = getActiveCycle();
+  if (!cycle) return;
+  const now = calendarWeekOf(cycle, toDateStr(new Date()));
+  if (now < 0) return;
+  const trained = Array.from({ length: 7 }, (_, i) => {
+    const d = parseDate(calendarWeekStart(cycle, now));
+    d.setDate(d.getDate() + i);
+    return toDateStr(d);
+  }).some(d => (cycle.sessions[d] || []).length > 0);
+  cycle.pausedSince = trained ? now + 1 : now;
+  saveData();
+  render();
+}
+
+// Beendet die Pause. Die laufende Woche zählt wieder als Trainingswoche.
+function resumeCycle() {
+  const cycle = getActiveCycle();
+  if (!cycle || !Number.isInteger(cycle.pausedSince)) return;
+  const now = calendarWeekOf(cycle, toDateStr(new Date()));
+  const weeks = new Set(cycle.pausedWeeks || []);
+  for (let o = cycle.pausedSince; o < now; o++) weeks.add(o);
+  cycle.pausedWeeks = Array.from(weeks).sort((a, b) => a - b);
+  if (cycle.pausedWeeks.length === 0) delete cycle.pausedWeeks;
+  delete cycle.pausedSince;
+  saveData();
+  render();
+}
+
 function getWeekDates(cycle, weekIndex) {
   const start = parseDate(cycle.startDate);
   start.setHours(0,0,0,0);
+  const offset = weekOffset(cycle, weekIndex);
   const days = [];
   for (let i = 0; i < 7; i++) {
     const d = new Date(start);
-    d.setDate(d.getDate() + weekIndex * 7 + i);
+    d.setDate(d.getDate() + offset * 7 + i);
     days.push(toDateStr(d));
   }
   return days;
@@ -359,13 +437,12 @@ function intensityLabel(current, target) {
   return '↓ noch offen';
 }
 
+// Während einer Pause ist das die Woche, mit der es danach weitergeht.
 function getCurrentWeekIndex(cycle) {
-  const start = parseDate(cycle.startDate);
-  start.setHours(0,0,0,0);
-  const today = new Date();
-  today.setHours(0,0,0,0);
-  const diffDays = Math.floor((today - start) / (1000 * 60 * 60 * 24));
-  const weekIdx = Math.floor(diffDays / 7);
+  const now = calendarWeekOf(cycle, toDateStr(new Date()));
+  const paused = pausedWeekSet(cycle);
+  let weekIdx = 0;
+  for (let o = 0; o < now; o++) if (!paused.has(o)) weekIdx++;
   const maxW = (cycle.weeks || 12) - 1;
   return Math.max(0, Math.min(maxW, weekIdx));
 }
@@ -590,12 +667,19 @@ function renderDashboard() {
 
   if (!cycle) {
     el.innerHTML = `
-      <div class="empty">
+      <div class="empty" style="padding-bottom:20px">
         <div class="empty-icon">🧗</div>
-        <div>Noch kein aktiver Trainingszyklus.<br>Erstelle deinen ersten Zyklus in den <strong>Einstellungen</strong>.</div>
-        <br>
-        <button class="btn btn-primary" onclick="switchView('settings')">→ Einstellungen</button>
-      </div>`;
+        <div>Noch kein aktiver Trainingszyklus.<br>Wie möchtest du trainieren?</div>
+      </div>
+      <div class="choice-card" onclick="openNewCycleModal('plan')">
+        <div class="choice-title">Mit Wochenplan</div>
+        <div class="choice-text">Feste Trainingstage, die App zeigt dir, was heute dran ist. Mit fertigen Vorlagen zum Anpassen.</div>
+      </div>
+      <div class="choice-card" onclick="openNewCycleModal('free')">
+        <div class="choice-title">Frei</div>
+        <div class="choice-text">Du trägst ein, was du trainiert hast – ohne festen Plan.</div>
+      </div>
+      <div class="text-muted" style="text-align:center;font-size:11px;margin-top:4px">Lässt sich später in den Einstellungen umstellen.</div>`;
     document.getElementById('navSub').textContent = 'Kein aktiver Zyklus';
     return;
   }
@@ -607,8 +691,11 @@ function renderDashboard() {
   const target = cycle.weekTargets[weekIdx] || 0;
   const iClass = intensityClass(weekInt, target);
   const today = toDateStr(new Date());
+  const paused = isCyclePaused(cycle);
+  const nowWeek = calendarWeekOf(cycle, today);
+  const pauseAhead = !paused && Number.isInteger(cycle.pausedSince) && cycle.pausedSince > nowWeek;
 
-  document.getElementById('navSub').textContent = cycle.name + ' · Woche ' + (weekIdx + 1);
+  document.getElementById('navSub').textContent = cycle.name + (paused ? ' · Pause' : ' · Woche ' + (weekIdx + 1));
 
   // Stats: count completed exercise sessions across cycle
   let completedExercises = 0;
@@ -634,9 +721,25 @@ function renderDashboard() {
     return DAYS_DE[dow];
   });
 
+  const pauseCard = `
+    <div class="section-hdr"><h2>Pause</h2><span class="text-muted">KW${getKW(new Date())}</span></div>
+    <div class="card">
+      <div style="font-size:14px;line-height:1.5;margin-bottom:12px">
+        Pausiert${Number.isInteger(cycle.pausedSince) ? ' seit ' + formatDay(calendarWeekStart(cycle, cycle.pausedSince)) : ''}.
+        <span class="text-muted">Danach geht es mit Woche ${weekIdx + 1} weiter; der Zyklus verlängert sich entsprechend.</span>
+      </div>
+      <button class="btn btn-primary btn-full" onclick="resumeCycle()">Training fortsetzen</button>
+    </div>`;
+
+  const weekHdrRight = pauseAhead
+    ? `<span class="text-muted" style="font-size:12px">Pause ab ${formatDay(calendarWeekStart(cycle, cycle.pausedSince))} · <a class="link" onclick="resumeCycle()">Abbrechen</a></span>`
+    : `<span class="text-muted" style="font-size:12px">KW${getKW(new Date())} · <a class="link" onclick="pauseCycle()">Pausieren</a></span>`;
+
   el.innerHTML = `
     ${renderAssessmentReminder()}
-    <div class="section-hdr"><h2>Diese Woche</h2><span class="text-muted">KW${getKW(new Date())}</span></div>
+    ${paused ? pauseCard : `
+    ${isPlanMode(cycle) ? renderTodayCard(cycle, today) : ''}
+    <div class="section-hdr"><h2>Diese Woche</h2>${weekHdrRight}</div>
 
     <div class="card mb-0">
       <div class="card-title">Woche ${weekIdx+1} von ${totalWeeks} · Intensität</div>
@@ -649,6 +752,7 @@ function renderDashboard() {
         <div class="progress-bar-fill" style="width:${pct}%;background:${barColor}"></div>
       </div>
     </div>
+    `}
 
     <div class="stats-row" style="margin-top:10px">
       <div class="stat-card">
@@ -663,6 +767,7 @@ function renderDashboard() {
 
     ${renderIntensityChart(cycle)}
 
+    ${paused ? '' : `
     <div class="section-hdr" style="margin-top:8px"><h2>Diese Trainingswoche</h2></div>
     <div class="card">
       <div class="week-grid">
@@ -670,9 +775,10 @@ function renderDashboard() {
           const dateStr = weekDays[i];
           const exIds = cycle.sessions[dateStr] || [];
           const isToday = dateStr === today;
+          const planned = exIds.length === 0 && plannedExercises(cycle, dateStr).length > 0;
           return `<div class="day-col">
             <div class="day-label" style="${isToday ? 'color:var(--accent)' : ''}">${d}</div>
-            <div class="day-dot ${exIds.length > 0 ? 'has-session' : ''}"
+            <div class="day-dot ${exIds.length > 0 ? 'has-session' : ''} ${planned ? 'planned' : ''}"
                  style="${isToday ? 'border-color:var(--accent);' : ''}"
                  onclick="openDayModal('${dateStr}')">
               ${exIds.length > 0 ? exIds.length : ''}
@@ -682,6 +788,7 @@ function renderDashboard() {
       </div>
       <div style="text-align:center;font-size:12px;color:var(--text-muted);margin-top:4px">${formatDateRange(weekDays[0], weekDays[6])}</div>
     </div>
+    `}
 
     <div class="section-hdr"><h2>Alle ${totalWeeks} Wochen</h2></div>
     ${Array.from({length: totalWeeks}, (_,i) => {
@@ -689,8 +796,10 @@ function renderDashboard() {
       const wtgt = cycle.weekTargets[i] || 0;
       const wc = intensityClass(wint, wtgt);
       const wd = getWeekDates(cycle, i);
-      const isCurrent = i === weekIdx;
-      return `<div class="week-row ${isCurrent ? 'current-week' : ''}" onclick="openWeekModal(${i})">
+      const isCurrent = i === weekIdx && !paused;
+      const gap = weekOffset(cycle, i) - (i > 0 ? weekOffset(cycle, i - 1) : -1) - 1;
+      return (gap > 0 ? `<div class="pause-row">Pause · ${gap} ${gap === 1 ? 'Woche' : 'Wochen'}</div>` : '') +
+      `<div class="week-row ${isCurrent ? 'current-week' : ''}" onclick="openWeekModal(${i})">
         <div class="week-row-left">
           <div class="week-row-num">Woche ${i+1}${isCurrent ? ' · Aktuell' : ''}</div>
           <div class="week-row-date">${formatDateRange(wd[0], wd[6])}</div>
@@ -704,6 +813,79 @@ function renderDashboard() {
       </div>`;
     }).join('')}
   `;
+}
+
+function formatDay(dateStr) {
+  const d = parseDate(dateStr);
+  return d.getDate() + '. ' + MONTHS_DE[d.getMonth()];
+}
+
+// ═══════════════════════════════════════════════
+// WOCHENPLAN
+// ═══════════════════════════════════════════════
+// Im Wochenplan-Modus hat jede Übung feste Wochentage (ex.days, 0 = Montag).
+// Im freien Modus gibt es keine Tage; man trägt ein, was man gemacht hat.
+function isPlanMode(cycle) {
+  return !!cycle && cycle.mode === 'plan';
+}
+
+function weekdayOf(dateStr) {
+  return (parseDate(dateStr).getDay() + 6) % 7;
+}
+
+function exerciseDays(ex) {
+  return Array.isArray(ex.days) ? ex.days.filter(d => Number.isInteger(d) && d >= 0 && d <= 6) : [];
+}
+
+function plannedExercises(cycle, dateStr) {
+  if (!isPlanMode(cycle)) return [];
+  const wd = weekdayOf(dateStr);
+  return cycle.exercises.filter(ex => exerciseDays(ex).includes(wd));
+}
+
+function formatWeekdays(days) {
+  return days.slice().sort((a, b) => a - b).map(d => DAYS_DE[d]).join(' · ');
+}
+
+function renderTodayCard(cycle, today) {
+  const planned = plannedExercises(cycle, today);
+  const done = new Set((cycle.sessions[today] || []).map(entryId));
+  const dayName = DAYS_FULL[weekdayOf(today)];
+
+  if (!cycle.exercises.some(ex => exerciseDays(ex).length > 0)) {
+    return `<div class="card" onclick="switchView('plan')" style="cursor:pointer">
+      <div class="card-title">Heute · ${dayName}</div>
+      <div class="text-muted">Noch keine Trainingstage festgelegt. Tippe hier und ordne deinen Übungen im <strong>Trainingsplan</strong> Wochentage zu.</div>
+    </div>`;
+  }
+
+  if (planned.length === 0) {
+    let next = '';
+    for (let i = 1; i <= 7 && !next; i++) {
+      const d = parseDate(today);
+      d.setDate(d.getDate() + i);
+      const p = plannedExercises(cycle, toDateStr(d));
+      if (p.length) next = `${DAYS_FULL[weekdayOf(toDateStr(d))]}: ${p.map(ex => esc(ex.name)).join(', ')}`;
+    }
+    return `<div class="card" onclick="openDayModal('${today}')" style="cursor:pointer">
+      <div class="card-title">Heute · Ruhetag</div>
+      <div class="text-muted">${next ? 'Als Nächstes – ' + next : 'Nichts geplant.'}</div>
+    </div>`;
+  }
+
+  const allDone = planned.every(ex => done.has(ex.id));
+  return `<div class="card" onclick="openDayModal('${today}')" style="cursor:pointer">
+    <div class="card-title">Heute · ${dayName}${allDone ? ' · erledigt' : ''}</div>
+    ${planned.map(ex => `
+      <div class="today-row">
+        <div class="check-box ${done.has(ex.id) ? 'checked' : ''}" style="width:18px;height:18px">${done.has(ex.id) ? CHECK_SVG : ''}</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:14px">${esc(ex.name)}</div>
+          ${ex.desc ? `<div class="ex-desc">${esc(ex.desc)}</div>` : ''}
+        </div>
+      </div>`).join('')}
+    <div style="font-size:11px;color:var(--text-dim);margin-top:8px">Tippen zum Abhaken</div>
+  </div>`;
 }
 
 function getKW(date) {
@@ -736,14 +918,18 @@ function buildDayModalContent(dateStr, returnToWeek) {
   const selected = new Set(entries.map(e => entryId(e)));
   const allCats = getAllCategoriesInCycle(cycle);
 
-  const exList = cycle.exercises.length === 0
-    ? `<div class="empty" style="padding:20px 0"><div>Noch keine Übungen im Plan.<br>Gehe zu <strong>Trainingsplan</strong>.</div></div>`
-    : cycle.exercises.map(ex => {
+  // Im Wochenplan stehen die für diesen Wochentag geplanten Übungen oben.
+  const planned = plannedExercises(cycle, dateStr);
+  const plannedIds = new Set(planned.map(ex => ex.id));
+  const others = cycle.exercises.filter(ex => !plannedIds.has(ex.id));
+
+  const exRow = ex => {
         const checked = selected.has(ex.id);
         const entry = entries.find(e => entryId(e) === ex.id);
         const ov = entry ? entryOverride(entry) : null;
         const inputVal = ov !== null ? ov : ex.intensity;
         const cats = exerciseCategories(ex);
+        const unit = ex.unit ? ` (${esc(ex.unit)})` : '';
 
         return `<div class="check-row" style="display:flex;align-items:center;gap:8px;padding:6px 0">
           <div onclick="toggleDayEx('${dateStr}','${ex.id}', ${returnToWeek !== undefined && returnToWeek !== null ? returnToWeek : 'null'})"
@@ -767,8 +953,22 @@ function buildDayModalContent(dateStr, returnToWeek) {
               style="width:62px;text-align:right;padding:6px 8px;font-size:14px;flex-shrink:0"
               title="Intensität für diese Einheit anpassen">
           ` : ''}
-        </div>`;
-      }).join('');
+        </div>
+        ${checked && ex.measure ? `
+          <div class="measure-row">
+            <input type="text" inputmode="decimal" placeholder="Wert${unit}" value="${entry && entry.value !== undefined ? esc(fmtNum(entry.value)) : ''}"
+              onchange="setEntryValue('${dateStr}','${ex.id}', this.value)" style="width:96px;flex-shrink:0">
+            <input type="text" placeholder="Notiz, z.B. einarmig, Band" value="${entry && entry.note ? esc(entry.note) : ''}"
+              onchange="setEntryNote('${dateStr}','${ex.id}', this.value)">
+          </div>` : ''}`;
+  };
+
+  const exList = cycle.exercises.length === 0
+    ? `<div class="empty" style="padding:20px 0"><div>Noch keine Übungen im Plan.<br>Gehe zu <strong>Trainingsplan</strong>.</div></div>`
+    : planned.length > 0
+      ? `<div class="card-title">Geplant</div>${planned.map(exRow).join('')}` +
+        (others.length ? `<div class="card-title" style="margin-top:14px">Weitere Übungen</div>${others.map(exRow).join('')}` : '')
+      : `<div class="card-title">Übungen abhaken</div>${cycle.exercises.map(exRow).join('')}`;
 
   const dayInt = entries.reduce((s, e) => s + getEffectiveIntensity(cycle, e), 0);
 
@@ -782,7 +982,6 @@ function buildDayModalContent(dateStr, returnToWeek) {
       <span class="text-muted">Tages-Intensität:</span>
       <span id="dayIntDisplay" style="font-family:'DM Mono',monospace;font-size:18px;color:var(--accent)">${Math.round(dayInt*10)/10}</span>
     </div>
-    <div class="card-title">Übungen abhaken</div>
     ${exList}
     <div class="divider"></div>
     ${finishBtn}
@@ -826,6 +1025,58 @@ function setOverride(dateStr, exId, value) {
   const totalEl = document.getElementById('dayIntDisplay');
   if (totalEl) totalEl.textContent = Math.round(dayInt * 10) / 10;
   if (currentView === 'dashboard') renderDashboard();
+}
+
+// ── Optionaler Messwert beim Abhaken ──
+// Nur bei Übungen mit "Messwert erfassen". Wert und Notiz sind beide
+// freiwillig; die Notiz hält fest, was der Wert bedeutet, wenn die Übung mal
+// anders lief (einarmig mit Band statt mit Zusatzgewicht).
+function findEntry(dateStr, exId) {
+  const cycle = getActiveCycle();
+  if (!cycle || !cycle.sessions[dateStr]) return null;
+  const entry = cycle.sessions[dateStr].find(e => entryId(e) === exId);
+  return entry && typeof entry === 'object' ? entry : null;
+}
+
+function setEntryValue(dateStr, exId, raw) {
+  const entry = findEntry(dateStr, exId);
+  if (!entry) return;
+  const v = parseFloat((raw || '').toString().trim().replace(',', '.'));
+  if (isNaN(v)) delete entry.value; else entry.value = v;
+  saveData();
+}
+
+function setEntryNote(dateStr, exId, raw) {
+  const entry = findEntry(dateStr, exId);
+  if (!entry) return;
+  const t = (raw || '').toString().trim();
+  if (t) entry.note = t; else delete entry.note;
+  saveData();
+}
+
+// Alle Messwerte einer Übung, auch aus früheren Zyklen – dort hat dieselbe
+// Übung eine andere ID, deshalb wird über den Namen zugeordnet.
+function getExerciseMeasurements(name) {
+  const want = (name || '').trim().toLowerCase();
+  const out = [];
+  appData.cycles.forEach(cycle => {
+    const ids = new Set((cycle.exercises || [])
+      .filter(ex => (ex.name || '').trim().toLowerCase() === want).map(ex => ex.id));
+    if (ids.size === 0) return;
+    Object.keys(cycle.sessions || {}).forEach(date => {
+      (cycle.sessions[date] || []).forEach(e => {
+        if (typeof e !== 'object' || !ids.has(e.exId)) return;
+        if (e.value === undefined && !e.note) return;
+        out.push({ date, value: e.value, note: e.note || '' });
+      });
+    });
+  });
+  return out.sort((a, b) => b.date.localeCompare(a.date));
+}
+
+function formatMeasure(ex, m) {
+  const val = m.value !== undefined ? fmtNum(m.value) + (ex.unit ? ' ' + ex.unit : '') : '';
+  return [val, m.note].filter(Boolean).join(' · ');
 }
 
 // ═══════════════════════════════════════════════
@@ -872,7 +1123,7 @@ function openWeekModal(weekIdx) {
               return `<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12px">
                 <span style="display:flex;align-items:center;gap:5px">
                   ${catDotsHtml(cats, allCats, 11)}
-                  <span>${esc(ex.name)}</span>
+                  <span>${esc(ex.name)}${formatMeasure(ex, entry) ? ` <span style="color:var(--text-dim)">· ${esc(formatMeasure(ex, entry))}</span>` : ''}</span>
                 </span>
                 <span style="font-family:'DM Mono',monospace;color:var(--text-muted)">
                   ${ov !== null ? `<span style="color:var(--accent)">${eff}</span> <span style="color:var(--text-dim);font-size:10px">(Std: ${ex.intensity})</span>` : eff}
@@ -899,7 +1150,15 @@ function renderPlan() {
     return;
   }
 
+  const weekPlan = isPlanMode(cycle)
+    ? DAYS_DE.map((d, i) => {
+        const exs = cycle.exercises.filter(ex => exerciseDays(ex).includes(i));
+        return exs.length ? `<div class="plan-day"><span class="plan-wd">${d}</span><span>${exs.map(ex => esc(ex.name)).join(', ')}</span></div>` : '';
+      }).join('')
+    : '';
+
   el.innerHTML = `
+    ${weekPlan ? `<div class="card"><div class="card-title">Wochenplan</div>${weekPlan}</div>` : ''}
     <div class="section-hdr" style="margin-top:0">
       <h2>Übungen</h2>
       <button class="btn btn-primary btn-sm" onclick="openAddExerciseModal()">+ Hinzufügen</button>
@@ -919,9 +1178,14 @@ function renderPlan() {
               <div style="flex:1;min-width:0">
                 <div class="exercise-name">${esc(ex.name)}</div>
                 <div style="font-size:11px;color:var(--text-muted);margin-top:2px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-                  ${cats.length ? catLabelsHtml(cats, allCats, 14) + `<span style="color:var(--text-dim)">·</span>` : ''}
-                  <span>Tippen zum Bearbeiten</span>
+                  ${cats.length ? catLabelsHtml(cats, allCats, 14) : ''}
+                  ${isPlanMode(cycle)
+                    ? (cats.length ? `<span style="color:var(--text-dim)">·</span>` : '') +
+                      (exerciseDays(ex).length ? `<span style="color:var(--accent)">${formatWeekdays(exerciseDays(ex))}</span>` : `<span>ohne Tag</span>`)
+                    : (cats.length ? '' : `<span>Tippen zum Bearbeiten</span>`)}
+                  ${ex.measure ? `<span style="color:var(--text-dim)">· Messwert</span>` : ''}
                 </div>
+                ${ex.desc ? `<div class="ex-desc">${esc(ex.desc)}</div>` : ''}
               </div>
               <div class="exercise-int">×${ex.intensity}</div>
               <button class="del-btn" onclick="event.stopPropagation(); deleteExercise('${ex.id}')">×</button>
@@ -953,49 +1217,110 @@ function renderPlan() {
   `;
 }
 
-function openAddExerciseModal() {
+// ── Formular für Übungen (Anlegen und Bearbeiten) ──
+// p ist das Präfix der Feld-IDs: 'newEx' beim Anlegen, 'editEx' beim Bearbeiten.
+function exerciseFormHtml(p, ex) {
   const cycle = getActiveCycle();
   const allCats = getAllCategoriesInCycle(cycle).filter(c => c !== 'Sonstige');
   const datalist = allCats.length > 0
-    ? `<datalist id="catList">${allCats.map(c => `<option value="${esc(c)}">`).join('')}</datalist>`
+    ? `<datalist id="${p}CatList">${allCats.map(c => `<option value="${esc(c)}">`).join('')}</datalist>`
     : '';
-  const content = `
-    <div class="modal-title">Übung hinzufügen</div>
+  const days = ex ? exerciseDays(ex) : [];
+  const measure = !!(ex && ex.measure);
+  return `
     <div class="field">
       <label>Name der Übung</label>
-      <input type="text" id="newExName" placeholder="z.B. Kilterboard Session">
+      <input type="text" id="${p}Name" value="${ex ? esc(ex.name) : ''}" placeholder="z.B. Kilterboard Session">
     </div>
     <div class="field">
       <label>Kategorien (optional, mehrere möglich)</label>
-      <input type="text" id="newExCat" placeholder="z.B. Pull, Finger" list="catList"
-        oninput="refreshCategoryChips('newExCat', true)">
+      <input type="text" id="${p}Cat" value="${ex ? esc(formatCategories(exerciseCategories(ex))) : ''}" placeholder="z.B. Pull, Finger" list="${p}CatList"
+        oninput="refreshCategoryChips('${p}Cat', true)">
       ${datalist}
-      ${buildCategoryChips('newExCat', true)}
+      ${buildCategoryChips(p + 'Cat', true)}
       <div style="font-size:11px;color:var(--text-dim);margin-top:6px">Mehrere durch Komma trennen. Die Intensität wird gleichmäßig auf sie aufgeteilt.</div>
     </div>
     <div class="field">
       <label>Intensitätswert</label>
-      <input type="number" id="newExInt" step="0.5" min="0" placeholder="z.B. 2">
+      <input type="number" id="${p}Int" step="0.5" min="0" value="${ex ? ex.intensity : ''}" placeholder="z.B. 2">
     </div>
+    ${isPlanMode(cycle) ? `
+    <div class="field">
+      <label>Trainingstage</label>
+      <div class="weekday-pick" id="${p}Days">
+        ${DAYS_DE.map((d, i) => `<button type="button" data-day="${i}" class="${days.includes(i) ? 'on' : ''}" onclick="this.classList.toggle('on')">${d}</button>`).join('')}
+      </div>
+    </div>` : ''}
+    <div class="field">
+      <label>Beschreibung (optional)</label>
+      <textarea id="${p}Desc" rows="2" placeholder="z.B. 5 × 10 s, 3 min Pause, 20 mm">${ex && ex.desc ? esc(ex.desc) : ''}</textarea>
+    </div>
+    <div class="check-row" onclick="toggleCheck('${p}Measure');document.getElementById('${p}UnitField').style.display=isChecked('${p}Measure')?'':'none'">
+      <div class="check-box ${measure ? 'checked' : ''}" id="${p}Measure" data-on="${measure ? '1' : '0'}">${measure ? CHECK_SVG : ''}</div>
+      <div class="check-label">Messwert beim Abhaken erfassen</div>
+    </div>
+    <div style="font-size:11px;color:var(--text-dim);margin:2px 0 10px 32px">Freiwillig, z.B. Zusatzgewicht oder Wiederholungen – mit Notiz für Varianten.</div>
+    <div class="field" id="${p}UnitField" style="${measure ? '' : 'display:none'}">
+      <label>Einheit</label>
+      <input type="text" id="${p}Unit" value="${ex && ex.unit ? esc(ex.unit) : ''}" placeholder="z.B. kg, Wdh., s">
+    </div>`;
+}
+
+// Liest das Formular; null, wenn Pflichtangaben fehlen.
+function readExerciseForm(p) {
+  const name = document.getElementById(p + 'Name')?.value?.trim();
+  const intensity = parseFloat(document.getElementById(p + 'Int')?.value);
+  if (!name || isNaN(intensity) || intensity < 0) {
+    alert('Bitte Name und gültigen Intensitätswert eingeben.');
+    return null;
+  }
+  const out = {
+    name,
+    categories: parseCategories(document.getElementById(p + 'Cat')?.value),
+    intensity,
+    desc: document.getElementById(p + 'Desc')?.value?.trim() || '',
+    measure: isChecked(p + 'Measure'),
+    unit: document.getElementById(p + 'Unit')?.value?.trim() || ''
+  };
+  const dayBox = document.getElementById(p + 'Days');
+  if (dayBox && dayBox.querySelectorAll) {
+    out.days = Array.from(dayBox.querySelectorAll('button.on')).map(b => parseInt(b.dataset.day, 10));
+  }
+  return out;
+}
+
+// Überträgt das Formular auf die Übung. Leere Zusatzfelder werden entfernt,
+// damit Übungen ohne sie so schlank bleiben wie bisher.
+function applyExerciseForm(ex, form) {
+  ex.name = form.name;
+  ex.categories = form.categories;
+  ex.intensity = form.intensity;
+  if (form.desc) ex.desc = form.desc; else delete ex.desc;
+  if (form.measure) { ex.measure = true; ex.unit = form.unit; }
+  else { delete ex.measure; delete ex.unit; }
+  if (form.days) {
+    if (form.days.length) ex.days = form.days.sort((a, b) => a - b); else delete ex.days;
+  }
+  return ex;
+}
+
+function openAddExerciseModal() {
+  openModal(`
+    <div class="modal-title">Übung hinzufügen</div>
+    ${exerciseFormHtml('newEx', null)}
     <div class="row" style="margin-top:4px">
       <button class="btn btn-ghost" onclick="closeModal()">Abbrechen</button>
       <button class="btn btn-primary" onclick="addExercise()">Hinzufügen</button>
     </div>
-  `;
-  openModal(content);
+  `);
   setTimeout(() => document.getElementById('newExName')?.focus(), 300);
 }
 
 function addExercise() {
-  const name = document.getElementById('newExName')?.value?.trim();
-  const categories = parseCategories(document.getElementById('newExCat')?.value);
-  const intensity = parseFloat(document.getElementById('newExInt')?.value);
-  if (!name || isNaN(intensity) || intensity < 0) {
-    alert('Bitte Name und gültigen Intensitätswert eingeben.');
-    return;
-  }
+  const form = readExerciseForm('newEx');
+  if (!form) return;
   const cycle = getActiveCycle();
-  cycle.exercises.push({ id: Date.now().toString(), name, categories, intensity });
+  cycle.exercises.push(applyExerciseForm({ id: Date.now().toString() }, form));
   saveData();
   closeModal();
   renderPlan();
@@ -1005,51 +1330,31 @@ function openEditExerciseModal(exId) {
   const cycle = getActiveCycle();
   const ex = cycle.exercises.find(e => e.id === exId);
   if (!ex) return;
-  const allCats = getAllCategoriesInCycle(cycle).filter(c => c !== 'Sonstige');
-  const datalist = allCats.length > 0
-    ? `<datalist id="catListEdit">${allCats.map(c => `<option value="${esc(c)}">`).join('')}</datalist>`
-    : '';
-  const content = `
+  const history = ex.measure ? getExerciseMeasurements(ex.name).slice(0, 8) : [];
+  openModal(`
     <div class="modal-title">Übung bearbeiten</div>
-    <div class="field">
-      <label>Name der Übung</label>
-      <input type="text" id="editExName" value="${esc(ex.name)}">
-    </div>
-    <div class="field">
-      <label>Kategorien (optional, mehrere möglich)</label>
-      <input type="text" id="editExCat" value="${esc(formatCategories(exerciseCategories(ex)))}" placeholder="z.B. Pull, Finger" list="catListEdit"
-        oninput="refreshCategoryChips('editExCat', true)">
-      ${datalist}
-      ${buildCategoryChips('editExCat', true)}
-      <div style="font-size:11px;color:var(--text-dim);margin-top:6px">Mehrere durch Komma trennen. Die Intensität wird gleichmäßig auf sie aufgeteilt.</div>
-    </div>
-    <div class="field">
-      <label>Intensitätswert</label>
-      <input type="number" id="editExInt" step="0.5" min="0" value="${ex.intensity}">
-    </div>
-    <div class="row" style="margin-top:4px">
+    ${exerciseFormHtml('editEx', ex)}
+    ${history.length ? `
+      <div class="divider"></div>
+      <div class="card-title">Letzte Messwerte</div>
+      ${history.map(m => `<div class="log-row">
+        <span class="text-muted" style="width:56px;flex-shrink:0">${formatDay(m.date)}</span>
+        <span>${esc(formatMeasure(ex, m))}</span>
+      </div>`).join('')}` : ''}
+    <div class="row" style="margin-top:12px">
       <button class="btn btn-ghost" onclick="closeModal()">Abbrechen</button>
       <button class="btn btn-primary" onclick="saveExerciseEdit('${exId}')">Speichern</button>
     </div>
-  `;
-  openModal(content);
-  setTimeout(() => document.getElementById('editExName')?.focus(), 300);
+  `);
 }
 
 function saveExerciseEdit(exId) {
-  const name = document.getElementById('editExName')?.value?.trim();
-  const categories = parseCategories(document.getElementById('editExCat')?.value);
-  const intensity = parseFloat(document.getElementById('editExInt')?.value);
-  if (!name || isNaN(intensity) || intensity < 0) {
-    alert('Bitte Name und gültigen Intensitätswert eingeben.');
-    return;
-  }
+  const form = readExerciseForm('editEx');
+  if (!form) return;
   const cycle = getActiveCycle();
   const ex = cycle.exercises.find(e => e.id === exId);
   if (!ex) return;
-  ex.name = name;
-  ex.categories = categories;
-  ex.intensity = intensity;
+  applyExerciseForm(ex, form);
   saveData();
   closeModal();
   renderPlan();
@@ -1204,15 +1509,15 @@ function updateWeekTarget(weekIdx, val) {
 function renderHistory() {
   const el = document.getElementById('historyContent');
   if (appData.cycles.length === 0) {
-    el.innerHTML = `<div class="empty"><div class="empty-icon">📊</div><div>Noch keine Trainingszyklen vorhanden.</div></div>`;
+    el.innerHTML = renderLogbook();
     return;
   }
 
   const sorted = [...appData.cycles].sort((a,b) => b.startDate.localeCompare(a.startDate));
-  el.innerHTML = `<div class="section-hdr" style="margin-top:0"><h2>Alle Zyklen</h2></div>` +
+  el.innerHTML = renderLogbook() + `<div class="section-hdr"><h2>Zyklen</h2></div>` +
     sorted.map(cycle => {
       const wks = cycle.weeks || 12;
-      const endDate = new Date(parseDate(cycle.startDate).getTime() + wks*7*24*3600*1000 - 86400000);
+      const endDate = parseDate(getCycleEndDate(cycle));
       const totalInt = Array.from({length: wks}, (_,i) => getWeekIntensity(cycle, i)).reduce((a,b)=>a+b,0);
       let sessionDays = 0;
       let completedExercises = 0;
@@ -1294,6 +1599,201 @@ function openCycleDetail(cycleId) {
 }
 
 // ═══════════════════════════════════════════════
+// LOGBUCH
+// ═══════════════════════════════════════════════
+// appData.ascents: [{id, date, scaleId, grade, style, place, name?, note?}]
+// grade ist der Index in der Skala (wie bei Assessment-Tests), damit sich
+// Grade sortieren und zählen lassen.
+const ASCENT_STYLES = { flash: 'Flash', top: 'Top', project: 'Projekt' };
+const ASCENT_PLACES = { halle: 'Halle', board: 'Board', fels: 'Fels' };
+const LOG_PREVIEW = 10;
+let logShowAll = false;
+
+function migrateLogbook() {
+  if (!Array.isArray(appData.ascents)) { appData.ascents = []; saveData(); }
+}
+
+function ascentGrade(a) {
+  const steps = (SCALES[a.scaleId] || SCALES.font).steps;
+  return steps[a.grade] !== undefined ? steps[a.grade] : '?';
+}
+
+function sortedAscents() {
+  return [...appData.ascents].sort((a, b) =>
+    b.date.localeCompare(a.date) || String(b.id).localeCompare(String(a.id)));
+}
+
+// Pyramide je Skala: Flash und Top je Grad, vom höchsten Grad abwärts.
+// Projekte zählen nicht – sie sind (noch) nicht geschafft.
+function gradePyramid(scaleId) {
+  const counts = {};
+  appData.ascents.forEach(a => {
+    if (a.scaleId !== scaleId || a.style === 'project') return;
+    const c = counts[a.grade] || (counts[a.grade] = { flash: 0, top: 0 });
+    c[a.style === 'flash' ? 'flash' : 'top']++;
+  });
+  const grades = Object.keys(counts).map(Number).sort((a, b) => b - a);
+  return grades.map(g => ({ grade: g, flash: counts[g].flash, top: counts[g].top }));
+}
+
+function renderPyramid(scaleId, showScaleName) {
+  const steps = (SCALES[scaleId] || SCALES.font).steps;
+  const rows = gradePyramid(scaleId);
+  if (!rows.length) return '';
+  const shown = rows.slice(0, 8);
+  const max = Math.max(...shown.map(r => r.flash + r.top));
+  const tops = rows.reduce((s, r) => s + r.flash + r.top, 0);
+  const flashes = rows.reduce((s, r) => s + r.flash, 0);
+  const bestFlash = rows.find(r => r.flash > 0);
+  return `<div class="card">
+    <div class="card-title">Pyramide${showScaleName ? ' · ' + esc((SCALES[scaleId] || SCALES.font).name) : ''}</div>
+    <div class="stats-row" style="grid-template-columns:1fr 1fr 1fr">
+      <div class="stat-card"><div class="stat-val">${steps[rows[0].grade]}</div><div class="stat-lbl">Höchster Grad</div></div>
+      <div class="stat-card"><div class="stat-val">${bestFlash ? steps[bestFlash.grade] : '–'}</div><div class="stat-lbl">Bester Flash</div></div>
+      <div class="stat-card"><div class="stat-val">${tops}</div><div class="stat-lbl">Tops, davon ${flashes} Flash</div></div>
+    </div>
+    ${shown.map(r => `<div class="pyr-row">
+      <span class="pyr-grade">${steps[r.grade]}</span>
+      <span class="pyr-bar">
+        <span style="width:${r.flash / max * 100}%;background:var(--accent)"></span><span style="width:${r.top / max * 100}%;background:var(--green-dark)"></span>
+      </span>
+      <span class="pyr-count">${r.flash + r.top}</span>
+    </div>`).join('')}
+    <div style="display:flex;gap:14px;font-size:11px;color:var(--text-muted);margin-top:8px;justify-content:center">
+      <span><span class="pyr-key" style="background:var(--accent)"></span>Flash</span>
+      <span><span class="pyr-key" style="background:var(--green-dark)"></span>Top</span>
+    </div>
+  </div>`;
+}
+
+function renderLogbook() {
+  const header = `<div class="section-hdr" style="margin-top:0"><h2>Logbuch</h2>
+    <button class="btn btn-primary btn-sm" onclick="openAscentModal()">+ Boulder</button></div>`;
+  const list = sortedAscents();
+  if (!list.length) {
+    return header + `<div class="card text-muted" style="line-height:1.5">Trag hier ein, was du gebouldert hast – mit Grad, Flash oder Top. Daraus entsteht deine Grad-Pyramide.</div>`;
+  }
+  // Skalen in der Reihenfolge ihrer letzten Verwendung
+  const scales = [];
+  list.forEach(a => { if (!scales.includes(a.scaleId)) scales.push(a.scaleId); });
+  const shown = logShowAll ? list : list.slice(0, LOG_PREVIEW);
+  return header +
+    scales.map(sc => renderPyramid(sc, scales.length > 1)).join('') +
+    `<div class="card">
+      <div class="card-title">Zuletzt</div>
+      ${shown.map(a => `<div class="log-row" onclick="openAscentModal('${esc(a.id)}')" style="cursor:pointer">
+        <span class="text-muted" style="width:52px;flex-shrink:0">${formatDay(a.date)}</span>
+        <span class="log-grade">${esc(ascentGrade(a))}</span>
+        <span class="log-style log-${esc(a.style)}">${ASCENT_STYLES[a.style] || ''}</span>
+        <span class="log-name">${esc([ASCENT_PLACES[a.place], a.name].filter(Boolean).join(' · '))}</span>
+      </div>`).join('')}
+      ${list.length > LOG_PREVIEW ? `<button class="btn btn-ghost btn-full btn-sm" style="margin-top:10px" onclick="logShowAll=!logShowAll;renderHistory()">${logShowAll ? 'Weniger anzeigen' : `Alle ${list.length} anzeigen`}</button>` : ''}
+    </div>`;
+}
+
+// ── Kleine Umschalter (Flash/Top/Projekt, Halle/Board/Fels) ──
+function segHtml(id, options, current) {
+  return `<div class="seg" id="${id}" data-val="${current}">${Object.keys(options).map(k =>
+    `<button type="button" data-v="${k}" class="${k === current ? 'on' : ''}" onclick="pickSeg('${id}','${k}')">${options[k]}</button>`).join('')}</div>`;
+}
+
+function pickSeg(id, val) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.dataset.val = val;
+  if (el.querySelectorAll) el.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === val));
+}
+
+function gradeOptions(scaleId, current) {
+  return (SCALES[scaleId] || SCALES.font).steps.map((g, i) =>
+    `<option value="${i}" ${i === current ? 'selected' : ''}>${g}</option>`).join('');
+}
+
+function onAscentScaleChange() {
+  const scaleId = document.getElementById('ascScale').value;
+  const sel = document.getElementById('ascGrade');
+  const max = (SCALES[scaleId] || SCALES.font).steps.length - 1;
+  sel.innerHTML = gradeOptions(scaleId, Math.min(parseInt(sel.value, 10) || 0, max));
+}
+
+function openAscentModal(id) {
+  const a = id ? appData.ascents.find(x => x.id === id) : null;
+  // Neue Einträge übernehmen Skala, Grad und Ort vom letzten – meist trägt
+  // man mehrere Boulder aus derselben Session ein.
+  const last = sortedAscents()[0];
+  const d = a || {
+    date: toDateStr(new Date()),
+    scaleId: last ? last.scaleId : 'font',
+    grade: last ? last.grade : 3,
+    style: 'top',
+    place: last ? last.place : 'halle'
+  };
+  openModal(`
+    <div class="modal-title">${a ? 'Eintrag bearbeiten' : 'Boulder eintragen'}</div>
+    <div class="row">
+      <div class="field">
+        <label>Skala</label>
+        <select id="ascScale" onchange="onAscentScaleChange()">
+          ${Object.keys(SCALES).map(k => `<option value="${k}" ${k === d.scaleId ? 'selected' : ''}>${SCALES[k].name}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field">
+        <label>Grad</label>
+        <select id="ascGrade">${gradeOptions(d.scaleId, d.grade)}</select>
+      </div>
+    </div>
+    <div class="field"><label>Stil</label>${segHtml('ascStyle', ASCENT_STYLES, d.style)}</div>
+    <div class="field"><label>Ort</label>${segHtml('ascPlace', ASCENT_PLACES, d.place)}</div>
+    <div class="field">
+      <label>Datum</label>
+      <input type="date" id="ascDate" value="${d.date}">
+    </div>
+    <div class="field">
+      <label>Name (optional)</label>
+      <input type="text" id="ascName" value="${a && a.name ? esc(a.name) : ''}" placeholder="z.B. Gelbe Platte, Sektor B">
+    </div>
+    <div class="field">
+      <label>Notiz (optional)</label>
+      <input type="text" id="ascNote" value="${a && a.note ? esc(a.note) : ''}" placeholder="z.B. Fersenhaken war der Schlüssel">
+    </div>
+    <div class="row" style="margin-top:4px">
+      <button class="btn btn-ghost" onclick="closeModal()">Abbrechen</button>
+      <button class="btn btn-primary" onclick="saveAscent(${a ? `'${esc(a.id)}'` : 'null'})">Speichern</button>
+    </div>
+    ${a ? `<button class="btn btn-danger btn-full" style="margin-top:10px" onclick="deleteAscent('${esc(a.id)}')">Löschen</button>` : ''}
+  `);
+}
+
+function saveAscent(id) {
+  const date = document.getElementById('ascDate')?.value;
+  if (!date) { alert('Bitte ein Datum wählen.'); return; }
+  const data = {
+    date,
+    scaleId: document.getElementById('ascScale').value,
+    grade: parseInt(document.getElementById('ascGrade').value, 10) || 0,
+    style: document.getElementById('ascStyle').dataset.val || 'top',
+    place: document.getElementById('ascPlace').dataset.val || 'halle'
+  };
+  const name = document.getElementById('ascName')?.value?.trim();
+  const note = document.getElementById('ascNote')?.value?.trim();
+  const existing = id ? appData.ascents.find(x => x.id === id) : null;
+  const target = existing || { id: newId() };
+  Object.assign(target, data);
+  if (name) target.name = name; else delete target.name;
+  if (note) target.note = note; else delete target.note;
+  if (!existing) appData.ascents.push(target);
+  saveData();
+  closeModal();
+}
+
+function deleteAscent(id) {
+  if (!confirm('Eintrag wirklich löschen?')) return;
+  appData.ascents = appData.ascents.filter(x => x.id !== id);
+  saveData();
+  closeModal();
+}
+
+// ═══════════════════════════════════════════════
 // SETTINGS VIEW
 // ═══════════════════════════════════════════════
 function renderSettings() {
@@ -1306,7 +1806,13 @@ function renderSettings() {
       <div class="card-title">Aktiver Zyklus</div>
       ${cycle
         ? `<div style="font-weight:600;font-size:15px;margin-bottom:4px">${esc(cycle.name)}</div>
-           <div class="text-muted">Gestartet: ${parseDate(cycle.startDate).toLocaleDateString('de-DE')}</div>
+           <div class="text-muted">Gestartet: ${parseDate(cycle.startDate).toLocaleDateString('de-DE')} · Ende: ${parseDate(getCycleEndDate(cycle)).toLocaleDateString('de-DE')}</div>
+           <div class="divider"></div>
+           <div class="check-row" onclick="togglePlanMode()">
+             <div class="check-box ${isPlanMode(cycle) ? 'checked' : ''}">${isPlanMode(cycle) ? CHECK_SVG : ''}</div>
+             <div class="check-label">Wochenplan mit festen Trainingstagen</div>
+           </div>
+           <div style="font-size:11px;color:var(--text-dim);margin:2px 0 0 32px">Aus: freies Eintragen ohne feste Tage.</div>
            <div class="divider"></div>
            <button class="btn btn-danger btn-sm" onclick="confirmEndCycle()">Zyklus abschließen</button>`
         : `<div class="text-muted">Kein aktiver Zyklus.</div>`
@@ -1348,24 +1854,37 @@ function renderSettings() {
   if (window.renderCloudBox) window.renderCloudBox();
 }
 
-function openNewCycleModal() {
+// mode: 'plan' oder 'free' vorauswählen (aus der Startseite); sonst wie der
+// aktive Zyklus.
+function openNewCycleModal(mode) {
+  const active = getActiveCycle();
+  const m = mode || (isPlanMode(active) ? 'plan' : 'free');
   const otherCycles = appData.cycles;
-  const copyOptions = otherCycles.length > 0
-    ? `<div class="field">
-        <label>Von vorhandenem Zyklus kopieren (optional)</label>
-        <select id="copyFromCycle" onchange="onCopySelect()">
-          <option value="">– Leer starten –</option>
-          ${otherCycles.map(c => `<option value="${c.id}">${esc(c.name)} (${c.exercises.length} Übungen, ${c.weeks||12} Wo.)</option>`).join('')}
-        </select>
-        <div style="font-size:11px;color:var(--text-muted);margin-top:4px">Übungen, Wochenziele und Wochenanzahl werden übernommen.</div>
-      </div>`
-    : '';
-
   const content = `
     <div class="modal-title">Neuen Zyklus starten</div>
     <div class="field">
       <label>Name des Zyklus</label>
-      <input type="text" id="newCycleName" placeholder="z.B. Frühjahr 2025">
+      <input type="text" id="newCycleName" placeholder="z.B. Frühjahr 2027">
+    </div>
+    <div class="field">
+      <label>Art</label>
+      <select id="newCycleMode" onchange="onCopySelect()">
+        <option value="plan" ${m === 'plan' ? 'selected' : ''}>Wochenplan – feste Trainingstage</option>
+        <option value="free" ${m === 'free' ? 'selected' : ''}>Frei – eintragen, was du gemacht hast</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Start mit</label>
+      <select id="copyFromCycle" onchange="onCopySelect(true)">
+        <option value="">Leer</option>
+        <optgroup label="Vorlagen">
+          ${PLAN_TEMPLATES.map(t => `<option value="tpl:${t.id}">${esc(t.name)}</option>`).join('')}
+        </optgroup>
+        ${otherCycles.length ? `<optgroup label="Kopie von">
+          ${otherCycles.map(c => `<option value="${c.id}">${esc(c.name)} (${c.exercises.length} Übungen, ${c.weeks||12} Wo.)</option>`).join('')}
+        </optgroup>` : ''}
+      </select>
+      <div id="copyInfo" style="font-size:11px;color:var(--text-muted);margin-top:6px;line-height:1.5"></div>
     </div>
     <div class="field">
       <label>Startdatum (beliebiger Wochentag)</label>
@@ -1375,46 +1894,85 @@ function openNewCycleModal() {
       <label>Anzahl Wochen (1–52)</label>
       <input type="number" id="newCycleWeeks" min="1" max="52" step="1" value="12">
     </div>
-    ${copyOptions}
     <div class="row" style="margin-top:4px">
       <button class="btn btn-ghost" onclick="closeModal()">Abbrechen</button>
       <button class="btn btn-primary" onclick="createCycle()">Starten</button>
     </div>
   `;
   openModal(content);
+  onCopySelect();
 }
 
-function onCopySelect() {
-  const sel = document.getElementById('copyFromCycle');
-  const id = sel?.value;
-  if (!id) return;
-  const src = appData.cycles.find(c => c.id === id);
-  if (src) {
-    const wInput = document.getElementById('newCycleWeeks');
-    if (wInput) wInput.value = src.weeks || 12;
+function getTemplate(value) {
+  if (!value || !value.startsWith('tpl:')) return null;
+  return PLAN_TEMPLATES.find(t => t.id === value.slice(4)) || null;
+}
+
+// Wochenziele einer Vorlage: geplante Wochenintensität im Rhythmus 3 + 1 –
+// drei steigende Wochen, dann eine Entlastungswoche mit gut der Hälfte.
+function templateTargets(tpl, weeks) {
+  const base = tpl.exercises.reduce((s, ex) => s + ex.intensity * ex.days.length, 0);
+  const pattern = [0.9, 1, 1.1, 0.6];
+  return Array.from({ length: weeks }, (_, i) => Math.round(base * pattern[i % 4] * 2) / 2);
+}
+
+// changed: true, wenn die Auswahl gerade geändert wurde (dann Wochenzahl und
+// Art übernehmen), sonst nur den Hinweis auffrischen.
+function onCopySelect(changed) {
+  const value = document.getElementById('copyFromCycle')?.value;
+  const info = document.getElementById('copyInfo');
+  const wInput = document.getElementById('newCycleWeeks');
+  const modeSel = document.getElementById('newCycleMode');
+  const tpl = getTemplate(value);
+  const src = !tpl && value ? appData.cycles.find(c => c.id === value) : null;
+  if (changed && tpl) {
+    if (wInput) wInput.value = tpl.weeks;
+    if (modeSel) modeSel.value = 'plan';
+  }
+  if (changed && src && wInput) wInput.value = src.weeks || 12;
+  if (!info) return;
+  if (tpl) {
+    info.innerHTML = `${esc(tpl.level)}<br>${tpl.exercises.length} Übungen, Entlastungswoche jede 4. Woche. Ein Vorschlag – alles lässt sich danach anpassen.`;
+  } else if (src) {
+    info.textContent = 'Übungen, Trainingstage, Wochenziele und Wochenanzahl werden übernommen.';
+  } else {
+    info.textContent = '';
   }
 }
 
 function createCycle() {
-  const name = document.getElementById('newCycleName')?.value?.trim();
+  const copyFromId = document.getElementById('copyFromCycle')?.value;
+  const tpl = getTemplate(copyFromId);
+  const name = document.getElementById('newCycleName')?.value?.trim() || (tpl ? tpl.name.split(' · ')[0] : '');
   const date = document.getElementById('newCycleDate')?.value;
   const weeksRaw = document.getElementById('newCycleWeeks')?.value;
   const weeks = Math.max(1, Math.min(52, parseInt(weeksRaw) || 12));
-  const copyFromId = document.getElementById('copyFromCycle')?.value;
+  const mode = document.getElementById('newCycleMode')?.value;
   if (!name) { alert('Bitte einen Namen eingeben.'); return; }
   const cycle = getDefaultCycle(name, weeks);
   if (date) cycle.startDate = date;
+  if (mode === 'plan') cycle.mode = 'plan';
 
-  // Copy exercises and week targets from selected cycle
-  if (copyFromId) {
+  const copyExercise = ex => {
+    const out = {
+      id: Date.now().toString() + Math.random().toString(36).slice(2,7),
+      name: ex.name,
+      categories: exerciseCategories(ex),   // eigene Kopie, nicht dieselbe Liste
+      intensity: ex.intensity
+    };
+    if (exerciseDays(ex).length) out.days = exerciseDays(ex);
+    if (ex.desc) out.desc = ex.desc;
+    if (ex.measure) { out.measure = true; out.unit = ex.unit || ''; }
+    return out;
+  };
+
+  if (tpl) {
+    cycle.exercises = tpl.exercises.map(copyExercise);
+    cycle.weekTargets = templateTargets(tpl, weeks);
+  } else if (copyFromId) {
     const src = appData.cycles.find(c => c.id === copyFromId);
     if (src) {
-      cycle.exercises = src.exercises.map(ex => ({
-        id: Date.now().toString() + Math.random().toString(36).slice(2,7),
-        name: ex.name,
-        categories: exerciseCategories(ex),   // eigene Kopie, nicht dieselbe Liste
-        intensity: ex.intensity
-      }));
+      cycle.exercises = src.exercises.map(copyExercise);
       // Copy week targets, truncating or padding as needed
       const srcTargets = src.weekTargets || [];
       cycle.weekTargets = Array(weeks).fill(0).map((_, i) => srcTargets[i] || 0);
@@ -1425,6 +1983,16 @@ function createCycle() {
   appData.activeCycleId = cycle.id;
   saveData();
   closeModal();
+  render();
+}
+
+function togglePlanMode() {
+  const cycle = getActiveCycle();
+  if (!cycle) return;
+  // Die Trainingstage der Übungen bleiben stehen; sie gelten wieder, sobald
+  // der Wochenplan erneut eingeschaltet wird.
+  if (isPlanMode(cycle)) delete cycle.mode; else cycle.mode = 'plan';
+  saveData();
   renderSettings();
 }
 
@@ -1475,6 +2043,7 @@ function importDataPrompt() {
           // Aeltere Sicherungen kennen noch keine Tests/Assessments
           migrateCycles();
           migrateAssessments();
+          migrateLogbook();
           saveData();
           alert('Import erfolgreich!');
           render();
@@ -1575,10 +2144,9 @@ function anyTestUsesBodyweight() {
   return appData.tests.some(t => t.usesBodyweight);
 }
 
+// Verschiebt sich mit jeder Pause nach hinten.
 function getCycleEndDate(cycle) {
-  const d = parseDate(cycle.startDate);
-  d.setDate(d.getDate() + (cycle.weeks || 12) * 7 - 1);
-  return toDateStr(d);
+  return getWeekDates(cycle, (cycle.weeks || 12) - 1)[6];
 }
 
 // ── Werte formatieren und einlesen ──
@@ -2460,6 +3028,7 @@ function closeModalOnBg(e) {
 // ═══════════════════════════════════════════════
 migrateCycles();
 migrateAssessments();
+migrateLogbook();
 render();
 
 // Offline-Fähigkeit. Fehlt beim Öffnen als lokale Datei – dann läuft die App
