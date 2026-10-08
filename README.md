@@ -90,3 +90,14 @@ Einstellungen → **Daten exportieren** schreibt alles in eine JSON-Datei.
 Ohne Konto ist das die einzige Sicherung – Browser räumen ihren Speicher
 gelegentlich auf. Mit Konto liegen die Daten zusätzlich in Firebase. Vor größeren Änderungen und ab und zu zwischendurch
 exportieren.
+
+## Vor der Veröffentlichung
+
+Solange nur der Eigentümer die App nutzt, dürfen Änderungen direkt auf `main`
+landen (ohne Pull Request). **Vor einer Veröffentlichung diese Erlaubnis
+widerrufen** und wieder über Pull Requests arbeiten, damit keine fehlerhafte
+Änderung ungeprüft live geht. Am besten zusätzlich in GitHub unter
+Settings → Branches eine Schutzregel für `main` anlegen.
+
+Außerdem vor der Veröffentlichung: Impressum und Datenschutzerklärung,
+Schutz der offenen Registrierung (z.B. App Check), Kostenrahmen in Firebase.
