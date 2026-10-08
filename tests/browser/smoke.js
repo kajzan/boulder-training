@@ -240,6 +240,36 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
   await ip.screenshot({ path: path.join(__dirname, 'shot-iphone-einstellungen.png') });
   await iphone.close();
 
+  // Grosse Bildschirme: PC mit Seitenleiste, iPad mit zentrierten Dialogen
+  for (const [name, vp, ua] of [
+    ['pc', { width: 1280, height: 800 }, null],
+    ['ipad', { width: 820, height: 1180 }, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15']
+  ]) {
+    const gross = await browser.newContext(Object.assign({ viewport: vp }, ua ? { userAgent: ua, hasTouch: true } : {}));
+    const gp = await gross.newPage();
+    gp.on('pageerror', e => errs.push(name + ': ' + e.message));
+    await gp.goto(`http://localhost:8094${BASE}/`, { waitUntil: 'networkidle' });
+    await gp.evaluate(daten => { replaceAppData(JSON.parse(daten)); }, await page.evaluate(() => JSON.stringify(getAppData())));
+    await gp.click('.tab-btn:nth-child(1)');
+    await gp.waitForTimeout(300);
+    const breite = await gp.evaluate(() => document.querySelector('.view.active').getBoundingClientRect().width);
+    ok(`${name}: Inhalt in Lesebreite`, breite <= 720 && breite > 600, String(breite));
+    if (name === 'pc') {
+      ok('pc: Navigation als Seitenleiste', await gp.evaluate(() => getComputedStyle(document.querySelector('.tabs')).flexDirection === 'column'));
+    }
+    await gp.screenshot({ path: path.join(__dirname, `shot-${name}-uebersicht.png`) });
+    await gp.click('.tab-btn:nth-child(2)');
+    await gp.click('#exerciseList .exercise-item >> nth=0');
+    await gp.waitForTimeout(400);
+    const box = await gp.locator('#modalBox').boundingBox();
+    ok(`${name}: Fenster als zentrierter Dialog`, box.width <= 520 && box.y > 20, JSON.stringify(box));
+    await gp.screenshot({ path: path.join(__dirname, `shot-${name}-dialog.png`) });
+    await gp.keyboard.press('Escape');
+    await gp.waitForTimeout(300);
+    ok(`${name}: Escape schliesst das Fenster`, !(await gp.evaluate(() => document.getElementById('modalOverlay').classList.contains('open'))));
+    await gross.close();
+  }
+
   // Neustart ohne Netz
   await ctx.setOffline(true);
   await page.reload({ waitUntil: 'load' });

@@ -3453,6 +3453,13 @@ function closeModal() {
   if (currentView === 'settings') renderSettings();
 }
 
+// Am PC schließt Escape das offene Fenster
+if (typeof document !== 'undefined' && document.addEventListener) {
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && document.getElementById('modalOverlay')?.classList.contains('open')) closeModal();
+  });
+}
+
 function closeModalOnBg(e) {
   if (e.target === document.getElementById('modalOverlay')) closeModal();
 }

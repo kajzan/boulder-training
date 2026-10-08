@@ -569,3 +569,70 @@ textarea { resize: vertical; font-size: 14px; line-height: 1.4; }
   background: var(--accent-dim); color: var(--accent);
 }
 .pause-icon svg { width: 22px; height: 22px; }
+
+/* ═══════════════════════════════════════════════
+   GROSSE BILDSCHIRME: iPad und Browser am PC
+   Die App bleibt eine Spalte in angenehmer Lesebreite. Fenster erscheinen
+   als zentrierte Dialoge statt als Blatt von unten; am PC wandert die
+   Navigation in eine Seitenleiste.
+   ═══════════════════════════════════════════════ */
+@media (hover: hover) {
+  .list-row:hover, .week-row:hover, .exercise-item:hover, .cycle-card:hover,
+  .choice-card:hover { background: var(--surface2); }
+  .list-group .list-row:hover { background: var(--surface2); }
+  .btn-ghost:hover { border-color: var(--text-dim); }
+  .btn-primary:hover { filter: brightness(1.08); }
+  .tab-btn:hover { color: var(--text-muted); }
+  .tab-btn.active:hover { color: var(--accent); }
+  .day-dot:hover { border-color: var(--text-muted); }
+  .del-btn:hover { color: var(--red); }
+}
+
+@media (min-width: 700px) {
+  .main { padding-left: 24px; padding-right: 24px; }
+  .main > .view { max-width: 680px; margin: 0 auto; }
+  .nav { padding-left: 24px; padding-right: 24px; }
+  .tab-btn { font-size: 11px; }
+
+  /* Dialog statt Blatt von unten */
+  .modal-overlay { align-items: center; justify-content: center; padding: 24px; }
+  .modal {
+    max-width: 520px; max-height: 86vh;
+    border-radius: 16px; padding: 24px;
+    transform: translateY(16px) scale(0.98); opacity: 0;
+    transition: transform 0.25s cubic-bezier(0.32,0.72,0,1), opacity 0.2s;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+  }
+  .modal-overlay.open .modal { transform: none; opacity: 1; }
+  .modal-handle { display: none; }
+  .apple .modal { border-radius: 14px; }
+
+  .action-card { max-width: 400px; }
+
+  /* Diagramme wachsen sonst mit der Breite samt Schrift ins Riesige */
+  .card svg[viewBox] { max-width: 520px; margin-left: auto; margin-right: auto; }
+}
+
+@media (min-width: 1024px) {
+  :root { --sidebar: 232px; }
+  .nav { padding-left: 24px; }
+  .main { padding-left: calc(var(--sidebar) + 32px); padding-right: 32px; padding-bottom: 40px; }
+  .main > .view { max-width: 720px; }
+
+  /* Navigation als Seitenleiste */
+  .tabs {
+    top: 0; right: auto; bottom: 0; width: var(--sidebar);
+    flex-direction: column; gap: 2px;
+    padding: 84px 12px 20px;
+    border-top: none; border-right: 1px solid var(--border);
+    background: var(--bg);
+  }
+  .tab-btn {
+    flex: 0 0 auto; flex-direction: row; justify-content: flex-start; gap: 12px;
+    padding: 10px 12px; border-radius: 8px;
+    font-size: 14px; color: var(--text-muted);
+  }
+  .tab-btn svg { width: 20px; height: 20px; }
+  .tab-btn.active { background: var(--accent-dim); color: var(--accent); }
+  .nav { z-index: 150; }
+}
