@@ -1304,7 +1304,7 @@ check('auch Ersetzen lässt sich zurücknehmen', gleich(toDocs(appData), toDocs(
   const bereinigt = validatePlan({ name: 'x'.repeat(500), weeks: 999, weekTargets: ['a', -3, 4],
     exercises: [{ name: 'A', intensity: '5', days: [0, 9, 'x', 0], categories: ['k', 7], desc: 5, measure: 'ja', extra: 'weg' }, { intensity: 1 }],
     author: { boese: 1 }, sessions: { a: 1 } });
-  eq('fremde Eingaben werden bereinigt', bereinigt, { v: 1, name: 'x'.repeat(80), weeks: 52,
+  eq('fremde Eingaben werden bereinigt', bereinigt, { v: 1, name: 'x'.repeat(80), unit: 'int', weeks: 52,
     weekTargets: [0, 0, 4].concat(Array(49).fill(0)),
     exercises: [{ name: 'A', categories: ['k'], intensity: 0, days: [0] }] });
 
@@ -1321,6 +1321,67 @@ check('auch Ersetzen lässt sich zurücknehmen', gleich(toDocs(appData), toDocs(
   renderPlan();
   check('Trainingsplan zeigt Absender und maskiert Namen',
     el('planContent').innerHTML.includes('Plan von Trainer Max') && el('planContent').innerHTML.includes('Max Hang &lt;b&gt;'));
+
+  // ═══════════════════════════════════════════════
+  group('Einheiten: Intensität, Minuten, Stunden');
+  // ═══════════════════════════════════════════════
+  const mz2 = { id: 'u1', unit: 'min', name: 'Zeit', startDate: '2026-01-05', weeks: 2, weekTargets: [240, 180],
+    exercises: [{ id: 'b', name: 'Bouldern', categories: [], intensity: 90, days: [0] }], sessions: {}, notes: {} };
+  eq('Anzeige in Minuten', [fmtAmount(mz2, 90), fmtExAmount(mz2, 90)], ['90 min', '90 min']);
+  eq('Anzeige in Stunden', fmtAmount({ unit: 'h' }, 1.5), '1,5 h');
+  eq('Intensität ohne Einheit, Übung mit ×', [fmtAmount({}, 9.5), fmtExAmount({}, 3)], ['9,5', '×3']);
+  eq('Toleranz je Einheit: 230 von 240 min gilt als erreicht', intensityClass(230, 240, unitInfo(mz2).tol), 'int-green-dark');
+  eq('bei Intensität wären 10 Punkte daneben nur fast erreicht', intensityClass(230, 240), 'int-green-light');
+  const tplF = PLAN_TEMPLATES[1];
+  eq('Vorlage in Minuten', templateAmount(tplF.exercises[0], 'min'), tplF.exercises[0].minutes);
+  eq('Vorlage in Stunden auf Viertelstunden gerundet', templateAmount({ minutes: 75 }, 'h'), 1.25);
+  check('jede Vorlagen-Übung hat eine Dauer', PLAN_TEMPLATES.every(t => t.exercises.every(e => e.minutes > 0)));
+  el('newCycleName').value = 'Zeit'; el('newCycleDate').value = '2026-03-02'; el('newCycleWeeks').value = '8';
+  el('newCycleMode').value = 'plan'; el('copyFromCycle').value = 'tpl:' + tplF.id; el('newCycleUnit').dataset.val = 'min';
+  createCycle();
+  const zz = getActiveCycle();
+  eq('neuer Zyklus zählt in Minuten', [zz.unit, zz.exercises[0].intensity], ['min', tplF.exercises[0].minutes]);
+  check('Wochenziele in 5-Minuten-Schritten', zz.weekTargets.every(t => t % 5 === 0) && zz.weekTargets[0] > 100);
+  el('newCycleName').value = 'Kopie'; el('copyFromCycle').value = zz.id; el('newCycleUnit').dataset.val = 'int';
+  createCycle();
+  eq('eine Kopie behält die Einheit des Originals', getActiveCycle().unit, 'min');
+  const geteiltMin = await decodePlan(await encodePlan(planFromCycle(zz, '', '')));
+  eq('geteilte Pläne nehmen die Einheit mit', geteiltMin.unit, 'min');
+  currentView = 'dashboard';
+  renderDashboard();
+  check('Übersicht beschriftet mit Trainingszeit und Minuten',
+    el('dashContent').innerHTML.includes('Trainingszeit (min)') && el('dashContent').innerHTML.includes('min Ziel'));
+  el('newCycleUnit').dataset.val = '';
+
+  // ═══════════════════════════════════════════════
+  group('Sehr lange und sehr kurze Zyklen');
+  // ═══════════════════════════════════════════════
+  const lang = { id: 'L', name: 'Jahr', startDate: toDateStr(new Date()), weeks: 52, weekTargets: Array(52).fill(5),
+    exercises: [], sessions: {}, notes: {} };
+  appData.cycles.push(lang); appData.activeCycleId = 'L';
+  showAllWeeks = false;
+  renderDashboard();
+  const html = el('dashContent').innerHTML;
+  check('langes Diagramm ist verschiebbar', html.includes('chart-scroll'));
+  eq('Wochenliste zeigt nur die Umgebung', (html.match(/class="week-row /g) || []).length, 5);
+  check('mit Knopf für alle Wochen', html.includes('Alle 52 Wochen anzeigen'));
+  showAllWeeks = true;
+  renderDashboard();
+  eq('auf Wunsch alle 52', (el('dashContent').innerHTML.match(/class="week-row /g) || []).length, 52);
+  showAllWeeks = false;
+  lang.weekTargets = [9, 10, 11, 6].concat(Array(48).fill(0));
+  repeatWeekTargets();
+  eq('Muster der ersten 4 Wochen über das Jahr', [lang.weekTargets[4], lang.weekTargets[7], lang.weekTargets[51]], [9, 6, 6]);
+  const kurz = { id: 'K', name: 'Kurz', startDate: toDateStr(new Date()), weeks: 1, weekTargets: [3],
+    exercises: [], sessions: {}, notes: {} };
+  appData.cycles.push(kurz); appData.activeCycleId = 'K';
+  renderDashboard();
+  const kh = el('dashContent').innerHTML;
+  check('eine Woche: kein verschiebbares Diagramm, sinnvolle Überschrift',
+    !kh.includes('chart-scroll') && kh.includes('Die Woche') && !kh.includes('Alle 1 Wochen'));
+  renderPlan();
+  check('Wochenziele als Raster, ohne Übertragen-Knopf', el('planContent').innerHTML.includes('target-grid') &&
+    !el('planContent').innerHTML.includes('repeatWeekTargets'));
 
   done();
 })();

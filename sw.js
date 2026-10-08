@@ -5,7 +5,7 @@
  * dieser Datei selbst erkennen alle Browser sicher als Update – deshalb steht
  * die Nummer hier noch einmal und wird nicht aus version.js geladen.
  */
-const VERSION = 'v16';
+const VERSION = 'v17';
 const CACHE = 'boulder-' + VERSION;
 
 /* Alles, was die App zum Starten braucht. Wird bei der Installation

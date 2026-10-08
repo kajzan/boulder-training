@@ -637,3 +637,35 @@ textarea { resize: vertical; font-size: 14px; line-height: 1.4; }
   .nav { z-index: 150; }
 }
 .pause-note { color: var(--accent); font-size: 12px; }
+
+/* Lange Zyklen: Diagramm seitlich verschiebbar */
+.chart-scroll {
+  overflow-x: auto; -webkit-overflow-scrolling: touch;
+  margin: 0 -16px; padding: 0 16px;
+  scrollbar-width: none;
+}
+.chart-scroll::-webkit-scrollbar { display: none; }
+.card .chart-scroll svg[viewBox] { max-width: none; margin: 0; }
+
+/* Wochenziele als kompaktes Raster */
+.target-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+@media (min-width: 700px) { .target-grid { grid-template-columns: repeat(6, 1fr); } }
+.target-cell {
+  background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 8px 8px 6px; display: flex; flex-direction: column; gap: 4px; min-width: 0;
+}
+.target-cell.current { border-color: var(--accent); }
+.target-cell .tc-week { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--text-muted); }
+.target-cell .tc-date { font-size: 10px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.target-cell input {
+  padding: 5px 6px; font-size: 15px; text-align: center;
+  font-family: 'DM Mono', monospace; background: var(--surface);
+}
+.target-cell.read { align-items: center; text-align: center; }
+.target-cell .tc-val { font-family: 'DM Mono', monospace; font-size: 13px; }
+.chart-wrap { position: relative; }
+.card .chart-wrap svg.chart-axis {
+  position: absolute; left: 0; top: 0; z-index: 1; margin: 0; max-width: none;
+  background: var(--surface);
+  box-shadow: -16px 0 0 var(--surface);   /* deckt auch den Kartenrand ab */
+}

@@ -158,6 +158,39 @@ function getEffectiveIntensity(cycle, entry) {
   return ex ? (parseFloat(ex.intensity) || 0) : 0;
 }
 
+// ── Einheit eines Zyklus ──
+// Gezählt wird wahlweise in Intensitätspunkten, Minuten oder Stunden. Die
+// Werte stehen immer im Feld "intensity" – nur Beschriftung, Schrittweite
+// und Toleranz hängen von der Einheit ab.
+const CYCLE_UNITS = {
+  int: { name: 'Intensität', title: 'Intensität', amount: 'Intensitätswert', target: 'Intensitätsziel pro Woche',
+         day: 'Tages-Intensität', short: '', step: 0.5, tol: 1, placeholder: 'z.B. 2' },
+  min: { name: 'Minuten', title: 'Trainingszeit', amount: 'Dauer in Minuten', target: 'Wochenziel in Minuten',
+         day: 'Trainingszeit', short: 'min', step: 5, tol: 15, placeholder: 'z.B. 60' },
+  h:   { name: 'Stunden', title: 'Trainingszeit', amount: 'Dauer in Stunden', target: 'Wochenziel in Stunden',
+         day: 'Trainingszeit', short: 'h', step: 0.25, tol: 0.25, placeholder: 'z.B. 1,5' }
+};
+
+function cycleUnit(cycle) {
+  return cycle && CYCLE_UNITS[cycle.unit] ? cycle.unit : 'int';
+}
+
+function unitInfo(cycle) {
+  return CYCLE_UNITS[cycleUnit(cycle)];
+}
+
+// Ein Wert mit Einheit: "9,5" bei Intensität, "90 min", "1,5 h"
+function fmtAmount(cycle, v) {
+  const u = unitInfo(cycle);
+  const n = fmtNum(Math.round((parseFloat(v) || 0) * 100) / 100);
+  return u.short ? n + ' ' + u.short : n;
+}
+
+// Der Wert einer Übung: "×3" bei Intensität, sonst "45 min"
+function fmtExAmount(cycle, v) {
+  return cycleUnit(cycle) === 'int' ? '×' + fmtNum(parseFloat(v) || 0) : fmtAmount(cycle, v);
+}
+
 // ── Categories ──
 const CATEGORY_PALETTE = [
   '#2ecc71', '#4a9eff', '#c8ff00', '#ff7eb3',
@@ -441,21 +474,23 @@ function getWeekIntensity(cycle, weekIndex) {
   return Math.round(total * 10) / 10;
 }
 
-function intensityClass(current, target) {
+// tol: wie weit Ist und Ziel auseinanderliegen dürfen und trotzdem als
+// erreicht gelten – 1 Punkt Intensität, aber 15 Minuten.
+function intensityClass(current, target, tol = 1) {
   if (target === 0) return 'int-blue';
   const diff = current - target;
   if (current === 0 && target > 0) return 'int-blue';
-  if (diff > 1) return 'int-red';
-  if (Math.abs(diff) <= 1) return 'int-green-dark';
-  if (current > 0 && diff < -1 && current >= target * 0.5) return 'int-green-light';
+  if (diff > tol) return 'int-red';
+  if (Math.abs(diff) <= tol) return 'int-green-dark';
+  if (current > 0 && diff < -tol && current >= target * 0.5) return 'int-green-light';
   return 'int-blue';
 }
 
-function intensityLabel(current, target) {
+function intensityLabel(current, target, tol = 1) {
   if (target === 0) return '–';
   const diff = current - target;
-  if (diff > 1) return '↑ überschritten';
-  if (Math.abs(diff) <= 1) return '✓ erreicht';
+  if (diff > tol) return '↑ überschritten';
+  if (Math.abs(diff) <= tol) return '✓ erreicht';
   // Schräg nach unten: der Wert liegt unter dem Ziel, wenn auch nur knapp.
   if (current > 0 && current >= target * 0.5) return '↘ fast erreicht';
   return '↓ noch offen';
@@ -529,8 +564,12 @@ function renderIntensityChart(cycle) {
   const niceMax = Math.ceil(rawMax / step) * step;
   const numSteps = Math.round(niceMax / step);
 
-  // SVG dimensions
-  const w = 320, h = 180;
+  // SVG dimensions. Ab 17 Wochen wird das Diagramm breiter als der
+  // Bildschirm und lässt sich seitlich schieben – sonst wären die Balken
+  // fadendünn und nicht mehr antippbar.
+  const PX_PER_WEEK = 20;
+  const scroll = W > 16;
+  const w = scroll ? 28 + 12 + W * PX_PER_WEEK : 320, h = 180;
   const padL = 28, padR = 12, padT = 16, padB = 30;
   const chartW = w - padL - padR;
   const chartH = h - padT - padB;
@@ -547,15 +586,16 @@ function renderIntensityChart(cycle) {
 
   // Y axis grid + labels
   const gridLines = [];
+  const yLabels = [];   // beim Verschieben links festgehalten, siehe unten
   for (let g = 0; g <= numSteps; g++) {
     const yVal = step * g;
     const yPx = yFor(yVal);
     gridLines.push(`<line x1="${padL}" y1="${yPx}" x2="${w-padR}" y2="${yPx}" stroke="var(--border)" stroke-width="0.5"/>`);
-    gridLines.push(`<text x="${padL - 4}" y="${yPx + 3}" font-size="9" fill="var(--text-dim)" text-anchor="end" font-family="DM Mono, monospace">${fmtY(yVal)}</text>`);
+    yLabels.push(`<text x="${padL - 4}" y="${yPx + 3}" font-size="9" fill="var(--text-dim)" text-anchor="end" font-family="DM Mono, monospace">${fmtY(yVal)}</text>`);
   }
 
   // X axis labels: even numbers with sensible spacing
-  const labelStep = W <= 1 ? 1 : W <= 12 ? 2 : W <= 24 ? 4 : W <= 48 ? 8 : 10;
+  const labelStep = W <= 1 ? 1 : (W <= 12 || scroll) ? 2 : 4;
   const xLabels = [];
   if (W === 1) {
     xLabels.push(`<text x="${xFor(0)}" y="${h - 14}" font-size="9" fill="var(--text-dim)" text-anchor="middle" font-family="DM Mono, monospace">1</text>`);
@@ -628,9 +668,13 @@ function renderIntensityChart(cycle) {
 
   return `
     <div class="card">
-      <div class="card-title">Intensitätsverlauf</div>
-      <svg id="${chartId}" viewBox="0 0 ${w} ${h}" style="width:100%;height:auto;display:block" preserveAspectRatio="xMidYMid meet">
+      <div class="card-title">${cycleUnit(cycle) === 'int' ? 'Intensitätsverlauf' : `Trainingszeit (${unitInfo(cycle).short})`}</div>
+      ${scroll ? `<div class="chart-wrap">
+        <svg class="chart-axis" viewBox="0 0 ${padL} ${h}" style="width:${Math.round(padL * 1.1)}px;height:auto">${yLabels.join('')}</svg>
+        <div class="chart-scroll" data-focus="${(xFor(currentWeek) / w).toFixed(3)}">` : ''}
+      <svg id="${chartId}" viewBox="0 0 ${w} ${h}" style="${scroll ? `width:${Math.round(w * 1.1)}px;max-width:none` : 'width:100%'};height:auto;display:block" preserveAspectRatio="xMidYMid meet">
         ${gridLines.join('')}
+        ${scroll ? '' : yLabels.join('')}
         ${currentMarker}
         ${bars.join('')}
         <path d="${targetPath}" stroke="var(--accent)" stroke-width="1.5" fill="none" stroke-dasharray="4,3" opacity="0.95"/>
@@ -639,6 +683,7 @@ function renderIntensityChart(cycle) {
         ${touchTargets.join('')}
         ${tipGroup}
       </svg>
+      ${scroll ? '</div></div>' : ''}
       <div style="display:flex;gap:10px 14px;font-size:11px;margin-top:6px;justify-content:center;flex-wrap:wrap">
         ${targetLegend}
         ${legendCats}
@@ -668,7 +713,8 @@ function showChartTooltip(el, id) {
   const ta  = document.getElementById(id + '_ta');
   const tt  = document.getElementById(id + '_tt');
   const TW = 72, TH = 30, P = 5;
-  const tx = Math.max(P, Math.min(320 - TW - P, cx - TW / 2));
+  const svgW = parseFloat((document.getElementById(id).getAttribute('viewBox') || '0 0 320').split(' ')[2]) || 320;
+  const tx = Math.max(P, Math.min(svgW - TW - P, cx - TW / 2));
   const ty = Math.max(P, ty0 - TH - 6);
   bg.setAttribute('x', tx); bg.setAttribute('y', ty);
   ta.textContent = 'Ist:  ' + fmt(act);
@@ -713,7 +759,8 @@ function renderDashboard() {
   const weekDays = getWeekDates(cycle, weekIdx);
   const weekInt = getWeekIntensity(cycle, weekIdx);
   const target = cycle.weekTargets[weekIdx] || 0;
-  const iClass = intensityClass(weekInt, target);
+  const unit = unitInfo(cycle);
+  const iClass = intensityClass(weekInt, target, unit.tol);
   const today = toDateStr(new Date());
   const paused = isCyclePaused(cycle);
 
@@ -760,11 +807,11 @@ function renderDashboard() {
     <div class="section-hdr"><h2>Diese Woche</h2>${weekHdrRight}</div>
 
     <div class="card mb-0">
-      <div class="card-title">Woche ${weekIdx+1} von ${totalWeeks} · Intensität</div>
+      <div class="card-title">Woche ${weekIdx+1} von ${totalWeeks} · ${unit.title}</div>
       <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:6px">
-        <span style="font-family:'DM Mono',monospace;font-size:32px;color:var(--accent)">${weekInt}</span>
-        <span class="text-muted">/ ${target} Ziel</span>
-        <span class="intensity-badge ${iClass}" style="margin-left:auto">${intensityLabel(weekInt, target)}</span>
+        <span style="font-family:'DM Mono',monospace;font-size:32px;color:var(--accent)">${fmtNum(weekInt)}</span>
+        <span class="text-muted">/ ${fmtAmount(cycle, target)} Ziel</span>
+        <span class="intensity-badge ${iClass}" style="margin-left:auto">${intensityLabel(weekInt, target, unit.tol)}</span>
       </div>
       <div class="progress-bar-wrap">
         <div class="progress-bar-fill" style="width:${pct}%;background:${barColor}"></div>
@@ -808,29 +855,57 @@ function renderDashboard() {
     </div>
     `}
 
-    <div class="section-hdr"><h2>Alle ${totalWeeks} Wochen</h2></div>
-    ${Array.from({length: totalWeeks}, (_,i) => {
-      const wint = getWeekIntensity(cycle, i);
-      const wtgt = cycle.weekTargets[i] || 0;
-      const wc = intensityClass(wint, wtgt);
-      const wd = getWeekDates(cycle, i);
-      const isCurrent = i === weekIdx && !paused;
-      // Pausentage seit dem Ende der Vorwoche bis zum Ende dieser Woche
-      const gap = pausedDaysBetween(cycle, i > 0 ? addDays(getWeekDates(cycle, i - 1)[6], 1) : cycle.startDate, wd[6]);
-      return `<div class="week-row ${isCurrent ? 'current-week' : ''}" onclick="openWeekModal(${i})">
-        <div class="week-row-left">
-          <div class="week-row-num">Woche ${i+1}${isCurrent ? ' · Aktuell' : ''}</div>
-          <div class="week-row-date">${formatDateRange(wd[0], wd[6])}${gap ? ` <span class="pause-note">· ${gap} ${gap === 1 ? 'Tag' : 'Tage'} Pause</span>` : ''}</div>
-        </div>
-        <div style="display:flex;align-items:center;gap:8px">
-          <span style="font-family:'DM Mono',monospace;font-size:14px;color:var(--text-muted)">${wint}/${wtgt}</span>
-          <span class="intensity-badge ${wc}" style="font-size:11px;padding:3px 8px">${
-            wc==='int-blue'?'↓':wc==='int-green-light'?'↘':wc==='int-green-dark'?'✓':'↑'
-          }</span>
-        </div>
-      </div>`;
-    }).join('')}
+    ${renderWeekList(cycle, weekIdx, paused)}
   `;
+  focusChartScroll(el);
+}
+
+// Langes Diagramm so schieben, dass die aktuelle Woche in der Mitte steht
+function focusChartScroll(root) {
+  const box = root && root.querySelector && root.querySelector('.chart-scroll');
+  if (!box) return;
+  const f = parseFloat(box.dataset.focus) || 0;
+  box.scrollLeft = Math.max(0, f * box.scrollWidth - box.clientWidth / 2);
+}
+
+// Liste aller Wochen. Bei langen Zyklen nur die Umgebung der aktuellen
+// Woche, der Rest auf Wunsch – 52 Zeilen will niemand durchscrollen.
+const WEEK_LIST_SHORT = 8;
+let showAllWeeks = false;
+
+function renderWeekList(cycle, weekIdx, paused) {
+  const total = cycle.weeks || 12;
+  const unit = unitInfo(cycle);
+  const long = total > WEEK_LIST_SHORT;
+  const from = long && !showAllWeeks ? Math.max(0, Math.min(weekIdx - 1, total - 5)) : 0;
+  const to = long && !showAllWeeks ? Math.min(total, from + 5) : total;
+  const rows = [];
+  for (let i = from; i < to; i++) {
+    const wint = getWeekIntensity(cycle, i);
+    const wtgt = cycle.weekTargets[i] || 0;
+    const wc = intensityClass(wint, wtgt, unit.tol);
+    const wd = getWeekDates(cycle, i);
+    const isCurrent = i === weekIdx && !paused;
+    // Pausentage seit dem Ende der Vorwoche bis zum Ende dieser Woche
+    const gap = pausedDaysBetween(cycle, i > 0 ? addDays(getWeekDates(cycle, i - 1)[6], 1) : cycle.startDate, wd[6]);
+    rows.push(`<div class="week-row ${isCurrent ? 'current-week' : ''}" onclick="openWeekModal(${i})">
+      <div class="week-row-left">
+        <div class="week-row-num">Woche ${i+1}${isCurrent ? ' · Aktuell' : ''}</div>
+        <div class="week-row-date">${formatDateRange(wd[0], wd[6])}${gap ? ` <span class="pause-note">· ${gap} ${gap === 1 ? 'Tag' : 'Tage'} Pause</span>` : ''}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-family:'DM Mono',monospace;font-size:14px;color:var(--text-muted)">${fmtNum(wint)}/${fmtAmount(cycle, wtgt)}</span>
+        <span class="intensity-badge ${wc}" style="font-size:11px;padding:3px 8px">${
+          wc==='int-blue'?'↓':wc==='int-green-light'?'↘':wc==='int-green-dark'?'✓':'↑'
+        }</span>
+      </div>
+    </div>`);
+  }
+  return `
+    <div class="section-hdr"><h2>${total === 1 ? 'Die Woche' : `Alle ${total} Wochen`}</h2>
+      ${long ? `<span class="text-muted" style="font-size:12px">${showAllWeeks ? '' : `${from + 1}–${to} von ${total}`}</span>` : ''}</div>
+    ${rows.join('')}
+    ${long ? `<button class="btn btn-ghost btn-full btn-sm" style="margin-bottom:8px" onclick="showAllWeeks=!showAllWeeks;renderDashboard()">${showAllWeeks ? 'Weniger anzeigen' : `Alle ${total} Wochen anzeigen`}</button>` : ''}`;
 }
 
 const PAUSE_ICON = '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.2"/><rect x="14" y="5" width="4" height="14" rx="1.2"/></svg>';
@@ -972,17 +1047,17 @@ function buildDayModalContent(dateStr, returnToWeek) {
               <div class="check-label" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(ex.name)}</div>
               <div style="font-size:11px;color:var(--text-muted);font-family:'DM Mono',monospace;display:flex;align-items:center;gap:5px;flex-wrap:wrap">
                 ${cats.length ? `<span style="font-family:'DM Sans',sans-serif;display:inline-flex;gap:5px">${catLabelsHtml(cats, allCats, 13)}</span><span style="color:var(--text-dim)">·</span>` : ''}
-                <span>Std: ${ex.intensity}</span>
+                <span>Plan: ${fmtAmount(cycle, ex.intensity)}</span>
                 ${ov !== null ? `<span style="color:var(--accent)">→ ${ov}</span>` : ''}
               </div>
             </div>
           </div>
           ${checked ? `
-            <input type="number" step="0.5" min="0" value="${inputVal}"
+            <input type="number" step="${unitInfo(cycle).step}" min="0" value="${inputVal}"
               onchange="setOverride('${dateStr}','${ex.id}', this.value)"
               onclick="event.stopPropagation()"
               style="width:62px;text-align:right;padding:6px 8px;font-size:14px;flex-shrink:0"
-              title="Intensität für diese Einheit anpassen">
+              title="Wert für diese Einheit anpassen">
           ` : ''}
         </div>
         ${checked && ex.measure ? `
@@ -1010,8 +1085,8 @@ function buildDayModalContent(dateStr, returnToWeek) {
   return `
     <div class="modal-title">${title}</div>
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">
-      <span class="text-muted">Tages-Intensität:</span>
-      <span id="dayIntDisplay" style="font-family:'DM Mono',monospace;font-size:18px;color:var(--accent)">${Math.round(dayInt*10)/10}</span>
+      <span class="text-muted">${unitInfo(cycle).day}:</span>
+      <span id="dayIntDisplay" style="font-family:'DM Mono',monospace;font-size:18px;color:var(--accent)">${fmtAmount(cycle, dayInt)}</span>
     </div>
     ${exList}
     <div class="divider"></div>
@@ -1054,7 +1129,7 @@ function setOverride(dateStr, exId, value) {
   // Update just the day-total display (avoid full rerender to keep input focus stable)
   const dayInt = cycle.sessions[dateStr].reduce((s, e) => s + getEffectiveIntensity(cycle, e), 0);
   const totalEl = document.getElementById('dayIntDisplay');
-  if (totalEl) totalEl.textContent = Math.round(dayInt * 10) / 10;
+  if (totalEl) totalEl.textContent = fmtAmount(cycle, dayInt);
   if (currentView === 'dashboard') renderDashboard();
 }
 
@@ -1119,14 +1194,15 @@ function openWeekModal(weekIdx) {
   const days = getWeekDates(cycle, weekIdx);
   const target = cycle.weekTargets[weekIdx] || 0;
   const wInt = getWeekIntensity(cycle, weekIdx);
-  const iClass = intensityClass(wInt, target);
+  const tol = unitInfo(cycle).tol;
+  const iClass = intensityClass(wInt, target, tol);
   const allCats = getAllCategoriesInCycle(cycle);
 
   const content = `
     <div class="modal-title">Woche ${weekIdx+1}</div>
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
-      <span class="intensity-badge ${iClass}">${wInt} / ${target}</span>
-      <span class="text-muted">${intensityLabel(wInt, target)}</span>
+      <span class="intensity-badge ${iClass}">${fmtNum(wInt)} / ${fmtAmount(cycle, target)}</span>
+      <span class="text-muted">${intensityLabel(wInt, target, tol)}</span>
     </div>
     <div style="margin-bottom:8px"><span class="text-muted">${formatDateRange(days[0], days[6])}</span></div>
     <div style="font-size:11px;color:var(--text-dim);margin-bottom:12px">Tippe auf einen Tag, um Übungen einzutragen oder zu bearbeiten.</div>
@@ -1140,7 +1216,7 @@ function openWeekModal(weekIdx) {
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:${entries.length>0?'6px':'0'}">
           <strong style="font-size:13px">${DAYS_FULL[dow]}, ${d.getDate()}. ${MONTHS_DE[d.getMonth()]}</strong>
           <span style="font-family:'DM Mono',monospace;font-size:12px;color:${entries.length>0?'var(--accent)':'var(--text-dim)'}">
-            ${entries.length > 0 ? Math.round(dayInt*10)/10 : '+ eintragen'}
+            ${entries.length > 0 ? fmtAmount(cycle, dayInt) : '+ eintragen'}
           </span>
         </div>
         ${entries.length === 0
@@ -1157,7 +1233,7 @@ function openWeekModal(weekIdx) {
                   <span>${esc(ex.name)}${formatMeasure(ex, entry) ? ` <span style="color:var(--text-dim)">· ${esc(formatMeasure(ex, entry))}</span>` : ''}</span>
                 </span>
                 <span style="font-family:'DM Mono',monospace;color:var(--text-muted)">
-                  ${ov !== null ? `<span style="color:var(--accent)">${eff}</span> <span style="color:var(--text-dim);font-size:10px">(Std: ${ex.intensity})</span>` : eff}
+                  ${ov !== null ? `<span style="color:var(--accent)">${fmtNum(eff)}</span> <span style="color:var(--text-dim);font-size:10px">(Plan: ${fmtNum(ex.intensity)})</span>` : fmtAmount(cycle, eff)}
                 </span>
               </div>`;
             }).join('')
@@ -1232,7 +1308,7 @@ function renderPlan() {
                 </div>
                 ${ex.desc ? `<div class="ex-desc">${esc(ex.desc)}</div>` : ''}
               </div>
-              <div class="exercise-int">×${ex.intensity}</div>
+              <div class="exercise-int">${fmtExAmount(cycle, ex.intensity)}</div>
               <button class="del-btn" onclick="event.stopPropagation(); deleteExercise('${ex.id}')">×</button>
             </div>
           `}).join('') + `</div>`;
@@ -1244,21 +1320,19 @@ function renderPlan() {
 
     <div class="divider"></div>
     <div class="section-hdr"><h2>Wochenziele</h2></div>
-    <div class="card-title">Intensitätsziel pro Woche (1–${cycle.weeks || 12})</div>
-    ${Array.from({length: cycle.weeks || 12}, (_,i) => {
-      const wd = getWeekDates(cycle, i);
-      return `
-      <div class="exercise-item" style="padding:10px 14px">
-        <div style="flex:1">
-          <div style="font-size:13px">Woche ${i+1}</div>
-          <div style="font-size:11px;color:var(--text-muted);margin-top:2px">${formatDateRange(wd[0], wd[6])}</div>
-        </div>
-        <input type="number" step="0.5" min="0"
-          style="width:80px;text-align:right;padding:6px 10px"
-          value="${cycle.weekTargets[i] || 0}"
-          onchange="updateWeekTarget(${i}, this.value)">
-      </div>
-    `}).join('')}
+    <div class="card-title">${unitInfo(cycle).target}</div>
+    <div class="target-grid">
+      ${Array.from({length: cycle.weeks || 12}, (_,i) => {
+        const wd = getWeekDates(cycle, i);
+        return `<label class="target-cell ${i === getCurrentWeekIndex(cycle) ? 'current' : ''}">
+          <span class="tc-week">W${i+1}</span>
+          <input type="number" inputmode="decimal" step="${unitInfo(cycle).step}" min="0"
+            value="${cycle.weekTargets[i] || 0}" onchange="updateWeekTarget(${i}, this.value)">
+          <span class="tc-date">${formatDay(wd[0])}</span>
+        </label>`;
+      }).join('')}
+    </div>
+    ${(cycle.weeks || 12) > 4 ? `<button class="btn btn-ghost btn-full btn-sm" style="margin-top:10px" onclick="repeatWeekTargets()">Woche 1–4 auf alle Wochen übertragen</button>` : ''}
 
     ${cycle.exercises.length ? `
     <div class="list-group" style="margin-top:20px">
@@ -1292,11 +1366,11 @@ function exerciseFormHtml(p, ex) {
         oninput="refreshCategoryChips('${p}Cat', true)">
       ${datalist}
       ${buildCategoryChips(p + 'Cat', true)}
-      <div style="font-size:11px;color:var(--text-dim);margin-top:6px">Mehrere durch Komma trennen. Die Intensität wird gleichmäßig auf sie aufgeteilt.</div>
+      <div style="font-size:11px;color:var(--text-dim);margin-top:6px">Mehrere durch Komma trennen. Der Wert wird gleichmäßig auf sie aufgeteilt.</div>
     </div>
     <div class="field">
-      <label>Intensitätswert</label>
-      <input type="number" id="${p}Int" step="0.5" min="0" value="${ex ? ex.intensity : ''}" placeholder="z.B. 2">
+      <label>${unitInfo(cycle).amount}</label>
+      <input type="number" id="${p}Int" step="${unitInfo(cycle).step}" min="0" value="${ex ? ex.intensity : ''}" placeholder="${unitInfo(cycle).placeholder}">
     </div>
     ${isPlanMode(cycle) ? `
     <div class="field">
@@ -1325,7 +1399,7 @@ function readExerciseForm(p) {
   const name = document.getElementById(p + 'Name')?.value?.trim();
   const intensity = parseFloat(document.getElementById(p + 'Int')?.value);
   if (!name || isNaN(intensity) || intensity < 0) {
-    alert('Bitte Name und gültigen Intensitätswert eingeben.');
+    alert('Bitte Name und einen gültigen Wert eingeben.');
     return null;
   }
   const out = {
@@ -1550,6 +1624,18 @@ function reorderExercises(ids) {
   saveData();
 }
 
+// Lange Zyklen: das Muster der ersten vier Wochen (z.B. 3 + 1) fortsetzen
+function repeatWeekTargets() {
+  const cycle = getActiveCycle();
+  if (!cycle) return;
+  const n = cycle.weeks || 12;
+  if (!confirm(`Die Ziele von Woche 1–4 auf alle ${n} Wochen übertragen? Spätere Ziele werden überschrieben.`)) return;
+  const muster = cycle.weekTargets.slice(0, 4);
+  cycle.weekTargets = Array.from({ length: n }, (_, i) => muster[i % 4] || 0);
+  saveData();
+  renderPlan();
+}
+
 function updateWeekTarget(weekIdx, val) {
   const cycle = getActiveCycle();
   cycle.weekTargets[weekIdx] = parseFloat(val) || 0;
@@ -1600,7 +1686,7 @@ function renderHistory() {
         </div>
         <div class="cycle-dates">${formatDateRange(cycle.startDate, toDateStr(endDate))} · ${wks} Wochen</div>
         <div style="display:flex;gap:16px;margin-top:8px;flex-wrap:wrap">
-          <span class="text-muted">${Math.round(totalInt*10)/10} Gesamt-Int.</span>
+          <span class="text-muted">${cycleUnit(cycle) === 'int' ? fmtNum(Math.round(totalInt*10)/10) + ' Gesamt-Int.' : fmtAmount(cycle, totalInt) + ' gesamt'}</span>
           <span class="text-muted">${sessionDays} Trainingstage</span>
           <span class="text-muted">${completedExercises} Übungen absolviert</span>
           ${pctStr ? `<span class="text-muted">${pctStr} erreicht</span>` : ''}
@@ -1617,18 +1703,19 @@ function openCycleDetail(cycleId) {
     <div class="modal-title">${esc(cycle.name)}</div>
     <div class="text-muted" style="margin-bottom:16px">Gestartet: ${parseDate(cycle.startDate).toLocaleDateString('de-DE')}</div>
 
-    <div class="card-title">Wochenübersicht</div>
-    ${Array.from({length: cycle.weeks || 12}, (_,i) => {
-      const wint = getWeekIntensity(cycle, i);
-      const wtgt = cycle.weekTargets[i] || 0;
-      const wc = intensityClass(wint, wtgt);
-      const days = getWeekDates(cycle, i);
-      return `<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">
-        <span style="font-size:13px">Woche ${i+1}</span>
-        <span style="font-size:12px;color:var(--text-muted)">${formatDateRange(days[0],days[6])}</span>
-        <span class="intensity-badge ${wc}" style="font-size:11px;padding:2px 8px">${wint}/${wtgt}</span>
-      </div>`;
-    }).join('')}
+    <div class="card-title">Wochenübersicht · ${unitInfo(cycle).title}</div>
+    <div class="target-grid">
+      ${Array.from({length: cycle.weeks || 12}, (_,i) => {
+        const wint = getWeekIntensity(cycle, i);
+        const wtgt = cycle.weekTargets[i] || 0;
+        const wc = intensityClass(wint, wtgt, unitInfo(cycle).tol);
+        return `<div class="target-cell read">
+          <span class="tc-week">W${i+1}</span>
+          <span class="tc-val intensity-badge ${wc}" style="padding:2px 6px;font-size:12px">${fmtNum(wint)}/${fmtNum(wtgt)}</span>
+          <span class="tc-date">${formatDay(getWeekDates(cycle, i)[0])}</span>
+        </div>`;
+      }).join('')}
+    </div>
 
     <div class="divider"></div>
     <div class="card-title">Übungen in diesem Zyklus</div>
@@ -1641,7 +1728,7 @@ function openCycleDetail(cycleId) {
             ${catDotsHtml(cats, allCats, 12)}
             <span>${esc(ex.name)}${cats.length ? ` <span style="color:var(--text-dim);font-size:11px">· ${esc(cats.join(', '))}</span>` : ''}</span>
           </span>
-          <span style="font-family:'DM Mono',monospace;font-size:13px;color:var(--accent)">×${ex.intensity}</span>
+          <span style="font-family:'DM Mono',monospace;font-size:13px;color:var(--accent)">${fmtExAmount(cycle, ex.intensity)}</span>
         </div>`;
       }).join('');
     })()}
@@ -1985,6 +2072,12 @@ function openNewCycleModal(mode) {
       </select>
     </div>
     <div class="field">
+      <label>Gezählt wird in</label>
+      <div class="seg" id="newCycleUnit" data-val="${cycleUnit(active)}">
+        ${Object.keys(CYCLE_UNITS).map(k => `<button type="button" data-v="${k}" class="${k === cycleUnit(active) ? 'on' : ''}" onclick="pickSeg('newCycleUnit','${k}')">${CYCLE_UNITS[k].name}</button>`).join('')}
+      </div>
+    </div>
+    <div class="field">
       <label>Start mit</label>
       <select id="copyFromCycle" onchange="onCopySelect(true)">
         <option value="">Leer</option>
@@ -2021,10 +2114,18 @@ function getTemplate(value) {
 
 // Wochenziele einer Vorlage: geplante Wochenintensität im Rhythmus 3 + 1 –
 // drei steigende Wochen, dann eine Entlastungswoche mit gut der Hälfte.
-function templateTargets(tpl, weeks) {
-  const base = tpl.exercises.reduce((s, ex) => s + ex.intensity * ex.days.length, 0);
+function templateTargets(tpl, weeks, unit = 'int') {
+  const base = tpl.exercises.reduce((s, ex) => s + templateAmount(ex, unit) * ex.days.length, 0);
   const pattern = [0.9, 1, 1.1, 0.6];
-  return Array.from({ length: weeks }, (_, i) => Math.round(base * pattern[i % 4] * 2) / 2);
+  const round = unit === 'min' ? 5 : unit === 'h' ? 0.25 : 0.5;
+  return Array.from({ length: weeks }, (_, i) => Math.round(base * pattern[i % 4] / round) * round);
+}
+
+// Wert einer Vorlagen-Übung in der gewählten Einheit
+function templateAmount(ex, unit) {
+  if (unit === 'min') return ex.minutes || 0;
+  if (unit === 'h') return Math.round((ex.minutes || 0) / 60 * 4) / 4;
+  return ex.intensity;
 }
 
 // changed: true, wenn die Auswahl gerade geändert wurde (dann Wochenzahl und
@@ -2041,11 +2142,13 @@ function onCopySelect(changed) {
     if (modeSel) modeSel.value = 'plan';
   }
   if (changed && src && wInput) wInput.value = src.weeks || 12;
+  // Die Werte einer Kopie stehen in der Einheit des Originals
+  if (changed && src) pickSeg('newCycleUnit', cycleUnit(src));
   if (!info) return;
   if (tpl) {
     info.innerHTML = `${esc(tpl.level)}<br>${tpl.exercises.length} Übungen, Entlastungswoche jede 4. Woche. Ein Vorschlag – alles lässt sich danach anpassen.`;
   } else if (src) {
-    info.textContent = 'Übungen, Trainingstage, Wochenziele und Wochenanzahl werden übernommen.';
+    info.textContent = `Übungen, Trainingstage, Wochenziele und Wochenanzahl werden übernommen. Gezählt wird wie dort in ${unitInfo(src).name}.`;
   } else {
     info.textContent = '';
   }
@@ -2063,14 +2166,18 @@ function createCycle() {
   const cycle = getDefaultCycle(name, weeks);
   if (date) cycle.startDate = date;
   if (mode === 'plan') cycle.mode = 'plan';
+  const unit = document.getElementById('newCycleUnit')?.dataset?.val;
+  if (unit && unit !== 'int' && CYCLE_UNITS[unit]) cycle.unit = unit;
 
   if (tpl) {
-    cycle.exercises = tpl.exercises.map(cloneExercise);
-    cycle.weekTargets = templateTargets(tpl, weeks);
+    cycle.exercises = tpl.exercises.map(ex => cloneExercise(Object.assign({}, ex, { intensity: templateAmount(ex, cycleUnit(cycle)) })));
+    cycle.weekTargets = templateTargets(tpl, weeks, cycleUnit(cycle));
   } else if (copyFromId) {
     const src = appData.cycles.find(c => c.id === copyFromId);
     if (src) {
       cycle.exercises = src.exercises.map(cloneExercise);
+      // Die Werte sind in der Einheit des Originals
+      if (cycleUnit(src) !== 'int') cycle.unit = cycleUnit(src); else delete cycle.unit;
       // Copy week targets, truncating or padding as needed
       const srcTargets = src.weekTargets || [];
       cycle.weekTargets = Array(weeks).fill(0).map((_, i) => srcTargets[i] || 0);
@@ -2255,6 +2362,7 @@ function planFromCycle(cycle, author, note) {
   const plan = {
     v: 1,
     name: cycle.name,
+    unit: cycleUnit(cycle),
     weeks,
     weekTargets: (cycle.weekTargets || []).slice(0, weeks),
     exercises: cycle.exercises.map(ex => {
@@ -2297,6 +2405,7 @@ function validatePlan(p) {
   const plan = {
     v: 1,
     name: str(p.name, L.name) || 'Trainingsplan',
+    unit: CYCLE_UNITS[p.unit] ? p.unit : 'int',
     weeks,
     weekTargets: Array.from({ length: weeks }, (_, i) => num(Array.isArray(p.weekTargets) ? p.weekTargets[i] : 0)),
     exercises
@@ -2440,7 +2549,7 @@ function openPlanPreview(plan, fromLink) {
   }).join('');
   openModal(`
     <div class="modal-title" style="margin-bottom:4px">${esc(plan.name)}</div>
-    <div class="text-muted" style="margin-bottom:14px">${plan.author ? 'von ' + esc(plan.author) + ' · ' : ''}${plan.weeks} Wochen · ${plan.exercises.length} Übungen</div>
+    <div class="text-muted" style="margin-bottom:14px">${plan.author ? 'von ' + esc(plan.author) + ' · ' : ''}${plan.weeks} ${plan.weeks === 1 ? 'Woche' : 'Wochen'} · ${plan.exercises.length} Übungen · in ${unitInfo(plan).name}</div>
     ${fromLink && ios && !standalone ? `
       <div class="sheet-notice" style="line-height:1.5">Nutzt du die App vom Home-Bildschirm? Dann kopiere den Link und füge ihn dort unter Einstellungen → Plan importieren ein.
         <button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="navigator.clipboard.writeText(location.href.split('#')[0] + '#plan=' + (window.__planCode || ''));this.textContent='Kopiert'">Link kopieren</button>
@@ -2453,7 +2562,7 @@ function openPlanPreview(plan, fromLink) {
           <div class="list-title">${esc(ex.name)}</div>
           ${ex.desc ? `<div class="list-sub" style="display:block;line-height:1.4">${esc(ex.desc)}</div>` : ''}
         </div>
-        <span class="exercise-int" style="margin:2px 0 0">×${fmtNum(ex.intensity)}</span>
+        <span class="exercise-int" style="margin:2px 0 0">${fmtExAmount(plan, ex.intensity)}</span>
       </div>`).join('')}
     </div>
     <div class="field"><label>Start am</label><input type="date" id="planStart" value="${toDateStr(new Date())}"></div>
@@ -2469,6 +2578,7 @@ function startImportedPlan() {
   const start = document.getElementById('planStart')?.value;
   if (start) cycle.startDate = start;
   if (plan.exercises.some(ex => (ex.days || []).length)) cycle.mode = 'plan';
+  if (plan.unit && plan.unit !== 'int') cycle.unit = plan.unit;
   cycle.exercises = plan.exercises.map(cloneExercise);
   cycle.weekTargets = plan.weekTargets.slice(0, cycle.weeks);
   if (plan.author) cycle.planAuthor = plan.author;

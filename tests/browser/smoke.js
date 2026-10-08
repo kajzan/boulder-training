@@ -251,6 +251,26 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
   await ip.screenshot({ path: path.join(__dirname, 'shot-iphone-einstellungen.png') });
   await iphone.close();
 
+  // Langer Zyklus in Minuten: Diagramm verschiebbar, auf die aktuelle Woche gerichtet
+  const vorherAktiv = await page.evaluate(() => getAppData().activeCycleId);
+  await page.evaluate(() => {
+    const c = getDefaultCycle('Jahresplan', 52);
+    c.unit = 'min';
+    c.startDate = addDays(toDateStr(new Date()), -7 * 30);
+    c.weekTargets = Array.from({ length: 52 }, (_, i) => [240, 270, 300, 150][i % 4]);
+    c.exercises = [{ id: 'm1', name: 'Bouldern', categories: ['Kraft'], intensity: 90 }];
+    for (let i = 0; i < 30 * 7; i += 2) c.sessions[addDays(c.startDate, i)] = [{ exId: 'm1' }];
+    getAppData().cycles.push(c); getAppData().activeCycleId = c.id; saveData(); render();
+  });
+  await page.click('.tab-btn:nth-child(1)');
+  await page.waitForTimeout(300);
+  const sl = await page.evaluate(() => document.querySelector('.chart-scroll').scrollLeft);
+  ok('langes Diagramm steht bei der aktuellen Woche', sl > 200, String(sl));
+  await page.screenshot({ path: path.join(__dirname, 'shot-lang.png'), fullPage: true });
+  await page.click('.tab-btn:nth-child(2)');
+  await page.screenshot({ path: path.join(__dirname, 'shot-lang-plan.png'), fullPage: true });
+  await page.evaluate(id => { const d = getAppData(); d.cycles.pop(); d.activeCycleId = id; saveData(); render(); }, vorherAktiv);
+
   // Grosse Bildschirme: PC mit Seitenleiste, iPad mit zentrierten Dialogen
   for (const [name, vp, ua] of [
     ['pc', { width: 1280, height: 800 }, null],
