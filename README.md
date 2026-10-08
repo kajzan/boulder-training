@@ -13,6 +13,7 @@ Konto werden sie zusätzlich zwischen Geräten abgeglichen (siehe unten).
 | `styles.css` | Gestaltung |
 | `app.js` | die gesamte Logik |
 | `templates.js` | Vorlagen für den Wochenplan – hier lassen sich die Pläne anpassen |
+| `planning.js` | Planung: Wochen, ihre Zuordnung zu Zykluswochen und das Repertoire |
 | `sync.js` | Abgleich-Modell: zerlegt die Daten in Einträge und führt Stände zusammen |
 | `cloud.js` | Konto und Synchronisation über Firebase |
 | `vendor/firebase.js` | Firebase-Bibliothek, gebündelt und lokal statt vom Google-Server |

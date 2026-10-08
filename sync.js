@@ -18,13 +18,14 @@
  *   test:<test>
  *   assessment:<messung>
  *   ascent:<jahr>:<eintrag>     (Logbuch; das Jahr bestimmt die Ablage)
+ *   libweek:<woche>             (Repertoire gespeicherter Wochen)
  *
  * Neue Felder auf oberster Ebene von appData müssen hier ergänzt werden,
  * sonst gehen sie beim Abgleich verloren. Der Hin-und-zurück-Test in
  * tests/run.js schlägt dann an.
  */
 
-const SYNC_TYPES = new Set(['settings', 'cycle', 'exercise', 'entry', 'test', 'assessment', 'ascent']);
+const SYNC_TYPES = new Set(['settings', 'cycle', 'exercise', 'entry', 'test', 'assessment', 'ascent', 'libweek']);
 
 // IDs werden kodiert eingesetzt: Ein ':' oder '/' in eingelesenen Altdaten
 // könnte sonst Schlüssel vermischen oder in Firestore einen Pfad aufspalten.
@@ -98,6 +99,7 @@ function toDocs(data) {
   (data.ascents || []).forEach(a => {
     docs[syncKey('ascent', ascentYear(a), a.id)] = syncClean(a);
   });
+  (data.weekLibrary || []).forEach(w => { docs[syncKey('libweek', w.id)] = syncClean(w); });
   return docs;
 }
 
@@ -117,7 +119,7 @@ function ascentYear(a) {
 // während hier offline eine Übung dazukam) fallen weg. Beim nächsten
 // Abgleich werden sie dadurch auch aus dem Speicher entfernt.
 function fromDocs(docs) {
-  const data = { cycles: [], activeCycleId: null, tests: [], assessments: [], ascents: [] };
+  const data = { cycles: [], activeCycleId: null, tests: [], assessments: [], ascents: [], weekLibrary: [] };
   const cycles = [];
   const exercisesByCycle = new Map();
   const entriesByCycle = new Map();
@@ -153,6 +155,9 @@ function fromDocs(docs) {
         break;
       case 'ascent':
         data.ascents.push(d);
+        break;
+      case 'libweek':
+        data.weekLibrary.push(d);
         break;
       // Unbekannte Arten stammen von einer neueren App-Version. Sie haben hier
       // keinen Platz, werden aber auch nicht gelöscht (siehe diffDocs).
@@ -193,6 +198,7 @@ function fromDocs(docs) {
   data.tests.sort((a, b) => syncCmp(a.id, b.id));
   data.assessments.sort((a, b) => syncCmp(a.id, b.id));
   data.ascents.sort((a, b) => syncCmp(a.id, b.id));
+  data.weekLibrary.sort((a, b) => syncCmp(a.id, b.id));
   return data;
 }
 

@@ -588,6 +588,7 @@ function vergleichsform(data) {
   d.tests.sort(nachId);
   d.assessments.sort(nachId);
   d.ascents = (d.ascents || []).sort(nachId);
+  d.weekLibrary = (d.weekLibrary || []).sort(nachId);
   return d;
 }
 
@@ -622,6 +623,7 @@ const BESTAND = {
       results: [{ testId: 't1', value: 22, note: 'gut' }, { testId: 't3', value: { 6: 12, 7: 5 } }] },
     { id: 'a1', date: '2026-03-31', label: '', cycleId: null, bodyweight: 0, results: [] }
   ],
+  weekLibrary: [{ id: 'lw1', name: 'Aufbau', unit: 'int', exercises: [{ name: 'Limit', categories: [], amount: 3, days: [0] }] }],
   ascents: [
     { id: 'l2', date: '2027-01-03', scaleId: 'font', grade: 7, style: 'flash', place: 'halle' },
     { id: 'l1', date: '2026-12-30', scaleId: 'vscale', grade: 4, style: 'project', place: 'fels', name: 'Dachkante', note: 'fast' }
@@ -1124,29 +1126,69 @@ eq('alte Wochen-Pausen werden zu Tagen', [altPause.cycles[0].pauses, altPause.cy
   'pausedWeeks' in altPause.cycles[0], 'pausedSince' in altPause.cycles[0]],
   [[{ from: '2026-01-12', to: '2026-01-18' }], '2026-01-26', false, false]);
 
-group('Wochenplan');
-heuteIst('2026-01-21');   // Mittwoch
+group('Wochenplan: Wochen und Zuordnung');
+heuteIst('2026-01-21');   // Mittwoch der dritten Woche (Start Mo 05.01.)
 const wp = neuerZyklus({ mode: 'plan', exercises: [
-  { id: 'a', name: 'Limit', categories: [], intensity: 3, days: [0] },
-  { id: 'b', name: 'Volumen', categories: [], intensity: 2, days: [2], desc: '<b>viel</b>' },
+  { id: 'a', name: 'Limit', categories: [], intensity: 3 },
+  { id: 'b', name: 'Volumen', categories: [], intensity: 2, desc: '<b>viel</b>' },
   { id: 'c', name: 'Dehnen', categories: [], intensity: 1 }
-] });
-eq('Mittwoch geplant', plannedExercises(wp, '2026-01-21').map(e => e.id), ['b']);
+], weekPlans: [
+  { id: 'P1', name: 'Aufbau', items: [{ exId: 'a', days: [0] }, { exId: 'b', days: [2] }] },
+  { id: 'P2', name: 'Deload', items: [{ exId: 'b', days: [0, 2], amount: 1, note: 'Locker <i>' }] }
+], weekAssign: ['P1', 'P1', 'P1', 'P2'] });
+eq('Mittwoch in Woche 3 (Aufbau)', plannedExercises(wp, '2026-01-21').map(e => e.id), ['b']);
+eq('Woche 4 hat die Deload-Woche', plannedItems(wp, '2026-01-26').map(x => [x.ex.id, x.amount, x.note]), [['b', 1, 'Locker <i>']]);
+eq('Wochenziel = geplanter Umfang', [getWeekTarget(wp, 0), getWeekTarget(wp, 3)], [5, 2]);
 eq('freier Modus plant nichts', plannedExercises(Object.assign({}, wp, { mode: undefined }), '2026-01-21'), []);
 const tag = buildDayModalContent('2026-01-21');
 check('Tagesdialog zeigt Geplantes zuerst', tag.indexOf('Volumen') < tag.indexOf('Limit') && tag.includes('Geplant'));
 renderDashboard();
 check('Heute-Karte nennt die geplante Übung', el('dashContent').innerHTML.includes('Heute · Mittwoch'));
 check('Beschreibung wird maskiert', el('dashContent').innerHTML.includes('&lt;b&gt;viel'));
+check('Wochenliste zeigt die geplante Woche', el('dashContent').innerHTML.includes('● Aufbau'));
 heuteIst('2026-01-22');
 renderDashboard();
-check('Ruhetag nennt den nächsten Trainingstag', el('dashContent').innerHTML.includes('Als Nächstes – Montag: Limit'));
+check('Ruhetag nennt den nächsten Trainingstag', el('dashContent').innerHTML.includes('Als Nächstes – Montag'));
+heuteIst('2026-01-26');
+toggleDayEx('2026-01-26', 'b');
+eq('Abhaken in der Deload-Woche zählt den geplanten Wert', wp.sessions['2026-01-26'][0], { exId: 'b', overrideInt: 1 });
+check('Hinweis der Woche im Tagesdialog, maskiert', buildDayModalContent('2026-01-26').includes('Locker &lt;i&gt;'));
+eq('Wochen zusammengefasst', formatWeekRanges([0, 1, 2, 4, 8, 9]), '1–3, 5, 9–10');
 togglePlanMode();
-check('Wochenplan lässt sich ausschalten', !isPlanMode(wp) && wp.exercises[0].days.length === 1);
+check('Wochenplan lässt sich ausschalten, Wochen bleiben', !isPlanMode(wp) && wp.weekPlans.length === 2 && getWeekTarget(wp, 0) === 1);
 togglePlanMode();
 
+// Wochen-Editor
+currentView = 'plan';
+openWeekEditor('P1');
+check('Editor zeigt die Woche', el('modalContent').innerHTML.includes('weekEditor'));
+weToggleWeek(3);                       // Woche 4 dazu
+wePick(4); weAdd(4, 'c');              // Dehnen am Freitag
+weSelect(4, 'c'); weSetAmount('0,5'); weSetNote('nur kurz');
+weSave();
+eq('Speichern: Woche 4 wechselt zu Aufbau', wp.weekAssign, ['P1', 'P1', 'P1', 'P1']);
+eq('neue Übung am Freitag mit eigenem Wert und Hinweis', wp.weekPlans[0].items.find(it => it.exId === 'c'), { exId: 'c', days: [4], amount: 0.5, note: 'nur kurz' });
+openWeekEditor(null, { weeks: [3] });
+weekDraft.name = 'Test';
+wePick(1); weAdd(1, 'a');
+weSave();
+eq('neue Woche übernimmt Woche 4', weekPlanFor(wp, 3).name, 'Test');
+
+// Repertoire
+openWeekEditor('P1');
+weToLibrary();
+eq('Woche im Repertoire, mit eigenen Übungen', appData.weekLibrary[0].exercises.map(e => [e.name, e.days, e.amount]),
+  [['Limit', [0], 3], ['Volumen', [2], 2], ['Dehnen', [4], 0.5]]);
+closeModal();
+const leer = neuerZyklus({ mode: 'plan', unit: 'h', exercises: [] });
+insertLibraryWeek(appData.weekLibrary[0].id);
+eq('einfügen in anderen Zyklus legt Übungen an, rechnet um', leer.exercises.map(e => [e.name, e.intensity]),
+  [['Limit', 1.5], ['Volumen', 1], ['Dehnen', 0.5]]);
+weSave();
+eq('und gilt danach in den gewählten Wochen (leer → alle)', leer.weekAssign.filter(Boolean).length, 4);
+
+// Vorlagen
 const tpl = PLAN_TEMPLATES[1];
-eq('Wochenziele der Vorlage im Rhythmus 3 + 1', templateTargets({ exercises: [{ intensity: 2, days: [0, 2] }] }, 5), [3.5, 4, 4.5, 2.5, 3.5]);
 el('newCycleName').value = '';
 el('newCycleDate').value = '2026-02-02';
 el('newCycleWeeks').value = '12';
@@ -1156,13 +1198,29 @@ createCycle();
 const ausVorlage = getActiveCycle();
 check('Zyklus aus Vorlage ist im Wochenplan-Modus', ausVorlage.mode === 'plan');
 eq('übernimmt den Vorlagennamen', ausVorlage.name, tpl.name.split(' · ')[0]);
-eq('übernimmt alle Übungen mit Tagen', ausVorlage.exercises.map(e => e.days), tpl.exercises.map(e => e.days));
-check('Übungen bekommen eigene IDs und Kopien',
-  new Set(ausVorlage.exercises.map(e => e.id)).size === tpl.exercises.length &&
-  ausVorlage.exercises[0].days !== tpl.exercises[0].days);
-eq('Entlastungswoche ist leichter', ausVorlage.weekTargets[3] < ausVorlage.weekTargets[2], true);
-check('alle Vorlagen haben gültige Tage und Intensitäten', PLAN_TEMPLATES.every(t =>
-  t.exercises.every(e => e.days.length && e.days.every(d => d >= 0 && d <= 6) && e.intensity > 0)));
+eq('Wochen der Vorlage', ausVorlage.weekPlans.map(p => p.name), ['Aufbauwoche', 'Entlastungswoche']);
+eq('Entlastung jede 4. Woche', ausVorlage.weekAssign.map(id => weekPlanById(ausVorlage, id).name[0]).join(''), 'AAAEAAAEAAAE');
+check('Entlastungswoche ist leichter', getWeekTarget(ausVorlage, 3) < getWeekTarget(ausVorlage, 2));
+check('Übungen haben keine Tage mehr an sich', ausVorlage.exercises.every(e => !('days' in e)));
+check('alle Vorlagen sind stimmig', PLAN_TEMPLATES.every(t => t.plan.every(w => w.items.every(([key, days]) =>
+  t.exercises.some(e => e.key === key) && days.length && days.every(d => d >= 0 && d <= 6)))));
+const fk = neuerZyklus({ weeks: 16, weekTargets: Array(16).fill(0), exercises: [] });
+applyTemplate(fk, PLAN_TEMPLATES[2]);
+eq('Phasen-Vorlage über 16 Wochen', fk.weekAssign.map(id => weekPlanById(fk, id).name[0]).join(''), 'BBBEMMMEPPPEPPPE');
+
+// Kopie eines Zyklus behält die Wochen
+el('newCycleName').value = 'Kopie'; el('copyFromCycle').value = ausVorlage.id;
+createCycle();
+const kp = getActiveCycle();
+eq('Kopie: Wochen und Zuordnung', [kp.weekPlans.length, kp.weekAssign.filter(Boolean).length, kp.mode], [2, 12, 'plan']);
+check('Kopie: Wochen zeigen auf die neuen Übungen', kp.weekPlans.every(p => p.items.every(it => kp.exercises.some(e => e.id === it.exId))));
+
+// Altdaten: Tage an den Übungen werden zur Standardwoche
+const alt = normalizeData({ cycles: [{ id: 'alt', name: 'Alt', startDate: '2026-01-05', weeks: 2, weekTargets: [], mode: 'plan',
+  exercises: [{ id: 'x', name: 'X', categories: [], intensity: 2, days: [0, 3] }, { id: 'y', name: 'Y', categories: [], intensity: 1 }],
+  sessions: {}, notes: {} }] }).cycles[0];
+eq('Altdaten → Standardwoche in allen Wochen', [alt.weekPlans[0].name, alt.weekPlans[0].items, alt.weekAssign, 'days' in alt.exercises[0]],
+  ['Standardwoche', [{ exId: 'x', days: [0, 3] }], ['std', 'std'], false]);
 
 group('Messwert beim Abhaken');
 heuteIst('2026-01-21');
@@ -1279,9 +1337,11 @@ check('auch Ersetzen lässt sich zurücknehmen', gleich(toDocs(appData), toDocs(
   // ═══════════════════════════════════════════════
   const quelle = { name: 'Plan für Lisa', weeks: 3, weekTargets: [5, 6, 3, 99],
     exercises: [
-      { id: 'x', name: 'Max Hang <b>', categories: ['Finger'], intensity: 2, days: [0, 3], desc: '5 × 10 s', measure: true, unit: 'kg' },
+      { id: 'x', name: 'Max Hang <b>', categories: ['Finger'], intensity: 2, desc: '5 × 10 s', measure: true, unit: 'kg' },
       { id: 'y', name: 'Bouldern', categories: [], intensity: 3 }
-    ], sessions: { '2026-01-05': [{ exId: 'x', value: 20 }] } };
+    ], weekPlans: [{ id: 'A', name: 'Aufbau', items: [{ exId: 'x', days: [0, 3], note: 'Max Hangs' }] },
+                   { id: 'D', name: 'Deload', items: [{ exId: 'y', days: [1], amount: 1 }] }],
+    weekAssign: ['A', 'A', 'D'], sessions: { '2026-01-05': [{ exId: 'x', value: 20 }] } };
   const geteilt = planFromCycle(quelle, 'Trainer Max', 'Gut aufwärmen');
   check('keine Trainingsdaten im Plan', !JSON.stringify(geteilt).includes('2026-01-05') && !('sessions' in geteilt));
   eq('Wochenziele auf die Wochenzahl gekürzt', geteilt.weekTargets, [5, 6, 3]);
@@ -1304,17 +1364,25 @@ check('auch Ersetzen lässt sich zurücknehmen', gleich(toDocs(appData), toDocs(
   const bereinigt = validatePlan({ name: 'x'.repeat(500), weeks: 999, weekTargets: ['a', -3, 4],
     exercises: [{ name: 'A', intensity: '5', days: [0, 9, 'x', 0], categories: ['k', 7], desc: 5, measure: 'ja', extra: 'weg' }, { intensity: 1 }],
     author: { boese: 1 }, sessions: { a: 1 } });
-  eq('fremde Eingaben werden bereinigt', bereinigt, { v: 1, name: 'x'.repeat(80), unit: 'int', weeks: 52,
+  eq('fremde Eingaben werden bereinigt (alter Link: Standardwoche)', bereinigt, { v: 2, name: 'x'.repeat(80), unit: 'int', weeks: 52,
     weekTargets: [0, 0, 4].concat(Array(49).fill(0)),
-    exercises: [{ name: 'A', categories: ['k'], intensity: 0, days: [0] }] });
+    exercises: [{ name: 'A', categories: ['k'], intensity: 0 }],
+    plans: [{ name: 'Standardwoche', items: [{ ex: 0, days: [0] }] }], assign: Array(52).fill(0) });
+  const boese = validatePlan({ exercises: [{ name: 'A', intensity: 1 }], weeks: 2,
+    plans: [{ name: 'W', items: [{ ex: 5, days: [0] }, { ex: 0, days: [9] }, { ex: 0, days: [1], note: 7, amount: 'x' }] }], assign: [0, 3] });
+  eq('Wochen aus fremden Links werden geprüft', [boese.plans[0].items, boese.assign], [[{ ex: 0, days: [1] }], [0, -1]]);
 
   el('planStart').value = '2026-03-02';
   pendingPlan = zurueckPlan;
   startImportedPlan();
   const ausLink = getActiveCycle();
   eq('importierter Plan wird aktiver Zyklus', [ausLink.name, ausLink.startDate, ausLink.mode, ausLink.weeks], ['Plan für Lisa', '2026-03-02', 'plan', 3]);
-  eq('Übungen mit Tagen und Beschreibung', ausLink.exercises.map(e => [e.name, e.days, e.desc, e.unit]),
-    [['Max Hang <b>', [0, 3], '5 × 10 s', 'kg'], ['Bouldern', undefined, undefined, undefined]]);
+  eq('Übungen mit Beschreibung', ausLink.exercises.map(e => [e.name, e.desc, e.unit]),
+    [['Max Hang <b>', '5 × 10 s', 'kg'], ['Bouldern', undefined, undefined]]);
+  eq('Wochen und Zuordnung reisen mit', [ausLink.weekPlans.map(p => p.name), ausLink.weekAssign.map(id => weekPlanById(ausLink, id).name)],
+    [['Aufbau', 'Deload'], ['Aufbau', 'Aufbau', 'Deload']]);
+  eq('mit Tagen, Wert und Hinweis', ausLink.weekPlans.map(p => p.items.map(it => [it.days, it.amount, it.note])),
+    [[[[0, 3], undefined, 'Max Hangs']], [[[1], 1, undefined]]]);
   check('neue IDs', !ausLink.exercises.some(e => e.id === 'x' || e.id === 'y'));
   eq('Absender und Hinweis bleiben sichtbar', [ausLink.planAuthor, ausLink.planNote], ['Trainer Max', 'Gut aufwärmen']);
   currentView = 'plan';
@@ -1330,18 +1398,21 @@ check('auch Ersetzen lässt sich zurücknehmen', gleich(toDocs(appData), toDocs(
   eq('Anzeige in Minuten', [fmtAmount(mz2, 90), fmtExAmount(mz2, 90)], ['90 min', '90 min']);
   eq('Anzeige in Stunden', fmtAmount({ unit: 'h' }, 1.5), '1,5 h');
   eq('Intensität ohne Einheit, Übung mit ×', [fmtAmount({}, 9.5), fmtExAmount({}, 3)], ['9,5', '×3']);
-  eq('Toleranz je Einheit: 230 von 240 min gilt als erreicht', intensityClass(230, 240, unitInfo(mz2).tol), 'int-green-dark');
+  eq('Toleranz je Einheit: 190 von 240 min gilt als erreicht', intensityClass(190, 240, unitInfo(mz2).tol), 'int-green-dark');
+  eq('bei Stunden ±1 h', intensityClass(3, 4, unitInfo({ unit: 'h' }).tol), 'int-green-dark');
   eq('bei Intensität wären 10 Punkte daneben nur fast erreicht', intensityClass(230, 240), 'int-green-light');
   const tplF = PLAN_TEMPLATES[1];
-  eq('Vorlage in Minuten', templateAmount(tplF.exercises[0], 'min'), tplF.exercises[0].minutes);
-  eq('Vorlage in Stunden auf Viertelstunden gerundet', templateAmount({ minutes: 75 }, 'h'), 1.25);
-  check('jede Vorlagen-Übung hat eine Dauer', PLAN_TEMPLATES.every(t => t.exercises.every(e => e.minutes > 0)));
+  eq('2 Punkte Intensität = 1 Stunde', convertAmount(2, 'int', 'h'), 1);
+  eq('aufgerundet auf halbe Stunden', [convertAmount(1, 'int', 'h'), convertAmount(2.5, 'int', 'h'), convertAmount(3, 'int', 'h')], [0.5, 1.5, 1.5]);
+  eq('in Minuten', convertAmount(3, 'int', 'min'), 90);
+  eq('zurück in Intensität', [convertAmount(1.5, 'h', 'int'), convertAmount(90, 'min', 'int')], [3, 3]);
+  eq('Vorlage in Minuten', templateAmount(tplF.exercises[0], 'min'), convertAmount(tplF.exercises[0].intensity, 'int', 'min'));
   el('newCycleName').value = 'Zeit'; el('newCycleDate').value = '2026-03-02'; el('newCycleWeeks').value = '8';
   el('newCycleMode').value = 'plan'; el('copyFromCycle').value = 'tpl:' + tplF.id; el('newCycleUnit').dataset.val = 'min';
   createCycle();
   const zz = getActiveCycle();
-  eq('neuer Zyklus zählt in Minuten', [zz.unit, zz.exercises[0].intensity], ['min', tplF.exercises[0].minutes]);
-  check('Wochenziele in 5-Minuten-Schritten', zz.weekTargets.every(t => t % 5 === 0) && zz.weekTargets[0] > 100);
+  eq('neuer Zyklus zählt in Minuten', [zz.unit, zz.exercises[0].intensity], ['min', convertAmount(tplF.exercises[0].intensity, 'int', 'min')]);
+  check('Wochenziele in Minuten', getWeekTarget(zz, 0) % 5 === 0 && getWeekTarget(zz, 0) > 100);
   el('newCycleName').value = 'Kopie'; el('copyFromCycle').value = zz.id; el('newCycleUnit').dataset.val = 'int';
   createCycle();
   eq('eine Kopie behält die Einheit des Originals', getActiveCycle().unit, 'min');
@@ -1411,9 +1482,15 @@ check('auch Ersetzen lässt sich zurücknehmen', gleich(toDocs(appData), toDocs(
   appData.cycles.push(frei); appData.activeCycleId = 'F';
   currentView = 'settings';
   togglePlanMode();
-  check('Einschalten ohne Tage öffnet die Einrichtung mit Vorschlag',
-    isPlanMode(frei) && el('modalContent').innerHTML.includes('Wochenplan einrichten') &&
-    el('modalContent').innerHTML.includes('Vorgeschlagen aus deinem bisherigen Training'));
+  check('Einschalten öffnet eine Woche mit Vorschlag aus dem bisherigen Training',
+    isPlanMode(frei) && el('weekEditor').innerHTML.includes('Vorgeschlagen aus deinem bisherigen Training'));
+  eq('vorgeschlagene Tage', weekDraft.items, [{ exId: 'f1', days: [0, 4] }, { exId: 'f2', days: [2] }]);
+  weSave();
+  eq('gilt in allen Wochen', frei.weekAssign.filter(Boolean).length, 4);
+  const ohneUebungen = neuerZyklus({ exercises: [] });
+  togglePlanMode();
+  check('ohne Übungen: Vorlagen werden angeboten', el('modalContent').innerHTML.includes('Vorlage übernehmen'));
+  appData.activeCycleId = 'F';
   togglePlanMode();
   check('Ausschalten', !isPlanMode(frei));
 

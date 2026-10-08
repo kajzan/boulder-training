@@ -27,6 +27,7 @@ function getAppData() {
 // saveData(): Der Stand stammt ja schon vom Konto und muss nicht zurück.
 function replaceAppData(data) {
   if (!Array.isArray(data.ascents)) data.ascents = [];
+  if (!Array.isArray(data.weekLibrary)) data.weekLibrary = [];
   appData = data;
   localStorage.setItem(STORE_KEY, JSON.stringify(appData));
   render();
@@ -38,7 +39,8 @@ function getDefaultData() {
     activeCycleId: null,
     tests: [],        // [{id, name, kind, unit, scaleId, higherIsBetter, usesBodyweight, category}]
     assessments: [],  // [{id, date, label, cycleId, bodyweight, results:[{testId, value, note}]}]
-    ascents: []       // Logbuch: [{id, date, scaleId, grade, style, place, name?, note?}]
+    ascents: [],      // Logbuch: [{id, date, scaleId, grade, style, place, name?, note?}]
+    weekLibrary: []   // Repertoire gespeicherter Wochen, siehe planning.js
   };
 }
 
@@ -69,6 +71,9 @@ function migrateCycles(d = appData) {
     if (!Array.isArray(c.weekTargets)) c.weekTargets = [];
     while (c.weekTargets.length < c.weeks) c.weekTargets.push(0);
     if (c.weekTargets.length > c.weeks) c.weekTargets = c.weekTargets.slice(0, c.weeks);
+
+    // Trainingstage standen früher an den Übungen; jetzt in Wochen (planning.js)
+    if (migratePlanDays(c)) changed = true;
 
     // Pausen wurden anfangs in ganzen Wochen gezählt; jetzt in Tagen
     if (Array.isArray(c.pausedWeeks) || Number.isInteger(c.pausedSince)) {
@@ -166,9 +171,9 @@ const CYCLE_UNITS = {
   int: { name: 'Intensität', title: 'Intensität', amount: 'Intensitätswert', target: 'Intensitätsziel pro Woche',
          day: 'Tages-Intensität', short: '', step: 0.5, tol: 1, placeholder: 'z.B. 2' },
   min: { name: 'Minuten', title: 'Trainingszeit', amount: 'Dauer in Minuten', target: 'Wochenziel in Minuten',
-         day: 'Trainingszeit', short: 'min', step: 5, tol: 15, placeholder: 'z.B. 60' },
+         day: 'Trainingszeit', short: 'min', step: 5, tol: 60, placeholder: 'z.B. 60' },
   h:   { name: 'Stunden', title: 'Trainingszeit', amount: 'Dauer in Stunden', target: 'Wochenziel in Stunden',
-         day: 'Trainingszeit', short: 'h', step: 0.25, tol: 0.25, placeholder: 'z.B. 1,5' }
+         day: 'Trainingszeit', short: 'h', step: 0.25, tol: 1, placeholder: 'z.B. 1,5' }
 };
 
 function cycleUnit(cycle) {
@@ -177,6 +182,22 @@ function cycleUnit(cycle) {
 
 function unitInfo(cycle) {
   return CYCLE_UNITS[cycleUnit(cycle)];
+}
+
+// Umrechnen zwischen den Einheiten. Zwei Punkte Intensität entsprechen einer
+// Stunde; beim Umrechnen in Zeit wird auf halbe Stunden aufgerundet.
+function toHours(v, unit) {
+  if (unit === 'h') return v;
+  if (unit === 'min') return v / 60;
+  return Math.ceil(v / 2 * 2) / 2;          // Intensität → Stunden, aufgerundet
+}
+
+function convertAmount(v, from, to) {
+  const x = parseFloat(v) || 0;
+  if (from === to) return x;
+  if (to === 'int') return Math.round((from === 'min' ? x / 60 : x) * 2 * 2) / 2;
+  const h = from === 'int' ? toHours(x, 'int') : (from === 'min' ? Math.ceil(x / 60 * 2) / 2 : x);
+  return to === 'min' ? Math.round(h * 60) : h;
 }
 
 // Ein Wert mit Einheit: "9,5" bei Intensität, "90 min", "1,5 h"
@@ -615,7 +636,7 @@ function renderIntensityChart(cycle) {
   const actuals = [];
   const breakdowns = [];
   for (let j = 0; j < W; j++) {
-    targets.push(cycle.weekTargets[from + j] || 0);
+    targets.push(getWeekTarget(cycle, from + j));
     actuals.push(getWeekIntensity(cycle, from + j));
     breakdowns.push(getWeekCategoryBreakdown(cycle, from + j));
   }
@@ -849,7 +870,7 @@ function renderDashboard() {
   const weekIdx = getCurrentWeekIndex(cycle);
   const weekDays = getWeekDates(cycle, weekIdx);
   const weekInt = getWeekIntensity(cycle, weekIdx);
-  const target = cycle.weekTargets[weekIdx] || 0;
+  const target = getWeekTarget(cycle, weekIdx);
   const unit = unitInfo(cycle);
   const iClass = intensityClass(weekInt, target, unit.tol);
   const today = toDateStr(new Date());
@@ -965,7 +986,7 @@ function renderWeekList(cycle, weekIdx, paused) {
   const rows = [];
   for (let i = from; i < to; i++) {
     const wint = getWeekIntensity(cycle, i);
-    const wtgt = cycle.weekTargets[i] || 0;
+    const wtgt = getWeekTarget(cycle, i);
     const wc = intensityClass(wint, wtgt, unit.tol);
     const wd = getWeekDates(cycle, i);
     const isCurrent = i === weekIdx && !paused;
@@ -973,7 +994,10 @@ function renderWeekList(cycle, weekIdx, paused) {
     const gap = pausedDaysBetween(cycle, i > 0 ? addDays(getWeekDates(cycle, i - 1)[6], 1) : cycle.startDate, wd[6]);
     rows.push(`<div class="week-row ${isCurrent ? 'current-week' : ''}" onclick="openWeekModal(${i})">
       <div class="week-row-left">
-        <div class="week-row-num">Woche ${i+1}${isCurrent ? ' · Aktuell' : ''}</div>
+        <div class="week-row-num">Woche ${i+1}${isCurrent ? ' · Aktuell' : ''}${(() => {
+          const plan = weekPlanFor(cycle, i);
+          return plan ? ` <span class="week-plan-tag" style="color:${weekPlanColor(cycle, plan)}">● ${esc(plan.name)}</span>` : '';
+        })()}</div>
         <div class="week-row-date">${formatDateRange(wd[0], wd[6])}${gap ? ` <span class="pause-note">· ${gap} ${gap === 1 ? 'Tag' : 'Tage'} Pause</span>` : ''}</div>
       </div>
       <div style="display:flex;align-items:center;gap:8px">
@@ -1001,8 +1025,8 @@ function formatDay(dateStr) {
 // ═══════════════════════════════════════════════
 // WOCHENPLAN
 // ═══════════════════════════════════════════════
-// Im Wochenplan-Modus hat jede Übung feste Wochentage (ex.days, 0 = Montag).
-// Im freien Modus gibt es keine Tage; man trägt ein, was man gemacht hat.
+// Im Wochenplan-Modus gilt in jeder Zykluswoche eine geplante Woche (siehe
+// planning.js). Im freien Modus trägt man ein, was man gemacht hat.
 function isPlanMode(cycle) {
   return !!cycle && cycle.mode === 'plan';
 }
@@ -1011,59 +1035,44 @@ function weekdayOf(dateStr) {
   return (parseDate(dateStr).getDay() + 6) % 7;
 }
 
-function exerciseDays(ex) {
-  return Array.isArray(ex.days) ? ex.days.filter(d => Number.isInteger(d) && d >= 0 && d <= 6) : [];
-}
-
-function plannedExercises(cycle, dateStr) {
-  if (!isPlanMode(cycle)) return [];
-  const wd = weekdayOf(dateStr);
-  return cycle.exercises.filter(ex => exerciseDays(ex).includes(wd));
-}
-
-function formatWeekdays(days) {
-  return days.slice().sort((a, b) => a - b).map(d => DAYS_DE[d]).join(' · ');
-}
-
 function renderTodayCard(cycle, today) {
-  const planned = plannedExercises(cycle, today);
+  const planned = plannedItems(cycle, today);
   const done = new Set((cycle.sessions[today] || []).map(entryId));
   const dayName = DAYS_FULL[weekdayOf(today)];
 
-  if (!cycle.exercises.some(ex => exerciseDays(ex).length > 0)) {
-    return `<div class="card" onclick="openPlanSetupModal()" style="cursor:pointer">
+  if (!weekPlans(cycle).length) {
+    return `<button type="button" class="card card-btn" onclick="startPlanning(getActiveCycle())">
       <div class="card-title">Heute · ${dayName}</div>
-      <div class="text-muted">Noch keine Trainingstage festgelegt. <span style="color:var(--accent)">Wochenplan einrichten ›</span></div>
-    </div>`;
+      <div class="text-muted">Noch keine Woche geplant. <span style="color:var(--accent)">Wochenplan einrichten ›</span></div>
+    </button>`;
   }
 
   if (planned.length === 0) {
     let next = '';
     for (let i = 1; i <= 7 && !next; i++) {
-      const d = parseDate(today);
-      d.setDate(d.getDate() + i);
-      const p = plannedExercises(cycle, toDateStr(d));
-      if (p.length) next = `${DAYS_FULL[weekdayOf(toDateStr(d))]}: ${p.map(ex => esc(ex.name)).join(', ')}`;
+      const ds = addDays(today, i);
+      const p = plannedItems(cycle, ds);
+      if (p.length) next = `${DAYS_FULL[weekdayOf(ds)]}: ${p.map(x => esc(x.ex.name)).join(', ')}`;
     }
-    return `<div class="card" onclick="openDayModal('${today}')" style="cursor:pointer">
-      <div class="card-title">Heute · Ruhetag</div>
-      <div class="text-muted">${next ? 'Als Nächstes – ' + next : 'Nichts geplant.'}</div>
-    </div>`;
+    const thisWeek = weekPlanFor(cycle, weekIndexOfDate(cycle, today));
+    return `<button type="button" class="card card-btn" onclick="openDayModal('${today}')">
+      <div class="card-title">Heute · ${thisWeek ? 'Ruhetag' : dayName}</div>
+      <div class="text-muted">${thisWeek ? '' : 'Diese Woche ist ohne Plan. '}${next ? 'Als Nächstes – ' + next : ''}</div>
+    </button>`;
   }
 
-  const allDone = planned.every(ex => done.has(ex.id));
-  return `<div class="card" onclick="openDayModal('${today}')" style="cursor:pointer">
-    <div class="card-title">Heute · ${dayName}${allDone ? ' · erledigt' : ''}</div>
-    ${planned.map(ex => `
+  const allDone = planned.every(x => done.has(x.ex.id));
+  return `<button type="button" class="card card-btn" onclick="openDayModal('${today}')">
+    <div class="card-title">Heute · ${dayName}${allDone ? ' · erledigt ✓' : ''}</div>
+    ${planned.map(x => `
       <div class="today-row">
-        <div class="check-box ${done.has(ex.id) ? 'checked' : ''}" style="width:18px;height:18px">${done.has(ex.id) ? CHECK_SVG : ''}</div>
+        <div class="check-box ${done.has(x.ex.id) ? 'checked' : ''}" style="width:20px;height:20px">${done.has(x.ex.id) ? CHECK_SVG : ''}</div>
         <div style="flex:1;min-width:0">
-          <div style="font-size:14px">${esc(ex.name)}</div>
-          ${ex.desc ? `<div class="ex-desc">${esc(ex.desc)}</div>` : ''}
+          <div class="today-name">${esc(x.ex.name)} <span class="today-amt">${fmtExAmount(cycle, x.amount)}</span></div>
+          ${x.note ? `<div class="ex-note">${esc(x.note)}</div>` : x.ex.desc ? `<div class="ex-desc">${esc(x.ex.desc)}</div>` : ''}
         </div>
       </div>`).join('')}
-    <div style="font-size:11px;color:var(--text-dim);margin-top:8px">Tippen zum Abhaken</div>
-  </div>`;
+  </button>`;
 }
 
 function getKW(date) {
@@ -1108,11 +1117,15 @@ function buildDayModalContent(dateStr, returnToWeek) {
   const allCats = getAllCategoriesInCycle(cycle);
 
   // Im Wochenplan stehen die für diesen Wochentag geplanten Übungen oben.
-  const planned = plannedExercises(cycle, dateStr);
+  const plannedList = plannedItems(cycle, dateStr);
+  const planned = plannedList.map(x => x.ex);
   const plannedIds = new Set(planned.map(ex => ex.id));
+  const planOf = id => plannedList.find(x => x.ex.id === id);
   const others = cycle.exercises.filter(ex => !plannedIds.has(ex.id));
 
   const exRow = ex => {
+        const pl = planOf(ex.id);
+        const planAmount = pl ? pl.amount : ex.intensity;
         const checked = selected.has(ex.id);
         const entry = entries.find(e => entryId(e) === ex.id);
         const ov = entry ? entryOverride(entry) : null;
@@ -1130,9 +1143,10 @@ function buildDayModalContent(dateStr, returnToWeek) {
               <div class="check-label" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(ex.name)}</div>
               <div style="font-size:11px;color:var(--text-muted);font-family:'DM Mono',monospace;display:flex;align-items:center;gap:5px;flex-wrap:wrap">
                 ${cats.length ? `<span style="font-family:'DM Sans',sans-serif;display:inline-flex;gap:5px">${catLabelsHtml(cats, allCats, 13)}</span><span style="color:var(--text-dim)">·</span>` : ''}
-                <span>Plan: ${fmtAmount(cycle, ex.intensity)}</span>
-                ${ov !== null ? `<span style="color:var(--accent)">→ ${ov}</span>` : ''}
+                <span>Plan: ${fmtAmount(cycle, planAmount)}</span>
+                ${ov !== null && ov !== parseFloat(planAmount) ? `<span style="color:var(--accent)">→ ${fmtNum(ov)}</span>` : ''}
               </div>
+              ${pl && pl.note ? `<div class="ex-note">${esc(pl.note)}</div>` : ''}
             </div>
           </div>
           ${checked ? `
@@ -1185,7 +1199,12 @@ function toggleDayEx(dateStr, exId, returnToWeek) {
   if (idx >= 0) {
     cycle.sessions[dateStr].splice(idx, 1);
   } else {
-    cycle.sessions[dateStr].push({ exId });
+    // Weicht der Wert dieser Woche vom Standard der Übung ab (Entlastungs-
+    // woche), zählt der geplante Wert.
+    const entry = { exId };
+    const pl = plannedItems(cycle, dateStr).find(x => x.ex.id === exId);
+    if (pl && pl.amount !== (parseFloat(pl.ex.intensity) || 0)) entry.overrideInt = pl.amount;
+    cycle.sessions[dateStr].push(entry);
   }
   saveData();
   refreshDayModal(dateStr, returnToWeek);
@@ -1275,7 +1294,7 @@ function openWeekModal(weekIdx) {
   const cycle = getActiveCycle();
   if (!cycle) return;
   const days = getWeekDates(cycle, weekIdx);
-  const target = cycle.weekTargets[weekIdx] || 0;
+  const target = getWeekTarget(cycle, weekIdx);
   const wInt = getWeekIntensity(cycle, weekIdx);
   const tol = unitInfo(cycle).tol;
   const iClass = intensityClass(wInt, target, tol);
@@ -1340,12 +1359,7 @@ function renderPlan() {
     return;
   }
 
-  const weekPlan = isPlanMode(cycle)
-    ? DAYS_DE.map((d, i) => {
-        const exs = cycle.exercises.filter(ex => exerciseDays(ex).includes(i));
-        return exs.length ? `<div class="plan-day"><span class="plan-wd">${d}</span><span>${exs.map(ex => esc(ex.name)).join(', ')}</span></div>` : '';
-      }).join('')
-    : '';
+  const plan = isPlanMode(cycle);
 
   const planFrom = cycle.planAuthor || cycle.planNote
     ? `<div class="card">
@@ -1362,16 +1376,15 @@ function renderPlan() {
         <span class="chev">›</span>
       </div></div>` : ''}
     ${planFrom}
-    ${isPlanMode(cycle) && cycle.exercises.length ? `<div class="card" onclick="openPlanSetupModal()" style="cursor:pointer">
-      <div class="card-title" style="display:flex;justify-content:space-between">Wochenplan <span style="color:var(--accent);text-transform:none;letter-spacing:0">Bearbeiten ›</span></div>
-      ${weekPlan || '<div class="text-muted">Noch keine Tage festgelegt.</div>'}</div>` : ''}
-    <div class="section-hdr" style="margin-top:0">
+    ${plan ? renderPlanning(cycle) : ''}
+    <div class="section-hdr" style="${plan ? '' : 'margin-top:0'}">
       <h2>Übungen</h2>
-      <button class="btn btn-primary btn-sm" onclick="openAddExerciseModal()">+ Hinzufügen</button>
+      <button class="btn ${plan ? 'btn-ghost' : 'btn-primary'} btn-sm" onclick="openAddExerciseModal()">+ Übung</button>
     </div>
+    ${plan && cycle.exercises.length ? `<div class="group-note" style="margin:-4px 4px 10px">Dein Baukasten – in den Wochen oben legst du fest, wann welche Übung dran ist.</div>` : ''}
 
     ${cycle.exercises.length === 0
-      ? `<div class="empty"><div class="empty-icon">💪</div><div>Noch keine Übungen.<br>Füge deine erste Übung hinzu!</div></div>`
+      ? `<div class="card text-muted" style="text-align:center;padding:22px 16px">Noch keine Übungen.${plan ? '' : ' Füge deine erste hinzu – oder schalte in den Einstellungen den Wochenplan ein und starte mit einer Vorlage.'}</div>`
       : (() => {
           const allCats = getAllCategoriesInCycle(cycle);
           return `<div id="exerciseList">` + cycle.exercises.map(ex => {
@@ -1385,10 +1398,7 @@ function renderPlan() {
                 <div class="exercise-name">${esc(ex.name)}</div>
                 <div style="font-size:11px;color:var(--text-muted);margin-top:2px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
                   ${cats.length ? catLabelsHtml(cats, allCats, 14) : ''}
-                  ${isPlanMode(cycle)
-                    ? (cats.length ? `<span style="color:var(--text-dim)">·</span>` : '') +
-                      (exerciseDays(ex).length ? `<span style="color:var(--accent)">${formatWeekdays(exerciseDays(ex))}</span>` : `<span>ohne Tag</span>`)
-                    : (cats.length ? '' : `<span>Tippen zum Bearbeiten</span>`)}
+                  ${cats.length ? '' : `<span>Tippen zum Bearbeiten</span>`}
                   ${ex.measure ? `<span style="color:var(--text-dim)">· Messwert</span>` : ''}
                 </div>
                 ${ex.desc ? `<div class="ex-desc">${esc(ex.desc)}</div>` : ''}
@@ -1403,7 +1413,7 @@ function renderPlan() {
       ? `<div style="font-size:11px;color:var(--text-dim);text-align:center;margin-top:2px;margin-bottom:8px">Am Anfasser links ziehen, um die Reihenfolge zu ändern.</div>`
       : ''}
 
-    <div class="divider"></div>
+    ${plan ? '' : `
     <div class="section-hdr"><h2>Wochenziele</h2></div>
     <div class="card-title">${unitInfo(cycle).target}</div>
     <div class="target-grid">
@@ -1418,17 +1428,24 @@ function renderPlan() {
       }).join('')}
     </div>
     ${(cycle.weeks || 12) > 4 ? `<button class="btn btn-ghost btn-full btn-sm" style="margin-top:10px" onclick="repeatWeekTargets()">Woche 1–4 auf alle Wochen übertragen</button>` : ''}
+    `}
 
-    ${cycle.exercises.length ? `
     <div class="list-group" style="margin-top:20px">
-      <div class="list-row" onclick="openSharePlanModal()">
+      ${plan ? '' : `<div class="list-row" onclick="togglePlanMode()">
+        <span class="list-icon">${CALENDAR_ICON}</span>
+        <div class="list-main"><div class="list-title">Wochenplan einschalten</div><div class="list-sub">Feste Trainingstage, Wochen und Vorlagen</div></div>
+        <span class="chev">›</span>
+      </div>`}
+      ${cycle.exercises.length ? `<div class="list-row" onclick="openSharePlanModal()">
         <span class="list-icon">${SHARE_ICON}</span>
         <div class="list-main"><div class="list-title">Plan teilen</div><div class="list-sub">Als Link, z.B. an deine Schüler</div></div>
         <span class="chev">›</span>
-      </div>
-    </div>` : ''}
+      </div>` : ''}
+    </div>
   `;
 }
+
+const CALENDAR_ICON = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>';
 
 // ── Formular für Übungen (Anlegen und Bearbeiten) ──
 // p ist das Präfix der Feld-IDs: 'newEx' beim Anlegen, 'editEx' beim Bearbeiten.
@@ -1438,7 +1455,6 @@ function exerciseFormHtml(p, ex) {
   const datalist = allCats.length > 0
     ? `<datalist id="${p}CatList">${allCats.map(c => `<option value="${esc(c)}">`).join('')}</datalist>`
     : '';
-  const days = ex ? exerciseDays(ex) : [];
   const measure = !!(ex && ex.measure);
   return `
     <div class="field">
@@ -1457,13 +1473,6 @@ function exerciseFormHtml(p, ex) {
       <label>${unitInfo(cycle).amount}</label>
       <input type="number" id="${p}Int" step="${unitInfo(cycle).step}" min="0" value="${ex ? ex.intensity : ''}" placeholder="${unitInfo(cycle).placeholder}">
     </div>
-    ${isPlanMode(cycle) ? `
-    <div class="field">
-      <label>Trainingstage</label>
-      <div class="weekday-pick" id="${p}Days">
-        ${DAYS_DE.map((d, i) => `<button type="button" data-day="${i}" class="${days.includes(i) ? 'on' : ''}" onclick="this.classList.toggle('on')">${d}</button>`).join('')}
-      </div>
-    </div>` : ''}
     <div class="field">
       <label>Beschreibung (optional)</label>
       <textarea id="${p}Desc" rows="2" placeholder="z.B. 5 × 10 s, 3 min Pause, 20 mm">${ex && ex.desc ? esc(ex.desc) : ''}</textarea>
@@ -1495,10 +1504,6 @@ function readExerciseForm(p) {
     measure: isChecked(p + 'Measure'),
     unit: document.getElementById(p + 'Unit')?.value?.trim() || ''
   };
-  const dayBox = document.getElementById(p + 'Days');
-  if (dayBox && dayBox.querySelectorAll) {
-    out.days = Array.from(dayBox.querySelectorAll('button.on')).map(b => parseInt(b.dataset.day, 10));
-  }
   return out;
 }
 
@@ -1511,9 +1516,6 @@ function applyExerciseForm(ex, form) {
   if (form.desc) ex.desc = form.desc; else delete ex.desc;
   if (form.measure) { ex.measure = true; ex.unit = form.unit; }
   else { delete ex.measure; delete ex.unit; }
-  if (form.days) {
-    if (form.days.length) ex.days = form.days.sort((a, b) => a - b); else delete ex.days;
-  }
   return ex;
 }
 
@@ -1759,7 +1761,7 @@ function renderHistory() {
       for (let i = 0; i < wks; i++) {
         const wDays = getWeekDates(cycle, i);
         if (wDays[6] < todayStr) {
-          compTgtSum += (cycle.weekTargets[i] || 0);
+          compTgtSum += getWeekTarget(cycle, i);
           compActSum += getWeekIntensity(cycle, i);
         }
       }
@@ -1792,7 +1794,7 @@ function openCycleDetail(cycleId) {
     <div class="target-grid">
       ${Array.from({length: cycle.weeks || 12}, (_,i) => {
         const wint = getWeekIntensity(cycle, i);
-        const wtgt = cycle.weekTargets[i] || 0;
+        const wtgt = getWeekTarget(cycle, i);
         const wc = intensityClass(wint, wtgt, unitInfo(cycle).tol);
         return `<div class="target-cell read">
           <span class="tc-week">W${i+1}</span>
@@ -1836,10 +1838,11 @@ const LOG_PREVIEW = 10;
 let logShowAll = false;
 
 function migrateLogbook(d = appData) {
-  if (Array.isArray(d.ascents)) return false;
-  d.ascents = [];
-  if (d === appData) saveData();
-  return true;
+  let changed = false;
+  if (!Array.isArray(d.ascents)) { d.ascents = []; changed = true; }
+  if (!Array.isArray(d.weekLibrary)) { d.weekLibrary = []; changed = true; }
+  if (changed && d === appData) saveData();
+  return changed;
 }
 
 // Bringt einen fremden Stand (Sicherungsdatei, Konto-Sicherung) auf den
@@ -2197,20 +2200,9 @@ function getTemplate(value) {
   return PLAN_TEMPLATES.find(t => t.id === value.slice(4)) || null;
 }
 
-// Wochenziele einer Vorlage: geplante Wochenintensität im Rhythmus 3 + 1 –
-// drei steigende Wochen, dann eine Entlastungswoche mit gut der Hälfte.
-function templateTargets(tpl, weeks, unit = 'int') {
-  const base = tpl.exercises.reduce((s, ex) => s + templateAmount(ex, unit) * ex.days.length, 0);
-  const pattern = [0.9, 1, 1.1, 0.6];
-  const round = unit === 'min' ? 5 : unit === 'h' ? 0.25 : 0.5;
-  return Array.from({ length: weeks }, (_, i) => Math.round(base * pattern[i % 4] / round) * round);
-}
-
 // Wert einer Vorlagen-Übung in der gewählten Einheit
 function templateAmount(ex, unit) {
-  if (unit === 'min') return ex.minutes || 0;
-  if (unit === 'h') return Math.round((ex.minutes || 0) / 60 * 4) / 4;
-  return ex.intensity;
+  return convertAmount(ex.intensity, 'int', unit);
 }
 
 // changed: true, wenn die Auswahl gerade geändert wurde (dann Wochenzahl und
@@ -2231,9 +2223,9 @@ function onCopySelect(changed) {
   if (changed && src) pickSeg('newCycleUnit', cycleUnit(src));
   if (!info) return;
   if (tpl) {
-    info.innerHTML = `${esc(tpl.level)}<br>${tpl.exercises.length} Übungen, Entlastungswoche jede 4. Woche. Ein Vorschlag – alles lässt sich danach anpassen.`;
+    info.innerHTML = `${esc(tpl.level)}<br>${tpl.exercises.length} Übungen in ${tpl.plan.length} Wochen: ${tpl.plan.map(w => esc(w.name)).join(', ')}. Ein Vorschlag – alles lässt sich danach anpassen.`;
   } else if (src) {
-    info.textContent = `Übungen, Trainingstage, Wochenziele und Wochenanzahl werden übernommen. Gezählt wird wie dort in ${unitInfo(src).name}.`;
+    info.textContent = `Übungen, geplante Wochen, Wochenziele und Wochenanzahl werden übernommen. Gezählt wird wie dort in ${unitInfo(src).name}.`;
   } else {
     info.textContent = '';
   }
@@ -2255,12 +2247,14 @@ function createCycle() {
   if (unit && unit !== 'int' && CYCLE_UNITS[unit]) cycle.unit = unit;
 
   if (tpl) {
-    cycle.exercises = tpl.exercises.map(ex => cloneExercise(Object.assign({}, ex, { intensity: templateAmount(ex, cycleUnit(cycle)) })));
-    cycle.weekTargets = templateTargets(tpl, weeks, cycleUnit(cycle));
+    applyTemplate(cycle, tpl);
   } else if (copyFromId) {
     const src = appData.cycles.find(c => c.id === copyFromId);
     if (src) {
-      cycle.exercises = src.exercises.map(cloneExercise);
+      const idMap = {};
+      cycle.exercises = src.exercises.map(ex => { const c = cloneExercise(ex); idMap[ex.id] = c.id; return c; });
+      copyPlanStructure(src, cycle, idMap);
+      if (isPlanMode(src)) cycle.mode = 'plan';
       // Die Werte sind in der Einheit des Originals
       if (cycleUnit(src) !== 'int') cycle.unit = cycleUnit(src); else delete cycle.unit;
       // Copy week targets, truncating or padding as needed
@@ -2285,7 +2279,6 @@ function cloneExercise(ex) {
     categories: exerciseCategories(ex),   // eigene Kopie, nicht dieselbe Liste
     intensity: ex.intensity
   };
-  if (exerciseDays(ex).length) out.days = exerciseDays(ex);
   if (ex.desc) out.desc = ex.desc;
   if (ex.measure) { out.measure = true; out.unit = ex.unit || ''; }
   return out;
@@ -2294,81 +2287,13 @@ function cloneExercise(ex) {
 function togglePlanMode() {
   const cycle = getActiveCycle();
   if (!cycle) return;
-  // Die Trainingstage der Übungen bleiben stehen; sie gelten wieder, sobald
-  // der Wochenplan erneut eingeschaltet wird.
+  // Die geplanten Wochen bleiben beim Ausschalten erhalten; sie gelten
+  // wieder, sobald der Wochenplan erneut eingeschaltet wird.
   if (isPlanMode(cycle)) delete cycle.mode; else cycle.mode = 'plan';
   saveData();
-  renderSettings();
-  // Frisch eingeschaltet und noch keine Tage festgelegt: gleich einrichten
-  if (isPlanMode(cycle) && cycle.exercises.length && !cycle.exercises.some(ex => exerciseDays(ex).length)) {
-    openPlanSetupModal();
-  }
-}
-
-// ── Wochenplan einrichten ──
-// Alle Übungen auf einen Blick mit ihren Tagen. Fehlen noch Tage, schlägt
-// die App vor, wie bisher trainiert wurde: Wochentage, an denen eine Übung
-// in mindestens 40 % der Trainingswochen dran war.
-function suggestExerciseDays(cycle) {
-  const weeksWithTraining = new Set();
-  const counts = {};
-  Object.keys(cycle.sessions || {}).forEach(date => {
-    const entries = cycle.sessions[date] || [];
-    if (!entries.length) return;
-    weeksWithTraining.add(Math.floor(daysBetween(cycle.startDate, date) / 7));
-    const wd = weekdayOf(date);
-    entries.forEach(e => {
-      const id = entryId(e);
-      counts[id] = counts[id] || [0, 0, 0, 0, 0, 0, 0];
-      counts[id][wd]++;
-    });
-  });
-  const need = Math.max(2, Math.ceil(weeksWithTraining.size * 0.4));
-  const out = {};
-  cycle.exercises.forEach(ex => {
-    const c = counts[ex.id];
-    out[ex.id] = c ? c.map((n, wd) => n >= need ? wd : -1).filter(wd => wd >= 0) : [];
-  });
-  return out;
-}
-
-function openPlanSetupModal() {
-  const cycle = getActiveCycle();
-  if (!cycle) return;
-  const hasDays = cycle.exercises.some(ex => exerciseDays(ex).length);
-  const suggested = hasDays ? {} : suggestExerciseDays(cycle);
-  const fromHistory = Object.values(suggested).some(d => d.length);
-  openModal(`
-    <div class="modal-title">Wochenplan einrichten</div>
-    <div class="text-muted" style="margin-bottom:16px;line-height:1.5">${fromHistory
-      ? 'Vorgeschlagen aus deinem bisherigen Training – passe die Tage an.'
-      : 'Lege fest, an welchen Tagen du welche Übung machst.'}</div>
-    ${cycle.exercises.map(ex => {
-      const days = hasDays ? exerciseDays(ex) : (suggested[ex.id] || []);
-      return `<div class="setup-row">
-        <div class="setup-name">${esc(ex.name)}</div>
-        <div class="weekday-pick" data-exid="${ex.id}">
-          ${DAYS_DE.map((d, i) => `<button type="button" data-day="${i}" class="${days.includes(i) ? 'on' : ''}" onclick="this.classList.toggle('on')">${d}</button>`).join('')}
-        </div>
-      </div>`;
-    }).join('')}
-    <button class="btn btn-primary btn-full" style="margin-top:16px" onclick="savePlanSetup()">Übernehmen</button>
-    <button class="btn-link" onclick="closeModal()">Später</button>
-  `);
-}
-
-function savePlanSetup() {
-  const cycle = getActiveCycle();
-  if (!cycle) return;
-  document.querySelectorAll('#modalContent .weekday-pick[data-exid]').forEach(box => {
-    const ex = cycle.exercises.find(e => e.id === box.dataset.exid);
-    if (!ex) return;
-    const days = Array.from(box.querySelectorAll('button.on')).map(b => parseInt(b.dataset.day, 10));
-    if (days.length) ex.days = days.sort((a, b) => a - b); else delete ex.days;
-  });
-  saveData();
-  closeModal();
   render();
+  // Frisch eingeschaltet und noch nichts geplant: beim Start helfen
+  if (isPlanMode(cycle)) startPlanning(cycle);
 }
 
 function setActiveCycle(id) {
@@ -2510,23 +2435,38 @@ function undoImport() {
 // selbst (nach dem #, das nie an einen Server geht) – es braucht dafür weder
 // ein Konto noch eine Verbindung zwischen den Konten. Mitgeschickt wird nur
 // der Plan: Übungen, Tage, Beschreibungen, Wochenziele. Keine Trainingsdaten.
-const PLAN_LIMITS = { name: 80, author: 60, note: 600, desc: 600, unit: 12, cat: 30, cats: 5, exercises: 40 };
+const PLAN_LIMITS = { name: 80, author: 60, note: 600, desc: 600, unit: 12, cat: 30, cats: 5, exercises: 40, plans: 12, items: 60 };
 
+// Form eines geteilten Plans (v2):
+//   { v: 2, name, unit, weeks, weekTargets, author?, note?,
+//     exercises: [{ name, categories, intensity, desc?, measure?, unit? }],
+//     plans: [{ name, items: [{ ex: Index in exercises, days, amount?, note? }] }],
+//     assign: [Index in plans oder -1, je Zykluswoche] }
+// Links der ersten Fassung (v1) hatten die Tage an den Übungen; daraus wird
+// beim Einlesen eine "Standardwoche".
 function planFromCycle(cycle, author, note) {
   const weeks = cycle.weeks || 12;
+  const exIndex = new Map(cycle.exercises.map((ex, i) => [ex.id, i]));
+  const plans = weekPlans(cycle);
   const plan = {
-    v: 1,
+    v: 2,
     name: cycle.name,
     unit: cycleUnit(cycle),
     weeks,
     weekTargets: (cycle.weekTargets || []).slice(0, weeks),
     exercises: cycle.exercises.map(ex => {
       const o = { name: ex.name, categories: exerciseCategories(ex), intensity: parseFloat(ex.intensity) || 0 };
-      if (exerciseDays(ex).length) o.days = exerciseDays(ex);
       if (ex.desc) o.desc = ex.desc;
       if (ex.measure) { o.measure = true; o.unit = ex.unit || ''; }
       return o;
-    })
+    }),
+    plans: plans.map(p => ({ name: p.name, items: p.items.filter(it => exIndex.has(it.exId)).map(it => {
+      const o = { ex: exIndex.get(it.exId), days: (it.days || []).slice() };
+      if (it.amount !== undefined) o.amount = it.amount;
+      if (it.note) o.note = it.note;
+      return o;
+    }) })),
+    assign: Array.from({ length: weeks }, (_, i) => plans.findIndex(p => p.id === (cycle.weekAssign || [])[i]))
   };
   if (author) plan.author = author;
   if (note) plan.note = note;
@@ -2538,32 +2478,63 @@ function planFromCycle(cycle, author, note) {
 function validatePlan(p) {
   const str = (v, max) => typeof v === 'string' ? v.trim().slice(0, max) : '';
   const num = v => (typeof v === 'number' && isFinite(v) && v >= 0) ? Math.min(v, 1000) : 0;
+  const dayList = d => Array.isArray(d) ? [...new Set(d.filter(x => Number.isInteger(x) && x >= 0 && x <= 6))].sort() : [];
   if (!p || typeof p !== 'object' || !Array.isArray(p.exercises)) throw new Error('kein Plan');
   const L = PLAN_LIMITS;
   const weeks = Math.max(1, Math.min(52, parseInt(p.weeks, 10) || 12));
-  const exercises = p.exercises.slice(0, L.exercises).map(ex => {
-    if (!ex || typeof ex !== 'object') return null;
+  const rawEx = p.exercises.slice(0, L.exercises);
+  const indexMap = [];   // Index im Link → Index nach dem Bereinigen
+  const exercises = [];
+  rawEx.forEach((ex, i) => {
+    if (!ex || typeof ex !== 'object') return;
     const name = str(ex.name, L.name);
-    if (!name) return null;
+    if (!name) return;
     const o = {
       name,
       categories: (Array.isArray(ex.categories) ? ex.categories : []).map(c => str(c, L.cat)).filter(Boolean).slice(0, L.cats),
       intensity: num(ex.intensity)
     };
-    const days = Array.isArray(ex.days) ? [...new Set(ex.days.filter(d => Number.isInteger(d) && d >= 0 && d <= 6))].sort() : [];
-    if (days.length) o.days = days;
     if (str(ex.desc, L.desc)) o.desc = str(ex.desc, L.desc);
     if (ex.measure === true) { o.measure = true; o.unit = str(ex.unit, L.unit); }
-    return o;
-  }).filter(Boolean);
+    indexMap[i] = exercises.length;
+    exercises.push(o);
+  });
   if (!exercises.length) throw new Error('keine Übungen');
+
+  let plans = [];
+  let assign = Array(weeks).fill(-1);
+  if (Array.isArray(p.plans)) {
+    plans = p.plans.slice(0, L.plans).map(pl => ({
+      name: str(pl && pl.name, L.name) || 'Woche',
+      items: (pl && Array.isArray(pl.items) ? pl.items : []).slice(0, L.items).map(it => {
+        if (!it || !Number.isInteger(it.ex) || indexMap[it.ex] === undefined) return null;
+        const days = dayList(it.days);
+        if (!days.length) return null;
+        const o = { ex: indexMap[it.ex], days };
+        if (typeof it.amount === 'number') o.amount = num(it.amount);
+        if (str(it.note, L.desc)) o.note = str(it.note, L.desc);
+        return o;
+      }).filter(Boolean)
+    }));
+    if (Array.isArray(p.assign)) {
+      assign = assign.map((_, i) => Number.isInteger(p.assign[i]) && p.assign[i] >= 0 && p.assign[i] < plans.length ? p.assign[i] : -1);
+    }
+  } else {
+    // v1: Tage an den Übungen → eine Standardwoche für alle Wochen
+    const items = rawEx.map((ex, i) => ex && indexMap[i] !== undefined && dayList(ex.days).length
+      ? { ex: indexMap[i], days: dayList(ex.days) } : null).filter(Boolean);
+    if (items.length) { plans = [{ name: 'Standardwoche', items }]; assign = assign.map(() => 0); }
+  }
+
   const plan = {
-    v: 1,
+    v: 2,
     name: str(p.name, L.name) || 'Trainingsplan',
     unit: CYCLE_UNITS[p.unit] ? p.unit : 'int',
     weeks,
     weekTargets: Array.from({ length: weeks }, (_, i) => num(Array.isArray(p.weekTargets) ? p.weekTargets[i] : 0)),
-    exercises
+    exercises,
+    plans,
+    assign
   };
   if (str(p.author, L.author)) plan.author = str(p.author, L.author);
   if (str(p.note, L.note)) plan.note = str(p.note, L.note);
@@ -2698,9 +2669,18 @@ function openPlanPreview(plan, fromLink) {
   pendingPlan = plan;
   const standalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || navigator.standalone;
   const ios = /iPhone|iPad|iPod/.test(navigator.userAgent || '');
-  const byDay = DAYS_DE.map((d, i) => {
-    const names = plan.exercises.filter(ex => (ex.days || []).includes(i)).map(ex => esc(ex.name));
-    return names.length ? `<div class="plan-day"><span class="plan-wd">${d}</span><span>${names.join(', ')}</span></div>` : '';
+  // Je Woche des Plans: Name, wann sie gilt, was an welchem Tag dran ist
+  const weekCards = plan.plans.map((w, k) => {
+    const weeksOf = plan.assign.map((a, i) => a === k ? i : -1).filter(i => i >= 0);
+    const rows = DAYS_DE.map((d, day) => {
+      const names = w.items.filter(it => it.days.includes(day)).map(it => esc(plan.exercises[it.ex].name));
+      return names.length ? `<div class="plan-day"><span class="plan-wd">${d}</span><span>${names.join(', ')}</span></div>` : '';
+    }).join('');
+    return `<div class="card">
+      <div class="card-title" style="display:flex;align-items:center;gap:8px">
+        <span class="plan-swatch" style="background:${WEEK_COLORS[k % WEEK_COLORS.length]}"></span>${esc(w.name)}
+        <span style="text-transform:none;letter-spacing:0;color:var(--text-dim)">${weeksOf.length ? '· Woche ' + formatWeekRanges(weeksOf) : ''}</span>
+      </div>${rows}</div>`;
   }).join('');
   openModal(`
     <div class="modal-title" style="margin-bottom:4px">${esc(plan.name)}</div>
@@ -2710,7 +2690,7 @@ function openPlanPreview(plan, fromLink) {
         <button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="navigator.clipboard.writeText(location.href.split('#')[0] + '#plan=' + (window.__planCode || ''));this.textContent='Kopiert'">Link kopieren</button>
       </div>` : ''}
     ${plan.note ? `<div class="card" style="font-size:14px;line-height:1.5">${esc(plan.note)}</div>` : ''}
-    ${byDay ? `<div class="card"><div class="card-title">Wochenplan</div>${byDay}</div>` : ''}
+    ${weekCards}
     <div class="list-group" style="margin-bottom:16px">
       ${plan.exercises.map(ex => `<div class="list-row" style="cursor:default;align-items:flex-start">
         <div class="list-main">
@@ -2732,9 +2712,18 @@ function startImportedPlan() {
   const cycle = getDefaultCycle(plan.name, plan.weeks);
   const start = document.getElementById('planStart')?.value;
   if (start) cycle.startDate = start;
-  if (plan.exercises.some(ex => (ex.days || []).length)) cycle.mode = 'plan';
   if (plan.unit && plan.unit !== 'int') cycle.unit = plan.unit;
   cycle.exercises = plan.exercises.map(cloneExercise);
+  if (plan.plans.length) {
+    cycle.mode = 'plan';
+    cycle.weekPlans = plan.plans.map(w => ({ id: newId(), name: w.name, items: w.items.map(it => {
+      const o = { exId: cycle.exercises[it.ex].id, days: it.days.slice() };
+      if (it.amount !== undefined) o.amount = it.amount;
+      if (it.note) o.note = it.note;
+      return o;
+    }) }));
+    cycle.weekAssign = plan.assign.slice(0, cycle.weeks).map(a => a >= 0 ? cycle.weekPlans[a].id : null);
+  }
   cycle.weekTargets = plan.weekTargets.slice(0, cycle.weeks);
   if (plan.author) cycle.planAuthor = plan.author;
   if (plan.note) cycle.planNote = plan.note;

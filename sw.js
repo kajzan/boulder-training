@@ -5,7 +5,7 @@
  * dieser Datei selbst erkennen alle Browser sicher als Update – deshalb steht
  * die Nummer hier noch einmal und wird nicht aus version.js geladen.
  */
-const VERSION = 'v19';
+const VERSION = 'v20';
 const CACHE = 'boulder-' + VERSION;
 
 /* Alles, was die App zum Starten braucht. Wird bei der Installation
@@ -17,6 +17,7 @@ const APP_SHELL = [
   './version.js',
   './sync.js',
   './templates.js',
+  './planning.js',
   './app.js',
   './cloud.js',
   './vendor/firebase.js',

@@ -1,8 +1,8 @@
-/* Vorlagen für den Wochenplan
+/* Vorlagen für die Planung
  *
- * Vorschläge als Startpunkt, keine Verordnung. Beim Anlegen eines Zyklus wird
- * eine Vorlage kopiert; danach lässt sich alles frei ändern, die Vorlage selbst
- * bleibt unberührt.
+ * Vorschläge als Startpunkt, keine Verordnung. Beim Übernehmen werden Übungen
+ * und Wochen in den Zyklus kopiert; danach lässt sich alles frei ändern, die
+ * Vorlage selbst bleibt unberührt.
  *
  * Grundlage (Stand Oktober 2026), zusammengefasst:
  * - 3 Aufbauwochen + 1 Entlastungswoche (Deload, Umfang −30 bis −50 %, ohne
@@ -15,11 +15,14 @@
  * - Ausgleichstraining (Drücken, Schulter-Außenrotation, Fingerstrecker)
  *   gehört in jeden Plan.
  *
- * days: Wochentage, 0 = Montag … 6 = Sonntag
- * intensity: im selben Maß wie die eigenen Übungen; die Wochenziele werden
- *   daraus berechnet (siehe templateTargets in app.js).
- * minutes: ungefähre Dauer – gilt, wenn der Zyklus in Minuten oder Stunden
- *   zählt.
+ * Aufbau:
+ *   exercises  die Übungen der Vorlage; intensity in Punkten. Zählt ein
+ *              Zyklus in Zeit, gilt: 2 Punkte = 1 Stunde (aufgerundet auf
+ *              halbe Stunden).
+ *   plan       die Wochen der Vorlage. items: [Übung, Tage (0 = Montag),
+ *              Wert (optional, sonst der der Übung), Hinweis (optional)]
+ *              applies: 'rest' = alle übrigen Wochen, { every: 4 } = jede
+ *              4. Woche, [0, 1, 2] = genau diese (0 = Woche 1)
  */
 const PLAN_TEMPLATES = [
   {
@@ -28,38 +31,22 @@ const PLAN_TEMPLATES = [
     level: 'Erstes Kletterjahr. Ohne Fingerboard.',
     weeks: 8,
     exercises: [
-      {
-        name: 'Technik-Bouldern',
-        categories: ['Technik'],
-        intensity: 3,
-        minutes: 75,
-        days: [0],
-        desc: '15 min locker einklettern. Dann 8–10 Boulder deutlich unter deinem Limit: leise Füße, Hüfte nah an der Wand, Züge vorher lesen. 2–3 min Pause.'
-      },
-      {
-        name: 'Projekt-Bouldern',
-        categories: ['Kraft'],
-        intensity: 3,
-        minutes: 75,
-        days: [3],
-        desc: 'Gut aufwärmen, steigernd. Dann 3–4 Boulder an deiner Grenze, je höchstens 4–5 Versuche, 3 min Pause. Aufhören, wenn die Züge unsauber werden. Deload-Woche: nur Technik.'
-      },
-      {
-        name: 'Ausgleich: Drücken & Schulter',
-        categories: ['Ausgleich'],
-        intensity: 1,
-        minutes: 15,
-        days: [0],
-        desc: '2–3 Runden: 10–15 Liegestütze, 10–15 Außenrotation mit Band, 15 Reverse Wrist Curls (Fingerstrecker).'
-      },
-      {
-        name: 'Rumpf',
-        categories: ['Rumpf'],
-        intensity: 1,
-        minutes: 10,
-        days: [3],
-        desc: '3 Runden: 30–45 s Unterarmstütz, 8–12 Knieheben im Hang.'
-      }
+      { key: 'technik', name: 'Technik-Bouldern', categories: ['Technik'], intensity: 3,
+        desc: '15 min locker einklettern. Dann 8–10 Boulder deutlich unter deinem Limit: leise Füße, Hüfte nah an der Wand, Züge vorher lesen. 2–3 min Pause.' },
+      { key: 'projekt', name: 'Projekt-Bouldern', categories: ['Kraft'], intensity: 3,
+        desc: 'Gut aufwärmen, steigernd. Dann 3–4 Boulder an deiner Grenze, je höchstens 4–5 Versuche, 3 min Pause. Aufhören, wenn die Züge unsauber werden.' },
+      { key: 'ausgleich', name: 'Ausgleich: Drücken & Schulter', categories: ['Ausgleich'], intensity: 1,
+        desc: '2–3 Runden: 10–15 Liegestütze, 10–15 Außenrotation mit Band, 15 Reverse Wrist Curls (Fingerstrecker).' },
+      { key: 'rumpf', name: 'Rumpf', categories: ['Rumpf'], intensity: 1,
+        desc: '3 Runden: 30–45 s Unterarmstütz, 8–12 Knieheben im Hang.' }
+    ],
+    plan: [
+      { name: 'Aufbauwoche', applies: 'rest', items: [
+        ['technik', [0]], ['ausgleich', [0]], ['projekt', [3]], ['rumpf', [3]]
+      ] },
+      { name: 'Entlastungswoche', applies: { every: 4 }, items: [
+        ['technik', [0, 3], 2, 'Locker, nichts an der Grenze.'], ['ausgleich', [0]], ['rumpf', [3]]
+      ] }
     ]
   },
   {
@@ -68,46 +55,24 @@ const PLAN_TEMPLATES = [
     level: 'Ab etwa einem Jahr regelmäßigem Bouldern.',
     weeks: 12,
     exercises: [
-      {
-        name: 'Limit-Bouldern',
-        categories: ['Kraft', 'Finger'],
-        intensity: 3,
-        minutes: 90,
-        days: [0],
-        desc: '20–30 min steigernd aufwärmen. Dann 2–3 Projekte in verschiedenen Stilen, je 20–30 min, 3–5 min Pause zwischen Versuchen. Deload-Woche: weglassen.'
-      },
-      {
-        name: 'Volumen & Technik',
-        categories: ['Technik', 'Ausdauer'],
-        intensity: 2.5,
-        minutes: 75,
-        days: [2],
-        desc: 'Viele Boulder 2–3 Grade unter Limit, kurze Pausen. Jede Woche einen Stil bewusst üben: Platte, Dach, Kante, Volumen.'
-      },
-      {
-        name: 'Boardklettern',
-        categories: ['Kraft', 'Finger'],
-        intensity: 3,
-        minutes: 90,
-        days: [4],
-        desc: 'Kilter- oder Moonboard: aufwärmen, dann 6–10 harte Boulder mit vollen Pausen. Höchstens 90 min. Deload-Woche: leichte Boulder.'
-      },
-      {
-        name: 'Klimmzüge & Rumpf',
-        categories: ['Pull', 'Rumpf'],
-        intensity: 1.5,
-        minutes: 20,
-        days: [2],
-        desc: '4 × 5 Klimmzüge (wenn leicht: mit Zusatzgewicht), 3 × 10 Knieheben im Hang.'
-      },
-      {
-        name: 'Ausgleich: Drücken & Schulter',
-        categories: ['Ausgleich'],
-        intensity: 1,
-        minutes: 15,
-        days: [0, 4],
-        desc: '2 Runden: 10–15 Liegestütze oder Dips, 10 Schulterdrücken, 10–15 Außenrotation mit Band, 15 Reverse Wrist Curls.'
-      }
+      { key: 'limit', name: 'Limit-Bouldern', categories: ['Kraft', 'Finger'], intensity: 3,
+        desc: '20–30 min steigernd aufwärmen. Dann 2–3 Projekte in verschiedenen Stilen, je 20–30 min, 3–5 min Pause zwischen Versuchen.' },
+      { key: 'volumen', name: 'Volumen & Technik', categories: ['Technik', 'Ausdauer'], intensity: 2.5,
+        desc: 'Viele Boulder 2–3 Grade unter Limit, kurze Pausen. Jede Woche einen Stil bewusst üben: Platte, Dach, Kante, Volumen.' },
+      { key: 'board', name: 'Boardklettern', categories: ['Kraft', 'Finger'], intensity: 3,
+        desc: 'Kilter- oder Moonboard: aufwärmen, dann 6–10 harte Boulder mit vollen Pausen. Höchstens 90 min.' },
+      { key: 'klimmzug', name: 'Klimmzüge & Rumpf', categories: ['Pull', 'Rumpf'], intensity: 1.5,
+        desc: '4 × 5 Klimmzüge (wenn leicht: mit Zusatzgewicht), 3 × 10 Knieheben im Hang.' },
+      { key: 'ausgleich', name: 'Ausgleich: Drücken & Schulter', categories: ['Ausgleich'], intensity: 1,
+        desc: '2 Runden: 10–15 Liegestütze oder Dips, 10 Schulterdrücken, 10–15 Außenrotation mit Band, 15 Reverse Wrist Curls.' }
+    ],
+    plan: [
+      { name: 'Aufbauwoche', applies: 'rest', items: [
+        ['limit', [0]], ['ausgleich', [0, 4]], ['volumen', [2]], ['klimmzug', [2]], ['board', [4]]
+      ] },
+      { name: 'Entlastungswoche', applies: { every: 4 }, items: [
+        ['volumen', [0, 4], 2, 'Locker, kein Limit.'], ['ausgleich', [0, 4]], ['klimmzug', [2], 1, 'Halbe Sätze.']
+      ] }
     ]
   },
   {
@@ -116,46 +81,34 @@ const PLAN_TEMPLATES = [
     level: 'Ab etwa zwei Jahren Klettern, verletzungsfrei. Mit Fingerboard.',
     weeks: 12,
     exercises: [
-      {
-        name: 'Fingerboard',
-        categories: ['Finger'],
-        intensity: 2,
-        minutes: 30,
-        days: [0, 4],
-        desc: 'Immer zu Beginn, nach 20 min Aufwärmen, halb aufgestellt. Wo 1–3: 7 s hängen / 3 s Pause × 6, 3–4 Sätze, 3 min Satzpause, 20 mm, ohne Gewicht. Wo 5–7 und 9–11: Max Hangs 10 s, 5 Sätze, 3 min Pause, Gewicht so, dass 2–3 s Reserve bleiben. Deload-Woche und bei Fingerschmerz: weglassen.'
-      },
-      {
-        name: 'Limit-Bouldern',
-        categories: ['Kraft'],
-        intensity: 2.5,
-        minutes: 75,
-        days: [0],
-        desc: 'Nach dem Fingerboard: 2–3 Projekte, je 20–30 min, 3–5 min Pause. Deload-Woche: weglassen.'
-      },
-      {
-        name: 'Volumen & Technik',
-        categories: ['Technik', 'Ausdauer'],
-        intensity: 2.5,
-        minutes: 75,
-        days: [2],
-        desc: 'Viele Boulder 2–3 Grade unter Limit, kurze Pausen. Lockerer Tag für die Finger.'
-      },
-      {
-        name: 'Board & Power',
-        categories: ['Kraft', 'Power'],
-        intensity: 2.5,
-        minutes: 75,
-        days: [4],
-        desc: 'Wo 1–7: harte Board-Boulder, volle Pausen. Wo 9–11: dynamische Züge und Sprünge; Campus nur mit Erfahrung, 3–5 Leitern, volle Pausen. Deload-Woche: leichte Boulder.'
-      },
-      {
-        name: 'Ausgleich & Klimmzüge',
-        categories: ['Ausgleich', 'Pull'],
-        intensity: 1.5,
-        minutes: 25,
-        days: [2],
-        desc: '4 × 5 Klimmzüge, dazu 2 Runden Liegestütze, Außenrotation mit Band, Reverse Wrist Curls.'
-      }
+      { key: 'fingerboard', name: 'Fingerboard', categories: ['Finger'], intensity: 2,
+        desc: 'Immer zu Beginn, nach 20 min Aufwärmen, halb aufgestellt. Bei Fingerschmerz sofort aufhören.' },
+      { key: 'limit', name: 'Limit-Bouldern', categories: ['Kraft'], intensity: 2.5,
+        desc: 'Nach dem Fingerboard: 2–3 Projekte, je 20–30 min, 3–5 min Pause.' },
+      { key: 'volumen', name: 'Volumen & Technik', categories: ['Technik', 'Ausdauer'], intensity: 2.5,
+        desc: 'Viele Boulder 2–3 Grade unter Limit, kurze Pausen. Lockerer Tag für die Finger.' },
+      { key: 'power', name: 'Board & Power', categories: ['Kraft', 'Power'], intensity: 2.5,
+        desc: 'Harte Board-Boulder mit vollen Pausen.' },
+      { key: 'ausgleich', name: 'Ausgleich & Klimmzüge', categories: ['Ausgleich', 'Pull'], intensity: 1.5,
+        desc: '4 × 5 Klimmzüge, dazu 2 Runden Liegestütze, Außenrotation mit Band, Reverse Wrist Curls.' }
+    ],
+    plan: [
+      { name: 'Basis', applies: [0, 1, 2], items: [
+        ['fingerboard', [0, 4], null, 'Repeaters: 7 s hängen / 3 s Pause × 6, 3–4 Sätze, 3 min Satzpause, 20 mm, ohne Gewicht.'],
+        ['limit', [0]], ['volumen', [2]], ['ausgleich', [2]], ['power', [4]]
+      ] },
+      { name: 'Maximalkraft', applies: [4, 5, 6], items: [
+        ['fingerboard', [0, 4], null, 'Max Hangs: 10 s, 5 Sätze, 3 min Pause. Gewicht so, dass 2–3 s Reserve bleiben.'],
+        ['limit', [0]], ['volumen', [2]], ['ausgleich', [2]], ['power', [4]]
+      ] },
+      { name: 'Power', applies: 'rest', items: [
+        ['fingerboard', [0], 1.5, 'Max Hangs 7 s, 4 Sätze – kürzer, dafür etwas mehr Gewicht.'],
+        ['limit', [0]], ['volumen', [2]], ['ausgleich', [2]],
+        ['power', [4], null, 'Dynamische Züge und Sprünge; Campus nur mit Erfahrung, 3–5 Leitern, volle Pausen.']
+      ] },
+      { name: 'Entlastungswoche', applies: { every: 4 }, items: [
+        ['volumen', [0, 4], 2, 'Locker, kein Fingerboard, kein Limit.'], ['ausgleich', [2], 1]
+      ] }
     ]
   }
 ];

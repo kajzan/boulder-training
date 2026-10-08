@@ -35,6 +35,7 @@ function install() {
   globalThis.document = {
     getElementById: fakeEl,
     querySelectorAll: () => [],
+    querySelector: () => null,
     createElement: () => ({ click() {}, setAttribute() {}, style: {} })
   };
   globalThis.navigator = {};
@@ -44,7 +45,7 @@ function install() {
   globalThis.confirm = () => true;
   globalThis.setTimeout = fn => { /* Modal-Animationen im Test nicht nachspielen */ };
 
-  ['version.js', 'sync.js', 'templates.js', 'app.js'].forEach(file => {
+  ['version.js', 'sync.js', 'templates.js', 'planning.js', 'app.js'].forEach(file => {
     vm.runInThisContext(fs.readFileSync(path.join(ROOT, file), 'utf8'), { filename: file });
   });
 

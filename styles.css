@@ -674,3 +674,92 @@ textarea { resize: vertical; font-size: 14px; line-height: 1.4; }
 .seg-mini { padding: 2px; border-radius: 7px; flex-shrink: 0; }
 .seg-mini button { white-space: nowrap; padding: 3px 9px; font-size: 11px; text-transform: none; letter-spacing: 0; border-radius: 5px; }
 .scrub-chart text { font-family: inherit; }
+
+/* ═══════════════════════════════════════════════
+   PLANUNG: Zyklus-Leiste, Wochen, Wochen-Editor
+   ═══════════════════════════════════════════════ */
+.plan-swatch { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; display: inline-block; }
+.plan-empty { text-align: center; padding: 22px 18px; }
+.plan-empty-title { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
+
+/* Zyklus-Leiste: eine Kachel je Woche, gefärbt nach geplanter Woche */
+.tl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(52px, 1fr)); gap: 6px; }
+.tl-cell {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  padding: 7px 7px 6px; min-height: 50px; border-radius: 9px;
+  background: var(--surface2); border: 1px solid var(--border);
+  font-family: inherit; color: var(--text); cursor: pointer; text-align: left; min-width: 0;
+  transition: transform 0.12s;
+}
+.tl-cell:active { transform: scale(0.94); }
+.tl-cell.current { box-shadow: 0 0 0 1.5px var(--text); }
+.tl-num { font-family: 'DM Mono', monospace; font-size: 12px; color: var(--text-muted); }
+.tl-name { font-size: 10px; font-weight: 600; line-height: 1.15; width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); }
+
+/* Wochen-Editor */
+.we-title {
+  font-size: 20px; font-weight: 600; background: none; border: none; border-bottom: 1px solid var(--border);
+  border-radius: 0; padding: 4px 0 8px; margin-bottom: 14px;
+}
+.we-title:focus { border-color: var(--accent); }
+.we-section { margin-bottom: 18px; }
+.we-label {
+  font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--text-muted); margin-bottom: 8px; display: flex; justify-content: space-between;
+}
+.we-total { color: var(--accent); font-family: 'DM Mono', monospace; text-transform: none; letter-spacing: 0; }
+.wk-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(36px, 1fr)); gap: 5px; }
+.wk-chip {
+  position: relative; height: 34px; border-radius: 8px;
+  background: var(--surface2); border: 1px solid var(--border); color: var(--text-muted);
+  font-family: 'DM Mono', monospace; font-size: 13px; cursor: pointer;
+}
+.wk-chip.on { color: #000; font-weight: 500; }
+.wk-dot { position: absolute; bottom: 3px; left: 50%; width: 4px; height: 4px; margin-left: -2px; border-radius: 50%; }
+.we-presets { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+.we-presets button {
+  background: none; border: 1px solid var(--border); border-radius: 14px; color: var(--text-muted);
+  font-family: inherit; font-size: 12px; padding: 5px 11px; cursor: pointer;
+}
+.we-day { padding: 8px 0; border-top: 1px solid var(--border); }
+.we-day-row { display: flex; align-items: flex-start; gap: 10px; }
+.we-day-row .we-chips { flex: 1; margin-top: 0; min-height: 30px; align-items: center; }
+.we-day-name { width: 24px; flex-shrink: 0; padding-top: 6px; font-family: 'DM Mono', monospace; font-size: 13px; color: var(--text-dim); }
+.we-has-note { color: var(--accent); margin-left: -2px; }
+.we-day.has .we-day-name { color: var(--text); }
+.we-add {
+  width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0;
+  background: var(--surface2); border: 1px solid var(--border); color: var(--accent);
+  font-size: 18px; line-height: 1; cursor: pointer; font-family: inherit;
+}
+.we-add.on { color: var(--text-muted); }
+.we-rest { font-size: 13px; color: var(--text-dim); }
+.we-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.we-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--accent-dim); border: 1px solid transparent; color: var(--text);
+  border-radius: 16px; padding: 6px 11px; font-family: inherit; font-size: 13px; cursor: pointer;
+}
+.we-chip.sel { border-color: var(--accent); }
+.we-amt { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--accent); }
+.we-picker { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.we-option {
+  background: var(--surface2); border: 1px dashed var(--text-dim); color: var(--text);
+  border-radius: 16px; padding: 6px 11px; font-family: inherit; font-size: 13px; cursor: pointer;
+}
+.we-new { display: flex; gap: 6px; width: 100%; margin-top: 4px; }
+.we-new input { padding: 7px 10px; font-size: 14px; }
+.we-new input[type=number] { width: 76px; flex-shrink: 0; }
+.we-edit { margin-top: 10px; padding: 12px; background: var(--surface2); border-radius: var(--radius-sm); }
+.we-edit-row { margin-bottom: 10px; }
+.we-edit-row input { padding: 8px 10px; font-size: 14px; background: var(--surface); }
+.we-edit-actions { display: flex; gap: 8px; justify-content: space-between; }
+
+/* Heute-Karte als Knopf */
+.card-btn { display: block; width: 100%; text-align: left; font-family: inherit; color: var(--text); cursor: pointer; }
+.card-btn:active { transform: scale(0.99); }
+.today-name { font-size: 15px; }
+.today-amt { font-family: 'DM Mono', monospace; font-size: 12px; color: var(--accent); margin-left: 4px; }
+.ex-note { font-size: 12px; color: var(--accent); margin-top: 3px; line-height: 1.4; opacity: 0.9; }
+.week-plan-tag { font-family: inherit; font-size: 11px; margin-left: 4px; }

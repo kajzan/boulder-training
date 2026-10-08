@@ -61,7 +61,8 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
   ok('Uebersicht zeigt den heutigen Tag', await page.locator('.card-title:has-text("Heute")').isVisible());
   await page.screenshot({ path: path.join(__dirname, 'shot-heute.png'), fullPage: true });
   await page.click('.tab-btn:nth-child(2)');
-  ok('Trainingsplan zeigt den Wochenplan', await page.locator('.plan-day').count() === 3);
+  ok('Planung zeigt 12 Wochen und 2 geplante Wochen', await page.locator('.tl-cell').count() === 12 &&
+    await page.locator('#planContent .plan-swatch').count() === 2);
   await page.screenshot({ path: path.join(__dirname, 'shot-plan.png'), fullPage: true });
   await page.click('.tab-btn:nth-child(1)');
 
@@ -102,14 +103,14 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
     await page.locator('#accountSheet .btn-primary:text-is("Anmelden")').isVisible());
   await page.evaluate(() => closeModal());
   await page.waitForTimeout(300);
-  await page.click('.list-row:has-text("Wochenplan")');
+  await page.click('#settingsContent .list-row:has-text("Wochenplan")');
   ok('Wochenplan-Schalter', await page.evaluate(() => isPlanMode(getActiveCycle())));
-  await page.waitForSelector('#modalContent >> text=Wochenplan einrichten');
-  ok('Einschalten ohne Tage oeffnet die Einrichtung', true);
+  await page.waitForSelector('#weekEditor');
+  ok('Einschalten ohne Wochen oeffnet eine neue Woche', true);
   await page.screenshot({ path: path.join(__dirname, 'shot-plan-einrichten.png') });
-  await page.click('#modalContent button:text-is("Später")');
+  await page.click('#weekEditor button:text-is("Abbrechen")');
   await page.waitForTimeout(300);
-  await page.click('.list-row:has-text("Wochenplan")');
+  await page.click('#settingsContent .list-row:has-text("Wochenplan")');
   await page.click('#settingsContent .list-row >> nth=1');
   ok('Zyklen-Fenster', await page.locator('#cyclesSheet .list-row').count() === 1);
   await page.click('#cyclesSheet button:text-is("Fertig")');
@@ -127,23 +128,37 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
   ok('Sortieren per Ziehen', (await page.locator('#exerciseList .exercise-name').allInnerTexts()).join() ===
     'Hang,Dehnen,Aufwaermen');
 
-  // Wochenplan einschalten, Uebung mit Tagen und Messwert anlegen
+  // Uebung mit Messwert anlegen, dann eine Woche planen, in der sie taeglich dran ist
   await page.waitForTimeout(400);   // die Klicksperre nach dem Ziehen abwarten
-  await page.click('.tab-btn:nth-child(5)');
-  await page.click('.list-row:has-text("Wochenplan")');
-  await page.click('#modalContent button:text-is("Später")');
-  await page.waitForTimeout(300);
-  await page.click('.tab-btn:nth-child(2)');
-  await page.click('button:text-is("+ Hinzufügen")');
+  await page.click('button:text-is("+ Übung")');
   await page.fill('#newExName', 'Klimmzug max');
   await page.fill('#newExInt', '1');
-  for (const d of ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So']) await page.click(`#newExDays button:text-is("${d}")`);
   await page.click('.check-row:has-text("Messwert beim Abhaken")');
   await page.fill('#newExUnit', 'kg');
   await page.screenshot({ path: path.join(__dirname, 'shot-uebung.png') });
-  await page.click('button:text-is("Hinzufügen")');
+  await page.click('#modalContent button:text-is("Hinzufügen")');
   await page.waitForTimeout(400);
-  ok('Uebung zeigt ihre Tage', await page.locator('.exercise-item:has-text("Klimmzug max") >> text=Mo · Di').isVisible());
+  await page.click('.tab-btn:nth-child(5)');
+  await page.click('#settingsContent .list-row:has-text("Wochenplan")');
+  await page.waitForSelector('#weekEditor');
+  await page.fill('.we-title', 'Testwoche');
+  for (let d = 0; d < 7; d++) {
+    await page.click(`#weekEditor .we-day >> nth=${d} >> .we-add`);
+    await page.click('#weekEditor .we-option:text-is("Klimmzug max")');
+  }
+  await page.click('#weekEditor .we-chip >> nth=0');
+  await page.fill('#weekEditor .we-edit-row input >> nth=1', 'einarmig erlaubt');
+  await page.click('#weekEditor button:text-is("Fertig")');
+  await page.screenshot({ path: path.join(__dirname, 'shot-woche.png'), fullPage: true });
+  await page.click('#weekEditor button:text-is("Speichern")');
+  await page.waitForTimeout(400);
+  ok('Woche gespeichert und ueberall zugeordnet', await page.evaluate(() => {
+    const c = getActiveCycle(), p = weekPlans(c)[0];
+    return p.name === 'Testwoche' && p.items[0].days.length === 7 && c.weekAssign.every(id => id === p.id);
+  }));
+  await page.click('.tab-btn:nth-child(2)');
+  ok('Planung zeigt die Woche in der Leiste', await page.locator('.tl-name:text-is("Testwoche")').count() === 4);
+  await page.screenshot({ path: path.join(__dirname, 'shot-planung.png'), fullPage: true });
 
   // Pausieren und fortsetzen (die Woche ist noch leer)
   await page.evaluate(() => { const c = getActiveCycle(); c.startDate = toDateStr(new Date()); c.sessions = {}; saveData(); });
@@ -155,7 +170,8 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
   ok('Pause beendet', await page.locator('button:has-text("Pausieren")').isVisible());
 
   // Abhaken mit Messwert
-  await page.click('.card:has(.card-title:has-text("Heute"))');
+  ok('Heute-Karte zeigt den Hinweis der Woche', await page.locator('.card-btn .ex-note:text-is("einarmig erlaubt")').isVisible());
+  await page.click('.card-btn:has(.card-title:has-text("Heute"))');
   await page.waitForTimeout(300);
   await page.click('#modalContent .check-label:text-is("Klimmzug max")');
   await page.fill('.measure-row input >> nth=0', '12,5');
