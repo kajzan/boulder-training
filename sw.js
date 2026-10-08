@@ -1,10 +1,10 @@
 /* Service Worker – macht die App offline nutzbar.
  *
  * WICHTIG BEIM DEPLOYEN: Nach jeder Änderung an index.html, styles.css oder
- * app.js die VERSION unten hochzählen. Sonst behalten bereits installierte
+ * einer der .js-Dateien die VERSION unten hochzählen. Sonst behalten bereits installierte
  * Geräte unter Umständen den alten Stand.
  */
-const VERSION = 'v8';
+const VERSION = 'v9';
 const CACHE = 'boulder-' + VERSION;
 
 /* Alles, was die App zum Starten braucht. Wird bei der Installation
@@ -14,6 +14,7 @@ const APP_SHELL = [
   './index.html',
   './styles.css',
   './sync.js',
+  './templates.js',
   './app.js',
   './cloud.js',
   './vendor/firebase.js',

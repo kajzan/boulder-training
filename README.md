@@ -2,8 +2,8 @@
 
 Trainingsplanung und Leistungsverfolgung. Läuft als Web-App unter
 https://kajzan.github.io/boulder-training/ und lässt sich auf dem Homescreen
-installieren. Alle Daten bleiben auf dem Gerät (localStorage), es gibt keinen
-Server und kein Konto.
+installieren. Ohne Konto bleiben alle Daten auf dem Gerät (localStorage); mit
+Konto werden sie zusätzlich zwischen Geräten abgeglichen (siehe unten).
 
 ## Dateien
 
@@ -12,6 +12,7 @@ Server und kein Konto.
 | `index.html` | Grundgerüst der Seite |
 | `styles.css` | Gestaltung |
 | `app.js` | die gesamte Logik |
+| `templates.js` | Vorlagen für den Wochenplan – hier lassen sich die Pläne anpassen |
 | `sync.js` | Abgleich-Modell: zerlegt die Daten in Einträge und führt Stände zusammen |
 | `cloud.js` | Konto und Synchronisation über Firebase |
 | `vendor/firebase.js` | Firebase-Bibliothek, gebündelt und lokal statt vom Google-Server |
@@ -31,11 +32,19 @@ In `sw.js` steht oben:
 const VERSION = 'v1';
 ```
 
-Diese Zahl **nach jeder Änderung** an `index.html`, `styles.css`, `app.js`,
-`sync.js` oder `cloud.js`
+Diese Zahl **nach jeder Änderung** an `index.html`, `styles.css` oder einer
+der `.js`-Dateien
 erhöhen (`v2`, `v3`, …) und mit committen. Sonst behalten bereits installierte
 Geräte unter Umständen den alten Stand, weil sie ihre gespeicherte Fassung für
 aktuell halten.
+
+## Vorlagen anpassen
+
+Die Wochenplan-Vorlagen stehen in `templates.js`: je Vorlage Name, Zielgruppe,
+Wochenzahl und die Übungen mit Kategorien, Intensität, Wochentagen
+(0 = Montag) und Beschreibung. Die Wochenziele berechnet die App daraus im
+Rhythmus drei Aufbauwochen + eine Entlastungswoche. Änderungen wirken nur auf
+neu angelegte Zyklen.
 
 ## Tests
 
@@ -55,8 +64,8 @@ Standort Frankfurt) und werden zwischen Geräten abgeglichen, auch nach
 Offline-Phasen.
 
 Abgeglichen wird erst nach bestätigter E-Mail-Adresse. In Firestore liegen
-die Daten gebündelt: ein Dokument je Zyklus und eines für Tests, Messungen und
-Einstellungen (siehe `sync.js`, Abschnitt „Ablage in Firestore"). Das hält die
+die Daten gebündelt: ein Dokument je Zyklus, eines je Logbuch-Jahr und eines
+für Tests, Messungen und Einstellungen (siehe `sync.js`, Abschnitt „Ablage in Firestore"). Das hält die
 Lesekosten klein, weil Firestore nach über 30 Minuten Pause jedes Dokument neu
 berechnet.
 
