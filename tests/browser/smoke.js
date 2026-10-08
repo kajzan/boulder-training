@@ -130,11 +130,11 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
   // Pausieren und fortsetzen (die Woche ist noch leer)
   await page.evaluate(() => { const c = getActiveCycle(); c.startDate = toDateStr(new Date()); c.sessions = {}; saveData(); });
   await page.click('.tab-btn:nth-child(1)');
-  await page.click('a:text-is("Pausieren")');
+  await page.click('button:has-text("Pausieren")');
   ok('Pause sichtbar', await page.locator('button:text-is("Training fortsetzen")').isVisible());
   await page.screenshot({ path: path.join(__dirname, 'shot-pause.png'), fullPage: true });
   await page.click('button:text-is("Training fortsetzen")');
-  ok('Pause beendet', await page.locator('a:text-is("Pausieren")').isVisible());
+  ok('Pause beendet', await page.locator('button:has-text("Pausieren")').isVisible());
 
   // Abhaken mit Messwert
   await page.click('.card:has(.card-title:has-text("Heute"))');

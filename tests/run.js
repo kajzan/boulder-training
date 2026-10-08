@@ -1084,9 +1084,21 @@ pz = neuerZyklus();
 pz.sessions['2026-01-19'] = [{ exId: 'x' }];
 pauseCycle();
 eq('schon trainiert: Pause beginnt erst nächste Woche', pz.pausedSince, 3);
-check('diese Woche läuft noch normal', !isCyclePaused(pz) && getCurrentWeekIndex(pz) === 2);
+check('trotzdem sofort pausiert', isCyclePaused(pz));
+eq('die trainierte Woche bleibt Woche 3, weiter geht es mit Woche 4',
+  [getWeekDates(pz, 2)[0], resumeWeekIndex(pz)], ['2026-01-19', 3]);
+toggleDayEx('2026-01-21', 'x');
+check('ab dem Pausentag wird nichts eingetragen', !pz.sessions['2026-01-21']);
+check('der Tagesdialog bietet stattdessen Fortsetzen an', buildDayModalContent('2026-01-21').includes('resumeCycle()'));
+toggleDayEx('2026-01-20', 'x');
+check('vor der Pause darf nachgetragen werden', (pz.sessions['2026-01-20'] || []).length === 1);
+renderDashboard();
+check('Übersicht zeigt die Pause statt der Woche',
+  el('dashContent').innerHTML.includes('Training pausiert') && el('dashContent').innerHTML.includes('Woche 4</strong>') &&
+  !el('dashContent').innerHTML.includes('Diese Trainingswoche'));
 resumeCycle();
-check('Abbrechen vor Beginn hinterlässt keine Pause', pz.pausedSince === undefined && pz.pausedWeeks === undefined);
+check('Fortsetzen in derselben Woche hinterlässt keine Pause',
+  pz.pausedSince === undefined && pz.pausedAt === undefined && pz.pausedWeeks === undefined);
 
 pz = neuerZyklus({ startDate: '2026-01-05', pausedSince: 2 });
 heuteIst('2026-01-19');

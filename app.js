@@ -351,8 +351,27 @@ function weekOffset(cycle, weekIndex) {
   }
 }
 
+// Pausiert ist ein Zyklus, sobald die Pause gedrückt wurde – auch wenn die
+// laufende Woche (weil schon trainiert) noch als Trainingswoche zählt.
 function isCyclePaused(cycle) {
-  return pausedWeekSet(cycle).has(calendarWeekOf(cycle, toDateStr(new Date())));
+  return !!cycle && Number.isInteger(cycle.pausedSince);
+}
+
+// Die Trainingswoche, mit der es nach der Pause weitergeht
+function resumeWeekIndex(cycle) {
+  const paused = new Set((cycle.pausedWeeks || []));
+  let n = 0;
+  for (let o = 0; o < cycle.pausedSince; o++) if (!paused.has(o)) n++;
+  return Math.min(n, (cycle.weeks || 12) - 1);
+}
+
+// Ab diesem Tag wird während einer Pause nichts mehr eingetragen
+function pauseStartDate(cycle) {
+  return cycle.pausedAt || calendarWeekStart(cycle, cycle.pausedSince);
+}
+
+function isPausedDay(cycle, dateStr) {
+  return isCyclePaused(cycle) && dateStr >= pauseStartDate(cycle);
 }
 
 // Erster Tag einer Kalenderwoche des Zyklus
@@ -362,8 +381,9 @@ function calendarWeekStart(cycle, offset) {
   return toDateStr(d);
 }
 
-// Pausiert ab dieser Woche – oder ab der nächsten, falls diese Woche schon
-// trainiert wurde. Die Einträge sollen ihrer Trainingswoche nicht verloren gehen.
+// Pausiert sofort. Wurde diese Woche schon trainiert, bleibt sie als
+// Trainingswoche bestehen und die übersprungenen Wochen beginnen mit der
+// nächsten – die Einträge sollen ihrer Woche nicht verloren gehen.
 function pauseCycle() {
   const cycle = getActiveCycle();
   if (!cycle) return;
@@ -375,6 +395,7 @@ function pauseCycle() {
     return toDateStr(d);
   }).some(d => (cycle.sessions[d] || []).length > 0);
   cycle.pausedSince = trained ? now + 1 : now;
+  cycle.pausedAt = toDateStr(new Date());
   saveData();
   render();
 }
@@ -389,6 +410,7 @@ function resumeCycle() {
   cycle.pausedWeeks = Array.from(weeks).sort((a, b) => a - b);
   if (cycle.pausedWeeks.length === 0) delete cycle.pausedWeeks;
   delete cycle.pausedSince;
+  delete cycle.pausedAt;
   saveData();
   render();
 }
@@ -697,8 +719,6 @@ function renderDashboard() {
   const iClass = intensityClass(weekInt, target);
   const today = toDateStr(new Date());
   const paused = isCyclePaused(cycle);
-  const nowWeek = calendarWeekOf(cycle, today);
-  const pauseAhead = !paused && Number.isInteger(cycle.pausedSince) && cycle.pausedSince > nowWeek;
 
   document.getElementById('navSub').textContent = cycle.name + (paused ? ' · Pause' : ' · Woche ' + (weekIdx + 1));
 
@@ -726,19 +746,15 @@ function renderDashboard() {
     return DAYS_DE[dow];
   });
 
-  const pauseCard = `
-    <div class="section-hdr"><h2>Pause</h2><span class="text-muted">KW${getKW(new Date())}</span></div>
-    <div class="card">
-      <div style="font-size:14px;line-height:1.5;margin-bottom:12px">
-        Pausiert${Number.isInteger(cycle.pausedSince) ? ' seit ' + formatDay(calendarWeekStart(cycle, cycle.pausedSince)) : ''}.
-        <span class="text-muted">Danach geht es mit Woche ${weekIdx + 1} weiter; der Zyklus verlängert sich entsprechend.</span>
-      </div>
-      <button class="btn btn-primary btn-full" onclick="resumeCycle()">Training fortsetzen</button>
-    </div>`;
+  const pauseCard = paused ? `
+    <div class="pause-hero">
+      <div class="pause-icon">${PAUSE_ICON}</div>
+      <div class="sheet-title">Training pausiert</div>
+      <div class="sheet-text">Seit ${pauseStartDate(cycle) === today ? 'heute' : formatDay(pauseStartDate(cycle))}. Danach geht es mit <strong>Woche ${resumeWeekIndex(cycle) + 1}</strong> weiter – der Zyklus verlängert sich um die Pause.</div>
+      <button class="btn btn-primary btn-full" style="margin-top:18px" onclick="resumeCycle()">Training fortsetzen</button>
+    </div>` : '';
 
-  const weekHdrRight = pauseAhead
-    ? `<span class="text-muted" style="font-size:12px">Pause ab ${formatDay(calendarWeekStart(cycle, cycle.pausedSince))} · <a class="link" onclick="resumeCycle()">Abbrechen</a></span>`
-    : `<span class="text-muted" style="font-size:12px">KW${getKW(new Date())} · <a class="link" onclick="pauseCycle()">Pausieren</a></span>`;
+  const weekHdrRight = `<button class="btn btn-ghost btn-sm pause-btn" onclick="pauseCycle()">${PAUSE_ICON} Pausieren</button>`;
 
   el.innerHTML = `
     ${renderAssessmentReminder()}
@@ -819,6 +835,8 @@ function renderDashboard() {
     }).join('')}
   `;
 }
+
+const PAUSE_ICON = '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.2"/><rect x="14" y="5" width="4" height="14" rx="1.2"/></svg>';
 
 function formatDay(dateStr) {
   const d = parseDate(dateStr);
@@ -919,6 +937,17 @@ function buildDayModalContent(dateStr, returnToWeek) {
   const d = parseDate(dateStr);
   const dow = (d.getDay() + 6) % 7;
   const title = DAYS_FULL[dow] + ', ' + d.getDate() + '. ' + MONTHS_DE[d.getMonth()];
+  // Während der Pause wird nichts eingetragen – sonst wäre es keine Pause.
+  if (isPausedDay(cycle, dateStr)) {
+    return `
+      <div class="pause-hero" style="background:none;border:none;padding-top:4px">
+        <div class="pause-icon">${PAUSE_ICON}</div>
+        <div class="sheet-title">${title}</div>
+        <div class="sheet-text">Das Training ist pausiert. Setze es fort, um wieder Übungen einzutragen.</div>
+        <button class="btn btn-primary btn-full" style="margin-top:18px" onclick="closeModal();resumeCycle()">Training fortsetzen</button>
+        <button class="btn-link" onclick="closeModal()">Schließen</button>
+      </div>`;
+  }
   const entries = cycle.sessions[dateStr] || [];
   const selected = new Set(entries.map(e => entryId(e)));
   const allCats = getAllCategoriesInCycle(cycle);
@@ -995,7 +1024,7 @@ function buildDayModalContent(dateStr, returnToWeek) {
 
 function toggleDayEx(dateStr, exId, returnToWeek) {
   const cycle = getActiveCycle();
-  if (!cycle) return;
+  if (!cycle || isPausedDay(cycle, dateStr)) return;
   if (!cycle.sessions[dateStr]) cycle.sessions[dateStr] = [];
   const idx = cycle.sessions[dateStr].findIndex(e => entryId(e) === exId);
   if (idx >= 0) {
@@ -1170,6 +1199,12 @@ function renderPlan() {
     : '';
 
   el.innerHTML = `
+    ${isCyclePaused(cycle) ? `<div class="list-group" style="margin-bottom:16px">
+      <div class="list-row" onclick="resumeCycle()">
+        <span class="list-icon">${PAUSE_ICON}</span>
+        <div class="list-main"><div class="list-title">Training pausiert</div><div class="list-sub">Tippen zum Fortsetzen</div></div>
+        <span class="chev">›</span>
+      </div></div>` : ''}
     ${planFrom}
     ${weekPlan ? `<div class="card"><div class="card-title">Wochenplan</div>${weekPlan}</div>` : ''}
     <div class="section-hdr" style="margin-top:0">
