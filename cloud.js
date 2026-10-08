@@ -21,6 +21,7 @@ import {
   initializeApp, getAuth, connectAuthEmulator, onAuthStateChanged,
   signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail,
   sendEmailVerification, reauthenticateWithCredential, EmailAuthProvider, deleteUser, signOut,
+  applyActionCode, verifyPasswordResetCode, confirmPasswordReset,
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
   connectFirestoreEmulator, collection, doc, onSnapshot, getDocs, writeBatch,
   FieldPath, deleteField
@@ -65,7 +66,9 @@ const state = {
   status: 'idle',     // idle | connecting | offline | pending | synced | error
   lastSync: null,
   error: '',
-  busy: false
+  busy: false,
+  sheet: null,        // offene Ansicht im Konto-Fenster, siehe renderSheet
+  showPw: false
 };
 
 function readSync() {
@@ -282,14 +285,21 @@ async function withBusy(fn) {
   renderCloudBox();
 }
 
-window.cloudSignIn = () => withBusy((email, password) =>
-  signInWithEmailAndPassword(auth, email, password));
+// ── Anmelden und Konto anlegen ──
+// Beides läuft in einem eigenen Fenster (Sheet), das je nach Schritt eine
+// andere Ansicht zeigt. state.sheet bestimmt, welche.
+window.cloudSignIn = () => withBusy(async (email, password) => {
+  const cred = await signInWithEmailAndPassword(auth, email, password);
+  state.sheet = cred.user.emailVerified ? null : 'verify';
+  if (!state.sheet) closeModal();
+});
 
 // Nach dem Anlegen eine Bestätigungsmail: Sie belegt, dass die Adresse
 // wirklich dem Nutzer gehört. Sonst könnte jemand die Adresse eines anderen
 // besetzen.
 window.cloudSignUp = () => withBusy(async (email, password) => {
   const cred = await createUserWithEmailAndPassword(auth, email, password);
+  state.sheet = 'verify';
   await sendEmailVerification(cred.user);
 });
 
@@ -297,26 +307,34 @@ window.cloudCheckVerified = () => withBusy(() => refreshVerification(true));
 
 window.cloudResendVerification = () => withBusy(async () => {
   await sendEmailVerification(auth.currentUser);
-  alert('Wir haben dir die Bestätigungsmail noch einmal geschickt.');
+  state.notice = 'Mail ist unterwegs. Schau auch im Spam-Ordner nach.';
 });
 
-// ── Konto löschen ──
-window.cloudDeleteAccountStart = () => {
-  openModal(`
-    <div class="modal-title">Konto löschen</div>
-    <div class="text-muted" style="margin-bottom:14px;line-height:1.5">
-      Dein Konto und alle deine Daten in der Cloud werden endgültig gelöscht.
-      Auf diesem Gerät bleiben deine Daten erhalten, andere Geräte gleichen
-      danach nicht mehr ab.
-    </div>
-    <div class="field"><label>Passwort zur Bestätigung</label>
-      <input type="password" id="cloudDelPw" autocomplete="current-password"></div>
-    <div id="cloudDelErr" style="font-size:12px;color:var(--red);margin-bottom:10px"></div>
-    <div class="row">
-      <button class="btn btn-ghost" onclick="closeModal()">Abbrechen</button>
-      <button class="btn btn-danger" id="cloudDelBtn" onclick="cloudDeleteAccountConfirm()">Endgültig löschen</button>
-    </div>`);
+window.cloudResetPassword = () => withBusy(async email => {
+  if (!email) throw { message: 'Bitte zuerst deine E-Mail-Adresse eingeben.' };
+  await sendPasswordResetEmail(auth, email);
+  state.sheet = 'resetSent';
+});
+
+window.cloudSignOut = () => {
+  if (!confirm('Abmelden?\n\nDeine Daten bleiben auf diesem Gerät, werden aber nicht mehr abgeglichen.')) return;
+  stopSync();
+  try { localStorage.removeItem(SYNC_KEY); } catch (e) {}
+  signOut(auth);
+  closeModal();
 };
+
+window.cloudDownloadBackup = () => {
+  const raw = localStorage.getItem(BACKUP_KEY);
+  if (!raw) return;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([raw], { type: 'application/json' }));
+  a.download = 'boulder-stand-vor-anmeldung.json';
+  a.click();
+};
+
+// ── Konto löschen ──
+window.cloudDeleteAccountStart = () => { state.sheet = 'delete'; state.error = ''; renderSheet(); };
 
 window.cloudDeleteAccountConfirm = async () => {
   const user = auth.currentUser;
@@ -337,8 +355,8 @@ window.cloudDeleteAccountConfirm = async () => {
     }
     await deleteUser(user);
     try { localStorage.removeItem(SYNC_KEY); } catch (e) {}
-    closeModal();
-    alert('Dein Konto und alle Daten in der Cloud sind gelöscht. Auf diesem Gerät bleiben deine Daten erhalten.');
+    state.sheet = 'deleted';
+    renderSheet();
   } catch (e) {
     if (err) err.textContent = describeError(e);
     if (btn) { btn.disabled = false; btn.textContent = 'Endgültig löschen'; }
@@ -346,91 +364,313 @@ window.cloudDeleteAccountConfirm = async () => {
   }
 };
 
-window.cloudResetPassword = () => withBusy(async email => {
-  if (!email) throw { message: 'Bitte zuerst die E-Mail-Adresse eingeben.' };
-  await sendPasswordResetEmail(auth, email);
-  alert('Wir haben dir eine E-Mail zum Zurücksetzen des Passworts geschickt. ' +
-        'Danach kannst du dich hier mit dem neuen Passwort anmelden.');
+// ── Bestätigung automatisch erkennen ──
+// Wer den Link in der Mail antippt, landet im Browser und kommt danach zur
+// App zurück. Beim Zurückkommen und, solange das Fenster offen ist, alle paar
+// Sekunden fragt die App nach – ein "Bestätigt"-Knopf ist nicht mehr nötig.
+let verifyTimer = null;
+function watchVerification() {
+  const waiting = state.user && !state.user.emailVerified && sheetOpen() && state.sheet === 'verify';
+  if (waiting && !verifyTimer) {
+    verifyTimer = setInterval(() => {
+      if (!(state.user && !state.user.emailVerified && sheetOpen() && state.sheet === 'verify')) {
+        clearInterval(verifyTimer); verifyTimer = null; return;
+      }
+      if (navigator.onLine) refreshVerification(false).catch(() => {});
+    }, 4000);
+  }
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && state.user && !state.user.emailVerified && navigator.onLine) {
+    refreshVerification(false).catch(() => {});
+  }
 });
 
-window.cloudSignOut = () => {
-  if (!confirm('Abmelden?\n\nDeine Daten bleiben auf diesem Gerät, werden aber nicht mehr abgeglichen.')) return;
-  stopSync();
-  try { localStorage.removeItem(SYNC_KEY); } catch (e) {}
-  signOut(auth);
-};
+// ── Link aus der Mail (eigene Seite statt der von Firebase) ──
+// In Firebase unter Authentication → Vorlagen → Aktions-URL steht die Adresse
+// der App. Der Link öffnet sie dann mit ?mode=…&oobCode=…, und die App erledigt
+// die Bestätigung selbst – im eigenen Design und auf Deutsch.
+const ACTION = (() => {
+  const p = new URLSearchParams(location.search);
+  return p.get('mode') && p.get('oobCode') ? { mode: p.get('mode'), code: p.get('oobCode') } : null;
+})();
 
-window.cloudDownloadBackup = () => {
-  const raw = localStorage.getItem(BACKUP_KEY);
-  if (!raw) return;
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([raw], { type: 'application/json' }));
-  a.download = 'boulder-stand-vor-anmeldung.json';
-  a.click();
-};
+function actionScreen(html) {
+  let el = document.getElementById('actionScreen');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'actionScreen';
+    el.className = 'action-screen';
+    document.body.appendChild(el);
+  }
+  el.innerHTML = `<div class="action-card"><div class="action-logo">⬟ BOULDER</div>${html}</div>`;
+}
 
-// ── Anzeige in den Einstellungen ──
+function appHome() {
+  return location.pathname + (EMULATOR ? '?emulator' : '');
+}
+
+const ICON_OK = '<div class="action-icon ok"><svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div>';
+const ICON_FAIL = '<div class="action-icon fail"><svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M7 7l10 10M17 7L7 17"/></svg></div>';
+
+async function handleAction({ mode, code }) {
+  history.replaceState(null, '', appHome());
+  const back = `<a class="btn btn-primary btn-full" href="${appHome()}">Zur App</a>`;
+  const failed = text => actionScreen(`${ICON_FAIL}<h1>Das hat nicht geklappt</h1><p>${text}</p>${back}`);
+  actionScreen('<div class="action-spin"></div><p>Einen Moment …</p>');
+
+  if (mode === 'verifyEmail') {
+    try {
+      await applyActionCode(auth, code);
+      if (auth.currentUser) refreshVerification(false).catch(() => {});
+      actionScreen(`${ICON_OK}<h1>E-Mail bestätigt</h1>
+        <p>Dein Konto ist bereit. Wechsle zurück zur Boulder-App – die Synchronisation startet dort von selbst.</p>
+        <p class="action-small">Dieses Fenster kannst du schließen.</p>${back}`);
+    } catch (e) {
+      failed('Der Link ist abgelaufen oder wurde schon benutzt. In der App unter Einstellungen → Konto kannst du dir eine neue Mail schicken.');
+    }
+    return;
+  }
+
+  if (mode === 'resetPassword') {
+    let email;
+    try { email = await verifyPasswordResetCode(auth, code); }
+    catch (e) { return failed('Der Link ist abgelaufen oder wurde schon benutzt. Fordere in der App einen neuen an.'); }
+    actionScreen(`<h1>Neues Passwort</h1>
+      <p>für ${esc(email)}</p>
+      <div class="field" style="text-align:left"><input type="password" id="newPw" placeholder="Mindestens 6 Zeichen" autocomplete="new-password"></div>
+      <div id="newPwErr" class="sheet-error"></div>
+      <button class="btn btn-primary btn-full" id="newPwBtn">Passwort speichern</button>`);
+    document.getElementById('newPwBtn').onclick = async () => {
+      const pw = document.getElementById('newPw').value;
+      try {
+        await confirmPasswordReset(auth, code, pw);
+        actionScreen(`${ICON_OK}<h1>Passwort geändert</h1><p>Melde dich in der App mit deinem neuen Passwort an.</p>${back}`);
+      } catch (e) {
+        document.getElementById('newPwErr').textContent = describeError(e);
+      }
+    };
+    return;
+  }
+
+  failed('Dieser Link wird von der App nicht unterstützt.');
+}
+if (ACTION) handleAction(ACTION);
+
+// ── Anzeige ──
 function statusText() {
   const zeit = state.lastSync
     ? state.lastSync.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) : '';
   switch (state.status) {
     case 'connecting': return { text: 'Verbinde …', color: 'var(--text-muted)' };
-    case 'offline': return { text: 'Offline – Änderungen werden abgeglichen, sobald Netz da ist', color: 'var(--blue)' };
-    case 'pending': return { text: 'Änderungen werden übertragen …', color: 'var(--text-muted)' };
+    case 'offline': return { text: 'Offline – wird abgeglichen, sobald Netz da ist', color: 'var(--blue)' };
+    case 'pending': return { text: 'Wird übertragen …', color: 'var(--text-muted)' };
     case 'synced': return { text: 'Synchronisiert' + (zeit ? ' · ' + zeit : ''), color: 'var(--green-dark)' };
     case 'error': return { text: state.error, color: 'var(--red)' };
     default: return { text: '', color: 'var(--text-muted)' };
   }
 }
 
+const ICON_USER = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg>';
+
+// Die Konto-Zeile in den Einstellungen
 function renderCloudBox() {
   const box = document.getElementById('cloudBox');
-  if (!box) return;
+  if (box) {
+    const u = state.user;
+    if (!u) {
+      box.innerHTML = `
+        <div class="list-row" onclick="openAccountSheet('signin')">
+          <div class="avatar">${ICON_USER}</div>
+          <div class="list-main">
+            <div class="list-title">Anmelden</div>
+            <div class="list-sub">Deine Daten auf allen Geräten</div>
+          </div>
+          <span class="chev">›</span>
+        </div>`;
+    } else {
+      const s = statusText();
+      const sub = u.emailVerified
+        ? `<span class="dot" style="background:${s.color}"></span>${esc(s.text)}`
+        : `<span style="color:var(--accent)">E-Mail noch nicht bestätigt</span>`;
+      box.innerHTML = `
+        <div class="list-row" onclick="openAccountSheet('${u.emailVerified ? 'account' : 'verify'}')">
+          <div class="avatar filled">${esc((u.email || '?')[0].toUpperCase())}</div>
+          <div class="list-main">
+            <div class="list-title" style="overflow:hidden;text-overflow:ellipsis">${esc(u.email || '')}</div>
+            <div class="list-sub">${sub}</div>
+          </div>
+          <span class="chev">›</span>
+        </div>`;
+    }
+  }
+  renderSheet();
+  watchVerification();
+}
+window.renderCloudBox = renderCloudBox;
 
-  if (!state.user) {
-    box.innerHTML = `
-      <div class="card">
-        <div class="text-muted" style="margin-bottom:12px">Mit einem Konto hast du deine Daten auf allen Geräten. Ohne Konto bleibt alles nur auf diesem Gerät.</div>
-        <div class="field"><label>E-Mail</label>
-          <input type="email" id="cloudEmail" autocomplete="username" autocapitalize="off" value="${esc(state.formEmail || '')}"></div>
-        <div class="field"><label>Passwort (mind. 6 Zeichen)</label>
-          <input type="password" id="cloudPassword" autocomplete="current-password"></div>
-        ${state.error ? `<div style="font-size:12px;color:var(--red);margin-bottom:10px">${esc(state.error)}</div>` : ''}
-        <div class="row">
-          <button class="btn btn-ghost" onclick="cloudSignUp()" ${state.busy ? 'disabled' : ''}>Konto erstellen</button>
-          <button class="btn btn-primary" onclick="cloudSignIn()" ${state.busy ? 'disabled' : ''}>Anmelden</button>
+function sheetOpen() {
+  return !!document.getElementById('accountSheet') &&
+    document.getElementById('modalOverlay').classList.contains('open');
+}
+
+window.openAccountSheet = view => {
+  state.sheet = view;
+  state.error = state.status === 'error' ? state.error : '';
+  state.notice = '';
+  openModal('<div id="accountSheet"></div>');
+  renderCloudBox();
+};
+
+window.cloudSwitchSheet = view => {
+  state.formEmail = (document.getElementById('cloudEmail')?.value || state.formEmail || '').trim();
+  state.sheet = view;
+  state.error = '';
+  renderSheet();
+};
+
+window.cloudTogglePw = () => {
+  state.showPw = !state.showPw;
+  const input = document.getElementById('cloudPassword');
+  if (input) input.type = state.showPw ? 'text' : 'password';
+  const btn = document.getElementById('cloudPwToggle');
+  if (btn) btn.textContent = state.showPw ? 'Verbergen' : 'Zeigen';
+};
+
+function renderSheet() {
+  const el = document.getElementById('accountSheet');
+  if (!el) return;
+  const u = state.user;
+  let view = state.sheet;
+  // Der Stand kann sich unter dem offenen Fenster ändern (Bestätigung kam an,
+  // anderes Gerät hat abgemeldet). Dann die passende Ansicht zeigen.
+  if (u && (view === 'signin' || view === 'signup')) view = u.emailVerified ? 'account' : 'verify';
+  if (u && u.emailVerified && view === 'verify') view = 'verified';
+  if (!u && (view === 'account' || view === 'verify' || view === 'delete')) view = 'signin';
+  state.sheet = view;
+
+  const busy = state.busy ? 'disabled' : '';
+  const error = state.error && state.status !== 'synced'
+    ? `<div class="sheet-error">${esc(state.error)}</div>` : '';
+  const notice = state.notice ? `<div class="sheet-notice">${esc(state.notice)}</div>` : '';
+
+  if (view === 'signin' || view === 'signup') {
+    const up = view === 'signup';
+    el.innerHTML = `
+      <div class="sheet-head">
+        <div class="sheet-title">${up ? 'Konto erstellen' : 'Willkommen zurück'}</div>
+        <div class="sheet-text">${up
+          ? 'Mit einem Konto sind deine Trainingsdaten auf all deinen Geräten – und sicher, falls das Handy verloren geht.'
+          : 'Melde dich an, um deine Daten auf diesem Gerät abzugleichen.'}</div>
+      </div>
+      <div class="seg" style="margin-bottom:16px">
+        <button type="button" class="${up ? '' : 'on'}" onclick="cloudSwitchSheet('signin')">Anmelden</button>
+        <button type="button" class="${up ? 'on' : ''}" onclick="cloudSwitchSheet('signup')">Registrieren</button>
+      </div>
+      <div class="field"><label>E-Mail</label>
+        <input type="email" id="cloudEmail" autocomplete="username" autocapitalize="off" inputmode="email"
+          value="${esc(state.formEmail || '')}" placeholder="name@beispiel.de"></div>
+      <div class="field"><label>Passwort</label>
+        <div class="pw-wrap">
+          <input type="${state.showPw ? 'text' : 'password'}" id="cloudPassword"
+            autocomplete="${up ? 'new-password' : 'current-password'}" placeholder="${up ? 'Mindestens 6 Zeichen' : ''}"
+            onkeydown="if(event.key==='Enter')${up ? 'cloudSignUp' : 'cloudSignIn'}()">
+          <button type="button" class="pw-toggle" id="cloudPwToggle" onclick="cloudTogglePw()">${state.showPw ? 'Verbergen' : 'Zeigen'}</button>
         </div>
-        <button class="btn btn-ghost btn-full mt-8" style="font-size:12px;border:none;background:none;color:var(--text-muted)"
-          onclick="cloudResetPassword()" ${state.busy ? 'disabled' : ''}>Passwort vergessen?</button>
-      </div>`;
+      </div>
+      ${error}
+      <button class="btn btn-primary btn-full" onclick="${up ? 'cloudSignUp' : 'cloudSignIn'}()" ${busy}>
+        ${state.busy ? 'Einen Moment …' : up ? 'Konto erstellen' : 'Anmelden'}</button>
+      ${up
+        ? `<div class="sheet-small">Wir schicken dir eine Mail, um deine Adresse zu bestätigen. Deine Daten auf diesem Gerät bleiben erhalten und werden mitgenommen.</div>`
+        : `<button class="btn-link" onclick="cloudResetPassword()" ${busy}>Passwort vergessen?</button>`}`;
     return;
   }
 
+  if (view === 'verify') {
+    el.innerHTML = `
+      <div class="sheet-hero">
+        <div class="action-icon mail"><svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg></div>
+        <div class="sheet-title">Bestätige deine E-Mail</div>
+        <div class="sheet-text">Wir haben eine Mail an <strong>${esc(u.email || '')}</strong> geschickt. Tippe auf den Link darin – danach geht es hier von selbst weiter.</div>
+        <div class="waiting"><span class="action-spin small"></span>Warte auf Bestätigung …</div>
+      </div>
+      ${notice}${state.error && state.status !== 'error' ? error : ''}
+      <button class="btn btn-ghost btn-full" onclick="cloudResendVerification()" ${busy}>Mail erneut senden</button>
+      <div class="sheet-small">Keine Mail? Schau im Spam-Ordner nach. Absender ist noreply@boulder-training.firebaseapp.com.</div>
+      <button class="btn-link" onclick="closeModal()">Später</button>`;
+    return;
+  }
+
+  if (view === 'verified') {
+    el.innerHTML = `
+      <div class="sheet-hero">
+        ${ICON_OK}
+        <div class="sheet-title">Alles bereit</div>
+        <div class="sheet-text">Deine E-Mail ist bestätigt. Deine Daten werden ab jetzt auf all deinen Geräten abgeglichen.</div>
+      </div>
+      <button class="btn btn-primary btn-full" onclick="closeModal()">Fertig</button>`;
+    return;
+  }
+
+  if (view === 'resetSent') {
+    el.innerHTML = `
+      <div class="sheet-hero">
+        <div class="action-icon mail"><svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg></div>
+        <div class="sheet-title">Mail ist unterwegs</div>
+        <div class="sheet-text">Über den Link in der Mail an <strong>${esc(state.formEmail || '')}</strong> legst du ein neues Passwort fest. Danach meldest du dich hier damit an.</div>
+      </div>
+      <button class="btn btn-primary btn-full" onclick="cloudSwitchSheet('signin')">Zur Anmeldung</button>`;
+    return;
+  }
+
+  if (view === 'delete') {
+    el.innerHTML = `
+      <div class="sheet-head">
+        <div class="sheet-title">Konto löschen</div>
+        <div class="sheet-text">Dein Konto und alle deine Daten in der Cloud werden endgültig gelöscht. Auf diesem Gerät bleiben sie erhalten, andere Geräte gleichen nicht mehr ab.</div>
+      </div>
+      <div class="field"><label>Passwort zur Bestätigung</label>
+        <input type="password" id="cloudDelPw" autocomplete="current-password"></div>
+      <div id="cloudDelErr" class="sheet-error"></div>
+      <button class="btn btn-danger btn-full" id="cloudDelBtn" onclick="cloudDeleteAccountConfirm()">Endgültig löschen</button>
+      <button class="btn-link" onclick="cloudSwitchSheet('account')">Abbrechen</button>`;
+    return;
+  }
+
+  if (view === 'deleted') {
+    el.innerHTML = `
+      <div class="sheet-hero">
+        ${ICON_OK}
+        <div class="sheet-title">Konto gelöscht</div>
+        <div class="sheet-text">Dein Konto und alle Daten in der Cloud sind gelöscht. Auf diesem Gerät bleiben deine Daten erhalten.</div>
+      </div>
+      <button class="btn btn-primary btn-full" onclick="closeModal()">Fertig</button>`;
+    return;
+  }
+
+  // account
   const s = statusText();
   const backup = localStorage.getItem(BACKUP_KEY);
-  box.innerHTML = `
-    <div class="card">
-      <div style="font-weight:600;font-size:15px;margin-bottom:4px;overflow:hidden;text-overflow:ellipsis">${esc(state.user.email || '')}</div>
-      <div style="font-size:12px;color:${s.color};margin-bottom:12px">${esc(s.text)}</div>
-      ${state.user.emailVerified ? '' : `
-        <div style="font-size:12px;line-height:1.5;padding:10px 12px;margin-bottom:12px;border-radius:var(--radius-sm);
-                    background:var(--accent-dim);border:1px solid var(--accent)">
-          Bitte bestätige deine E-Mail-Adresse über den Link in der Mail, die wir dir geschickt haben.
-          Danach hier „Bestätigt" tippen.
-          <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
-            <button class="btn btn-primary btn-sm" onclick="cloudCheckVerified()" ${state.busy ? 'disabled' : ''}>Bestätigt</button>
-            <button class="btn btn-ghost btn-sm" onclick="cloudResendVerification()" ${state.busy ? 'disabled' : ''}>Mail erneut senden</button>
-          </div>
-        </div>`}
-      <div style="display:flex;gap:6px;flex-wrap:wrap">
-        <button class="btn btn-ghost btn-sm" onclick="cloudSignOut()">Abmelden</button>
-        ${backup ? `<button class="btn btn-ghost btn-sm" onclick="cloudDownloadBackup()">Stand vor der Anmeldung sichern</button>` : ''}
+  el.innerHTML = `
+    <div class="sheet-hero" style="padding-top:4px">
+      <div class="avatar filled big">${esc((u.email || '?')[0].toUpperCase())}</div>
+      <div class="sheet-title" style="font-size:16px;word-break:break-all">${esc(u.email || '')}</div>
+      <div class="sheet-text sheet-status"><span class="dot" style="background:${s.color}"></span>${esc(s.text)}</div>
+    </div>
+    <div class="list-group">
+      ${backup ? `<div class="list-row" onclick="cloudDownloadBackup()">
+        <div class="list-main"><div class="list-title">Stand vor der Anmeldung</div><div class="list-sub">Als Datei sichern</div></div>
+        <span class="chev">›</span></div>` : ''}
+      <div class="list-row" onclick="cloudSignOut()">
+        <div class="list-main"><div class="list-title">Abmelden</div></div>
       </div>
-      <button class="btn btn-ghost btn-full mt-8" style="font-size:12px;border:none;background:none;color:var(--red)"
-        onclick="cloudDeleteAccountStart()">Konto löschen</button>
-    </div>`;
+      <div class="list-row" onclick="cloudDeleteAccountStart()">
+        <div class="list-main"><div class="list-title" style="color:var(--red)">Konto löschen</div></div>
+      </div>
+    </div>
+    <button class="btn btn-ghost btn-full" style="margin-top:14px" onclick="closeModal()">Fertig</button>`;
 }
-window.renderCloudBox = renderCloudBox;
 
 if (EMULATOR) window.__cloud = { auth, db, state, doc, collection, onSnapshot, getDocs, writeBatch };
 renderCloudBox();

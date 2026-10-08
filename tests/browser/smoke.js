@@ -76,8 +76,28 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
     ok(`Ansicht ${n} rendert`,
       await page.evaluate(() => document.querySelector('.view.active').innerText.trim().length > 0));
   }
-  ok('Konto-Kasten erscheint ohne Anmeldung',
-    await page.locator('#cloudEmail').isVisible() && await page.locator('button:text-is("Konto erstellen")').isVisible());
+  ok('Konto-Zeile erscheint ohne Anmeldung', await page.locator('#cloudBox >> text=Anmelden').isVisible());
+  await page.screenshot({ path: path.join(__dirname, 'shot-einstellungen.png'), fullPage: true });
+  await page.click('#cloudBox .list-row');
+  ok('Anmelden-Fenster oeffnet sich', await page.locator('#cloudEmail').isVisible());
+  await page.click('#accountSheet .seg button:text-is("Registrieren")');
+  await page.fill('#cloudPassword', 'abc');
+  await page.click('#cloudPwToggle');
+  ok('Passwort laesst sich anzeigen', (await page.getAttribute('#cloudPassword', 'type')) === 'text');
+  ok('Registrieren zeigt den passenden Knopf', await page.locator('#accountSheet .btn-primary:text-is("Konto erstellen")').isVisible());
+  await page.screenshot({ path: path.join(__dirname, 'shot-registrieren.png') });
+  await page.click('#accountSheet .seg button:text-is("Anmelden")');
+  ok('Wechsel zurueck behaelt die Eingabe nicht faelschlich leer',
+    await page.locator('#accountSheet .btn-primary:text-is("Anmelden")').isVisible());
+  await page.evaluate(() => closeModal());
+  await page.waitForTimeout(300);
+  await page.click('.list-row:has-text("Wochenplan")');
+  ok('Wochenplan-Schalter', await page.evaluate(() => isPlanMode(getActiveCycle())));
+  await page.click('.list-row:has-text("Wochenplan")');
+  await page.click('#settingsContent .list-row >> nth=1');
+  ok('Zyklen-Fenster', await page.locator('#cyclesSheet .list-row').count() === 1);
+  await page.click('#cyclesSheet button:text-is("Fertig")');
+  await page.waitForTimeout(300);
 
   // Sortieren per Ziehen
   await page.click('.tab-btn:nth-child(2)');
@@ -94,7 +114,7 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
   // Wochenplan einschalten, Uebung mit Tagen und Messwert anlegen
   await page.waitForTimeout(400);   // die Klicksperre nach dem Ziehen abwarten
   await page.click('.tab-btn:nth-child(5)');
-  await page.click('.check-row:has-text("Wochenplan mit festen")');
+  await page.click('.list-row:has-text("Wochenplan")');
   await page.click('.tab-btn:nth-child(2)');
   await page.click('button:text-is("+ Hinzufügen")');
   await page.fill('#newExName', 'Klimmzug max');
@@ -155,7 +175,7 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
   ok('Reihenfolge ueberlebt den Neustart',
     (await page.locator('#exerciseList .exercise-name').allInnerTexts()).join() === 'Hang,Dehnen,Aufwaermen,Klimmzug max');
   await page.click('.tab-btn:nth-child(5)');
-  ok('Konto-Kasten auch offline da', await page.locator('#cloudEmail').isVisible());
+  ok('Konto-Zeile auch offline da', await page.locator('#cloudBox >> text=Anmelden').isVisible());
 
   ok('keine Fehler insgesamt', errs.length === 0, errs.join(' | '));
   console.log(log.join('\n'));

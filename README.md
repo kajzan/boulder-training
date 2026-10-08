@@ -69,6 +69,14 @@ für Tests, Messungen und Einstellungen (siehe `sync.js`, Abschnitt „Ablage in
 Lesekosten klein, weil Firestore nach über 30 Minuten Pause jedes Dokument neu
 berechnet.
 
+Die Links in den Mails (Adresse bestätigen, Passwort zurücksetzen) führen auf
+die App selbst, die sie im eigenen Design abschließt (`cloud.js`, Abschnitt
+„Link aus der Mail"). Dafür steht in der Firebase-Konsole unter
+Authentication → Vorlagen bei jeder Vorlage als Aktions-URL
+`https://kajzan.github.io/boulder-training/`. Den Text der Mails selbst lässt
+Firebase nicht frei gestalten; ganz eigene Mails bräuchten den Blaze-Tarif und
+einen Maildienst.
+
 Die Sicherheitsregeln stehen in `firestore.rules`. Sie werden **nicht**
 automatisch übernommen: Nach jeder Änderung den Inhalt in der Firebase-Konsole
 unter Firestore → Regeln einfügen und veröffentlichen.

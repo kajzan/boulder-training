@@ -44,24 +44,50 @@ async function lokalerStand(g, data) {
 
 async function anmelden(g, email, pw, neu) {
   await g.page.click('.tab-btn:nth-child(5)');
+  await g.page.click('#cloudBox .list-row');
+  if (neu) await g.page.click('#accountSheet .seg button:text-is("Registrieren")');
   await g.page.fill('#cloudEmail', email);
   await g.page.fill('#cloudPassword', pw);
-  await g.page.click(neu ? 'button:text-is("Konto erstellen")' : 'button:text-is("Anmelden")');
+  await g.page.click('#accountSheet .btn-primary');
+}
+
+// Konto-Fenster aus den Einstellungen oeffnen
+async function kontoFenster(g) {
+  await g.page.click('.tab-btn:nth-child(5)');
+  await g.page.click('#cloudBox .list-row');
+  await g.page.waitForSelector('#accountSheet .list-group');
 }
 
 // Bestaetigungslink aus dem Emulator holen und "anklicken", wie es der
-// Nutzer in seiner Mail tun wuerde. Danach in der App "Bestaetigt" tippen.
+// Nutzer in seiner Mail tun wuerde. Mit eigeneSeite oeffnet er die
+// Bestaetigungsseite der App in einem frischen Browser (wie Safari neben der
+// Homescreen-App), sonst die des Emulators. Die App merkt die Bestaetigung
+// von selbst; danach das Fenster mit "Fertig" schliessen.
 const EMU_AUTH = 'http://127.0.0.1:9099/emulator/v1/projects/demo-boulder';
-async function bestaetigen(g, email) {
-  let link;
-  for (let i = 0; i < 20 && !link; i++) {
+async function bestaetigen(g, email, eigeneSeite) {
+  let code;
+  for (let i = 0; i < 20 && !code; i++) {
     const codes = (await (await fetch(EMU_AUTH + '/oobCodes')).json()).oobCodes || [];
-    const c = codes.filter(x => x.email === email && x.requestType === 'VERIFY_EMAIL').pop();
-    if (c) link = c.oobLink; else await new Promise(r => setTimeout(r, 300));
+    code = codes.filter(x => x.email === email && x.requestType === 'VERIFY_EMAIL').pop();
+    if (!code) await new Promise(r => setTimeout(r, 300));
   }
-  if (!link) throw new Error('keine Bestaetigungsmail fuer ' + email);
-  await fetch(link.replace('localhost', '127.0.0.1'));
-  await g.page.click('button:text-is("Bestätigt")');
+  if (!code) throw new Error('keine Bestaetigungsmail fuer ' + email);
+  if (eigeneSeite) {
+    const safari = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const seite = await safari.newPage();
+    seite.on('pageerror', e => errors.push('Bestaetigungsseite: ' + e.message));
+    await seite.goto(URL + '&mode=verifyEmail&oobCode=' + encodeURIComponent(code.oobCode));
+    await seite.waitForSelector('text=E-Mail bestätigt', { timeout: 15000 });
+    ok('Bestaetigungsseite der App bestaetigt die Adresse', true);
+    ok('Bestaetigungsseite raeumt den Code aus der Adresse',
+      !(await seite.evaluate(() => location.search)).includes('oobCode'));
+    await seite.screenshot({ path: path.join(__dirname, 'shot-bestaetigt.png') });
+    await safari.close();
+  } else {
+    await fetch(code.oobLink.replace('localhost', '127.0.0.1'));
+  }
+  await g.page.waitForSelector('#accountSheet >> text=Alles bereit', { timeout: 20000 });
+  await g.page.click('#accountSheet button:text-is("Fertig")');
 }
 
 // Rohdaten in Firestore, an den Sicherheitsregeln vorbei (nur im Emulator)
@@ -98,15 +124,17 @@ const START = {
   const handy = await geraet('Handy');
   await lokalerStand(handy, START);
   await anmelden(handy, 'kajetan@test.de', 'geheim123', true);
-  await handy.page.waitForSelector('button:text-is("Bestätigt")', { timeout: 15000 });
+  await handy.page.waitForSelector('text=Bestätige deine E-Mail', { timeout: 15000 });
+  await handy.page.screenshot({ path: path.join(__dirname, 'shot-bestaetigen.png') });
   await handy.page.waitForFunction(() => window.__cloud.state.status === 'error', null, { timeout: 15000 });
   ok('Handy: ohne bestaetigte Adresse wird nichts abgeglichen',
     await handy.page.evaluate(() => window.__cloud.state.error.includes('bestätige')),
     await handy.page.evaluate(() => window.__cloud.state.error));
-  await bestaetigen(handy, 'kajetan@test.de');
+  await bestaetigen(handy, 'kajetan@test.de', true);
+  ok('Handy: erkennt die Bestaetigung ohne Knopfdruck', true);
   await synchron(handy);
   ok('Handy: nach der Bestaetigung verschwindet der Hinweis',
-    !(await handy.page.locator('button:text-is("Bestätigt")').isVisible()));
+    !(await handy.page.locator('#cloudBox >> text=nicht bestätigt').isVisible()));
   const uid = await handy.page.evaluate(() => window.__cloud.state.user.uid);
   ok('Handy: Konto angelegt und synchronisiert', !!uid);
   const anzahl = await handy.page.evaluate(() => Object.keys(window.__cloud.state.base).length);
@@ -238,8 +266,8 @@ const START = {
   ok('Umzug: alte Einzeldokumente sind in die gebuendelte Ablage gewandert', umgezogen, rohFremd.join());
 
   // ── 10. Konto loeschen ──
-  await fremd.page.click('.tab-btn:nth-child(5)');
-  await fremd.page.click('button:text-is("Konto löschen")');
+  await kontoFenster(fremd);
+  await fremd.page.click('#accountSheet .list-title:text-is("Konto löschen")');
   await fremd.page.fill('#cloudDelPw', 'falsch999');
   await fremd.page.click('#cloudDelBtn');
   await fremd.page.waitForFunction(() => document.getElementById('cloudDelErr').textContent.length > 0);
@@ -257,8 +285,8 @@ const START = {
     !(nochDa.userInfo || []).some(u => u.email === 'fremd@test.de'));
 
   // ── 11. Abmelden behaelt die Daten auf dem Geraet ──
-  await laptop.page.click('.tab-btn:nth-child(5)');
-  await laptop.page.click('button:text-is("Abmelden")');
+  await kontoFenster(laptop);
+  await laptop.page.click('#accountSheet .list-title:text-is("Abmelden")');
   await laptop.page.waitForFunction(() => !window.__cloud.state.user);
   ok('Laptop: abgemeldet, Daten bleiben auf dem Geraet', (await daten(laptop)).cycles.length === 2);
   await laptop.page.evaluate(() => { getAppData().cycles[0].name = 'nur lokal'; saveData(); });
@@ -267,6 +295,9 @@ const START = {
     !(await daten(handy)).cycles.some(c => c.name === 'nur lokal'));
 
   await handy.page.click('.tab-btn:nth-child(5)');
+  await handy.page.screenshot({ path: path.join(__dirname, 'shot-einstellungen.png') });
+  await kontoFenster(handy);
+  await handy.page.waitForTimeout(400);
   await handy.page.screenshot({ path: path.join(__dirname, 'shot-konto-synchron.png') });
   await fremd.page.click('.tab-btn:nth-child(5)').catch(() => {});
 

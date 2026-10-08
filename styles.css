@@ -403,3 +403,113 @@ textarea { resize: vertical; font-size: 14px; line-height: 1.4; }
 .log-top { background: var(--green-dark-bg); color: var(--green-dark); }
 .log-project { background: var(--surface2); color: var(--text-muted); }
 .log-name { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+
+/* ── LISTEN IM STIL VON iOS (Einstellungen, Konto) ── */
+.group-label {
+  font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--text-muted); margin: 24px 4px 8px;
+}
+.group-note { font-size: 11px; color: var(--text-dim); margin: 8px 4px 0; line-height: 1.5; }
+.list-group {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); overflow: hidden;
+}
+.list-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 13px 16px; min-height: 52px; cursor: pointer;
+  transition: background 0.15s;
+}
+.list-row + .list-row { border-top: 1px solid var(--border); }
+.list-row:active { background: var(--surface2); }
+.list-main { flex: 1; min-width: 0; }
+.list-title { font-size: 15px; }
+.list-sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; display: flex; align-items: center; gap: 6px; }
+.chev { color: var(--text-dim); font-size: 22px; line-height: 1; margin-right: -4px; }
+.list-check { color: var(--accent); display: flex; }
+.settings-foot { text-align: center; font-size: 11px; color: var(--text-dim); margin: 28px 0 8px; }
+.dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+
+/* Schalter */
+.switch {
+  width: 46px; height: 28px; border-radius: 14px; flex-shrink: 0;
+  background: var(--surface2); border: 1px solid var(--border);
+  position: relative; transition: background 0.2s, border-color 0.2s;
+}
+.switch::after {
+  content: ''; position: absolute; top: 2px; left: 2px;
+  width: 22px; height: 22px; border-radius: 50%; background: var(--text-muted);
+  transition: transform 0.2s, background 0.2s;
+}
+.switch.on { background: var(--accent); border-color: var(--accent); }
+.switch.on::after { transform: translateX(18px); background: #000; }
+
+/* Avatar */
+.avatar {
+  width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--surface2); border: 1px solid var(--border); color: var(--text-muted);
+  font-family: 'DM Mono', monospace; font-size: 15px;
+}
+.avatar.filled { background: var(--accent); border-color: var(--accent); color: #000; font-weight: 500; }
+.avatar.big { width: 56px; height: 56px; font-size: 22px; margin: 0 auto 10px; }
+
+/* ── KONTO-FENSTER ── */
+.sheet-head { margin-bottom: 18px; }
+.sheet-hero { text-align: center; padding: 8px 0 18px; }
+.sheet-title { font-size: 20px; font-weight: 600; margin-bottom: 6px; }
+.sheet-text { font-size: 14px; color: var(--text-muted); line-height: 1.5; }
+.sheet-text strong { color: var(--text); font-weight: 500; }
+.sheet-status { display: flex; align-items: center; justify-content: center; gap: 6px; }
+.sheet-small { font-size: 12px; color: var(--text-dim); line-height: 1.5; margin-top: 12px; text-align: center; }
+.sheet-error { font-size: 13px; color: var(--red); margin-bottom: 12px; line-height: 1.4; }
+.sheet-error:empty { display: none; }
+.sheet-notice {
+  font-size: 13px; line-height: 1.4; margin-bottom: 12px; padding: 10px 12px;
+  border-radius: var(--radius-sm); background: var(--accent-dim); color: var(--accent);
+}
+.btn-link {
+  display: block; width: 100%; margin-top: 10px; padding: 10px;
+  background: none; border: none; color: var(--text-muted);
+  font-family: inherit; font-size: 13px; cursor: pointer;
+}
+.pw-wrap { position: relative; }
+.pw-wrap input { padding-right: 84px; }
+.pw-toggle {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  background: none; border: none; color: var(--text-muted);
+  font-family: inherit; font-size: 12px; padding: 8px; cursor: pointer;
+}
+.waiting {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 12px; color: var(--text-muted); margin-top: 14px;
+}
+.btn:disabled { opacity: 0.5; }
+
+/* ── BESTÄTIGUNGSSEITE (Link aus der Mail) ── */
+.action-screen {
+  position: fixed; inset: 0; z-index: 500; background: var(--bg);
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+}
+.action-card { width: 100%; max-width: 360px; text-align: center; }
+.action-card h1 { font-size: 22px; font-weight: 600; margin-bottom: 8px; }
+.action-card p { font-size: 14px; color: var(--text-muted); line-height: 1.5; margin-bottom: 20px; }
+.action-card .action-small { font-size: 12px; color: var(--text-dim); margin-top: -10px; }
+.action-card a.btn { text-decoration: none; }
+.action-logo {
+  font-family: 'DM Mono', monospace; font-size: 14px; color: var(--accent);
+  letter-spacing: 0.05em; margin-bottom: 36px;
+}
+.action-icon {
+  width: 60px; height: 60px; border-radius: 50%; margin: 0 auto 16px;
+  display: flex; align-items: center; justify-content: center;
+}
+.action-icon.ok { background: var(--accent); color: #000; }
+.action-icon.fail { background: var(--red-bg); color: var(--red); }
+.action-icon.mail { background: var(--accent-dim); color: var(--accent); }
+.action-spin {
+  width: 28px; height: 28px; margin: 0 auto 14px; border-radius: 50%;
+  border: 2px solid var(--border); border-top-color: var(--accent);
+  animation: spin 0.8s linear infinite;
+}
+.action-spin.small { width: 12px; height: 12px; margin: 0; border-width: 1.5px; }
+@keyframes spin { to { transform: rotate(360deg); } }

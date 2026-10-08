@@ -1799,59 +1799,85 @@ function deleteAscent(id) {
 function renderSettings() {
   const el = document.getElementById('settingsContent');
   const cycle = getActiveCycle();
+  const plan = isPlanMode(cycle);
   el.innerHTML = `
-    <div class="section-hdr" style="margin-top:0"><h2>Zyklus</h2></div>
-
-    <div class="card">
-      <div class="card-title">Aktiver Zyklus</div>
-      ${cycle
-        ? `<div style="font-weight:600;font-size:15px;margin-bottom:4px">${esc(cycle.name)}</div>
-           <div class="text-muted">Gestartet: ${parseDate(cycle.startDate).toLocaleDateString('de-DE')} · Ende: ${parseDate(getCycleEndDate(cycle)).toLocaleDateString('de-DE')}</div>
-           <div class="divider"></div>
-           <div class="check-row" onclick="togglePlanMode()">
-             <div class="check-box ${isPlanMode(cycle) ? 'checked' : ''}">${isPlanMode(cycle) ? CHECK_SVG : ''}</div>
-             <div class="check-label">Wochenplan mit festen Trainingstagen</div>
-           </div>
-           <div style="font-size:11px;color:var(--text-dim);margin:2px 0 0 32px">Aus: freies Eintragen ohne feste Tage.</div>
-           <div class="divider"></div>
-           <button class="btn btn-danger btn-sm" onclick="confirmEndCycle()">Zyklus abschließen</button>`
-        : `<div class="text-muted">Kein aktiver Zyklus.</div>`
-      }
+    <div class="group-label" style="margin-top:0">Konto</div>
+    <div class="list-group" id="cloudBox">
+      <div class="list-row"><div class="list-main"><div class="list-sub">Konto wird geladen …</div></div></div>
     </div>
 
-    <button class="btn btn-primary btn-full" style="margin-bottom:12px" onclick="openNewCycleModal()">
-      + Neuen Zyklus starten
-    </button>
-
-    ${appData.cycles.length > 0 ? `
-      <div class="card-title" style="margin-top:8px">Zyklus wechseln / löschen</div>
-      ${appData.cycles.map(c => `
-        <div class="week-row ${c.id === appData.activeCycleId ? 'current-week' : ''}">
-          <div class="week-row-left" onclick="setActiveCycle('${c.id}')" style="cursor:pointer">
-            <div class="week-row-name">${esc(c.name)}</div>
-            <div class="week-row-date">${parseDate(c.startDate).toLocaleDateString('de-DE')}</div>
-          </div>
-          <div style="display:flex;align-items:center;gap:6px">
-            ${c.id === appData.activeCycleId ? '<span class="intensity-badge int-green-dark" style="font-size:11px">Aktiv</span>' : ''}
-            <button class="del-btn" onclick="deleteCycle('${c.id}')" title="Zyklus löschen">🗑</button>
-          </div>
+    <div class="group-label">Training</div>
+    <div class="list-group">
+      <div class="list-row" onclick="openCyclesModal()">
+        <div class="list-main">
+          <div class="list-title">${cycle ? esc(cycle.name) : 'Kein aktiver Zyklus'}</div>
+          <div class="list-sub">${cycle
+            ? (isCyclePaused(cycle) ? 'Pausiert' : `Woche ${getCurrentWeekIndex(cycle) + 1} von ${cycle.weeks || 12}`) + ` · bis ${formatDay(getCycleEndDate(cycle))}`
+            : `${appData.cycles.length} ${appData.cycles.length === 1 ? 'Zyklus' : 'Zyklen'} gespeichert`}</div>
         </div>
-      `).join('')}
-    ` : ''}
+        <span class="chev">›</span>
+      </div>
+      ${cycle ? `
+      <div class="list-row" onclick="togglePlanMode()">
+        <div class="list-main">
+          <div class="list-title">Wochenplan</div>
+          <div class="list-sub">${plan ? 'Feste Trainingstage' : 'Aus – freies Eintragen'}</div>
+        </div>
+        <span class="switch ${plan ? 'on' : ''}"></span>
+      </div>` : ''}
+      <div class="list-row" onclick="openNewCycleModal()">
+        <div class="list-main"><div class="list-title" style="color:var(--accent)">Neuen Zyklus starten</div></div>
+      </div>
+    </div>
 
-    <div class="divider"></div>
-    <div class="section-hdr"><h2>Konto</h2></div>
-    <div id="cloudBox"></div>
+    <div class="group-label">Daten</div>
+    <div class="list-group">
+      <div class="list-row" onclick="exportData()">
+        <div class="list-main"><div class="list-title">Sicherung exportieren</div><div class="list-sub">Alle Daten als Datei</div></div>
+        <span class="chev">›</span>
+      </div>
+      <div class="list-row" onclick="importDataPrompt()">
+        <div class="list-main"><div class="list-title">Sicherung importieren</div><div class="list-sub">Ersetzt die Daten auf diesem Gerät</div></div>
+        <span class="chev">›</span>
+      </div>
+    </div>
 
-    <div class="divider"></div>
-    <div class="section-hdr"><h2>Daten</h2></div>
-    <button class="btn btn-ghost btn-full" style="margin-bottom:10px" onclick="exportData()">Daten exportieren</button>
-    <button class="btn btn-ghost btn-full" onclick="importDataPrompt()">Daten importieren</button>
-    <div style="height:10px"></div>
-    <div class="text-muted" style="font-size:11px;text-align:center">Boulder Training App</div>
+    <div class="settings-foot">Boulder Training</div>
   `;
-  // Den Konto-Kasten füllt cloud.js; ohne Firebase bleibt er einfach leer.
+  // Die Konto-Zeile füllt cloud.js; ohne Firebase bleibt der Platzhalter.
   if (window.renderCloudBox) window.renderCloudBox();
+}
+
+// ── Zyklen verwalten ──
+function openCyclesModal() {
+  openModal(`<div id="cyclesSheet"></div>`);
+  renderCyclesSheet();
+}
+
+function renderCyclesSheet() {
+  const box = document.getElementById('cyclesSheet');
+  if (!box) return;
+  const cycles = [...appData.cycles].sort((a, b) => b.startDate.localeCompare(a.startDate));
+  box.innerHTML = `
+    <div class="modal-title">Zyklen</div>
+    ${cycles.length ? `<div class="list-group">
+      ${cycles.map(c => `
+        <div class="list-row" onclick="setActiveCycle('${c.id}')">
+          <div class="list-main">
+            <div class="list-title">${esc(c.name)}</div>
+            <div class="list-sub">${formatDateRange(c.startDate, getCycleEndDate(c))}</div>
+          </div>
+          ${c.id === appData.activeCycleId ? `<span class="list-check">${CHECK_SVG.replace('#000', 'currentColor')}</span>` : ''}
+          <button class="del-btn" onclick="event.stopPropagation();deleteCycle('${c.id}')" title="Zyklus löschen">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 002 2h6a2 2 0 002-2l1-12M9 7V4h6v3"/></svg>
+          </button>
+        </div>`).join('')}
+    </div>
+    <div class="group-note">Tippen zum Wechseln. Gelöschte Zyklen lassen sich nicht wiederherstellen.</div>`
+    : `<div class="text-muted" style="margin-bottom:14px">Noch keine Zyklen.</div>`}
+    ${getActiveCycle() ? `<button class="btn btn-ghost btn-full" style="margin-top:14px;color:var(--red)" onclick="confirmEndCycle()">Aktiven Zyklus abschließen</button>` : ''}
+    <button class="btn btn-ghost btn-full" style="margin-top:10px" onclick="closeModal()">Fertig</button>
+  `;
 }
 
 // mode: 'plan' oder 'free' vorauswählen (aus der Startseite); sonst wie der
@@ -1999,7 +2025,8 @@ function togglePlanMode() {
 function setActiveCycle(id) {
   appData.activeCycleId = id;
   saveData();
-  renderSettings();
+  render();
+  renderCyclesSheet();
 }
 
 function deleteCycle(id) {
@@ -2011,14 +2038,16 @@ function deleteCycle(id) {
     appData.activeCycleId = appData.cycles.length > 0 ? appData.cycles[appData.cycles.length - 1].id : null;
   }
   saveData();
-  renderSettings();
+  render();
+  renderCyclesSheet();
 }
 
 function confirmEndCycle() {
   if (!confirm('Zyklus wirklich abschließen? Du kannst danach einen neuen starten. Die Daten bleiben erhalten.')) return;
   appData.activeCycleId = null;
   saveData();
-  renderSettings();
+  render();
+  renderCyclesSheet();
 }
 
 function exportData() {
@@ -3017,6 +3046,7 @@ function closeModal() {
   if (currentView === 'dashboard') renderDashboard();
   if (currentView === 'assessment') renderAssessment();
   if (currentView === 'history') renderHistory();
+  if (currentView === 'settings') renderSettings();
 }
 
 function closeModalOnBg(e) {
