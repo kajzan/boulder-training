@@ -104,6 +104,11 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
   await page.waitForTimeout(300);
   await page.click('.list-row:has-text("Wochenplan")');
   ok('Wochenplan-Schalter', await page.evaluate(() => isPlanMode(getActiveCycle())));
+  await page.waitForSelector('#modalContent >> text=Wochenplan einrichten');
+  ok('Einschalten ohne Tage oeffnet die Einrichtung', true);
+  await page.screenshot({ path: path.join(__dirname, 'shot-plan-einrichten.png') });
+  await page.click('#modalContent button:text-is("Später")');
+  await page.waitForTimeout(300);
   await page.click('.list-row:has-text("Wochenplan")');
   await page.click('#settingsContent .list-row >> nth=1');
   ok('Zyklen-Fenster', await page.locator('#cyclesSheet .list-row').count() === 1);
@@ -126,6 +131,8 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
   await page.waitForTimeout(400);   // die Klicksperre nach dem Ziehen abwarten
   await page.click('.tab-btn:nth-child(5)');
   await page.click('.list-row:has-text("Wochenplan")');
+  await page.click('#modalContent button:text-is("Später")');
+  await page.waitForTimeout(300);
   await page.click('.tab-btn:nth-child(2)');
   await page.click('button:text-is("+ Hinzufügen")');
   await page.fill('#newExName', 'Klimmzug max');
@@ -264,10 +271,12 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
   });
   await page.click('.tab-btn:nth-child(1)');
   await page.waitForTimeout(300);
+  // Langer Zyklus: zunaechst 12 Wochen rund um die aktuelle
+  ok('langer Zyklus: Diagramm zeigt 12 Wochen', (await page.locator('#intChart rect[data-col]').count()) === 12);
   // Maus: Drueberfahren zeigt die Woche
   const cb = await page.locator('#intChart').boundingBox();
-  const xWoche = i => cb.x + (28 + (i + 0.5) * (280 / 52)) / 320 * cb.width;   // padL 28, Breite 280
-  await page.mouse.move(xWoche(30), cb.y + cb.height / 2);
+  const xWoche = async wk => { const r = await page.locator(`#intChart rect[data-wk="${wk}"]`).boundingBox(); return r.x + r.width / 2; };
+  await page.mouse.move(await xWoche(30), cb.y + cb.height / 2);
   ok('Maus ueber Woche 31 zeigt deren Werte', (await page.locator('#intChart_tw').textContent()) === 'Woche 31' &&
     (await page.locator('#intChart_tt').textContent()).includes('300 min'));
   await page.mouse.move(cb.x + cb.width / 2, cb.y - 40);
@@ -277,10 +286,20 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
     const svg = document.getElementById('intChart');
     const ev = (type, x, buttons) => svg.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerType: 'touch', clientX: x, clientY: y, buttons }));
     ev('pointerdown', a, 1); ev('pointermove', (a + b) / 2, 1); ev('pointermove', b, 1); ev('pointerup', b, 0);
-  }, { a: xWoche(5), b: xWoche(20), y: cb.y + cb.height / 2 });
-  ok('Wischen mit dem Finger: Anzeige folgt bis Woche 21', (await page.locator('#intChart_tw').textContent()) === 'Woche 21' &&
+  }, { a: await xWoche(27), b: await xWoche(34), y: cb.y + cb.height / 2 });
+  ok('Wischen mit dem Finger: Anzeige folgt bis Woche 35', (await page.locator('#intChart_tw').textContent()) === 'Woche 35' &&
     await page.locator('#intChart_tip').isVisible());
+  await page.click('#intChart >> xpath=../.. >> button:text-is("Alle")');
+  ok('"Alle" zeigt alle 52 Wochen', (await page.locator('#intChart rect[data-col]').count()) === 52);
+  await page.screenshot({ path: path.join(__dirname, 'shot-lang-alle.png') });
+  await page.click('button:text-is("12 Wo.")');
   await page.screenshot({ path: path.join(__dirname, 'shot-lang.png'), fullPage: true });
+  await page.evaluate(() => { const c = getActiveCycle(); c.weekTargets[getCurrentWeekIndex(c)] = 6.5; c.unit = undefined; saveData(); render(); });
+  await page.waitForTimeout(200);
+  ok('Komma ohne Luecke in Monospace-Zahlen', await page.evaluate(() => {
+    const dc = document.querySelector('.main .dc');
+    return !!dc && dc.textContent === ',' && getComputedStyle(dc).marginLeft.startsWith('-');
+  }));
   await page.click('.tab-btn:nth-child(2)');
   await page.screenshot({ path: path.join(__dirname, 'shot-lang-plan.png'), fullPage: true });
   await page.evaluate(id => { const d = getAppData(); d.cycles.pop(); d.activeCycleId = id; saveData(); render(); }, vorherAktiv);

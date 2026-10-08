@@ -1362,9 +1362,19 @@ check('auch Ersetzen lässt sich zurücknehmen', gleich(toDocs(appData), toDocs(
   showAllWeeks = false;
   renderDashboard();
   const html = el('dashContent').innerHTML;
-  check('langes Diagramm passt in die Breite und lässt sich abtasten',
-    !html.includes('chart-scroll') && html.includes('chartScrub') && html.includes('data-weeks="52"'));
+  check('langes Diagramm zeigt zunächst 12 Wochen rund um die aktuelle',
+    html.includes('chartScrub') && html.includes('data-weeks="12"') && html.includes('W1–12'));
+  chartShowAll = true;
+  renderDashboard();
+  check('"Alle" zeigt den ganzen Zyklus', el('dashContent').innerHTML.includes('data-weeks="52"'));
+  chartShowAll = false;
   eq('Wochenliste zeigt nur die Umgebung', (html.match(/class="week-row /g) || []).length, 5);
+  lang.weeks = 12; lang.weekTargets = lang.weekTargets.slice(0, 12);
+  renderDashboard();
+  eq('bis 12 Wochen: alle Wochen sichtbar, kein Ausschnitt',
+    [(el('dashContent').innerHTML.match(/class="week-row /g) || []).length, el('dashContent').innerHTML.includes('12 Wo.')], [12, false]);
+  lang.weeks = 52; lang.weekTargets = Array(52).fill(5);
+  renderDashboard();
   check('mit Knopf für alle Wochen', html.includes('Alle 52 Wochen anzeigen'));
   showAllWeeks = true;
   renderDashboard();
@@ -1382,6 +1392,35 @@ check('auch Ersetzen lässt sich zurücknehmen', gleich(toDocs(appData), toDocs(
   renderPlan();
   check('Wochenziele als Raster, ohne Übertragen-Knopf', el('planContent').innerHTML.includes('target-grid') &&
     !el('planContent').innerHTML.includes('repeatWeekTargets'));
+
+  // ═══════════════════════════════════════════════
+  group('Wochenplan nachträglich einschalten');
+  // ═══════════════════════════════════════════════
+  const frei = { id: 'F', name: 'Frei', startDate: '2026-01-05', weeks: 4, weekTargets: [1, 1, 1, 1], notes: {},
+    exercises: [{ id: 'f1', name: 'Bouldern', categories: [], intensity: 3 }, { id: 'f2', name: 'Dehnen', categories: [], intensity: 1 },
+                { id: 'f3', name: 'Selten', categories: [], intensity: 1 }],
+    sessions: {} };
+  // drei Wochen lang Mo und Fr Bouldern, Mi Dehnen; einmal Selten an einem Sonntag
+  ['2026-01-05', '2026-01-12', '2026-01-19'].forEach(mo => {
+    frei.sessions[mo] = [{ exId: 'f1' }];
+    frei.sessions[addDays(mo, 2)] = [{ exId: 'f2' }];
+    frei.sessions[addDays(mo, 4)] = [{ exId: 'f1' }];
+  });
+  frei.sessions['2026-01-11'] = [{ exId: 'f3' }];
+  eq('Vorschlag aus dem bisherigen Training', suggestExerciseDays(frei), { f1: [0, 4], f2: [2], f3: [] });
+  appData.cycles.push(frei); appData.activeCycleId = 'F';
+  currentView = 'settings';
+  togglePlanMode();
+  check('Einschalten ohne Tage öffnet die Einrichtung mit Vorschlag',
+    isPlanMode(frei) && el('modalContent').innerHTML.includes('Wochenplan einrichten') &&
+    el('modalContent').innerHTML.includes('Vorgeschlagen aus deinem bisherigen Training'));
+  togglePlanMode();
+  check('Ausschalten', !isPlanMode(frei));
+
+  // ═══════════════════════════════════════════════
+  group('Komma in Zahlen');
+  // ═══════════════════════════════════════════════
+  check('Diagramm-Beschriftung nicht in Monospace', !renderIntensityChart(frei).includes('font-family="DM Mono'));
 
   done();
 })();

@@ -530,6 +530,60 @@ function render() {
   if (currentView === 'settings') renderSettings();
 }
 
+// ── Komma ohne Lücke ──
+// Zahlen stehen oft in der Monospace-Schrift DM Mono. Dort ist jedes Zeichen
+// gleich breit, auch das Komma – "6,5" sähe aus wie "6, 5". Deshalb wird das
+// Komma zwischen zwei Ziffern in ein schmales Element gesetzt (CSS: .dc).
+function tightenCommas(root) {
+  if (!root || typeof document === 'undefined' || !document.createTreeWalker) return;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const nodes = [];
+  while (walker.nextNode()) if (/\d,\d/.test(walker.currentNode.nodeValue)) nodes.push(walker.currentNode);
+  nodes.forEach(node => {
+    const parent = node.parentNode;
+    if (!parent || parent.namespaceURI !== 'http://www.w3.org/1999/xhtml' || parent.classList.contains('dc')) return;
+    if (!/Mono/i.test(getComputedStyle(parent).fontFamily)) return;
+    const frag = document.createDocumentFragment();
+    const text = node.nodeValue;
+    let last = 0;
+    for (let i = 1; i < text.length - 1; i++) {
+      if (text[i] === ',' && /\d/.test(text[i - 1]) && /\d/.test(text[i + 1])) {
+        frag.appendChild(document.createTextNode(text.slice(last, i)));
+        const span = document.createElement('span');
+        span.className = 'dc';
+        span.textContent = ',';
+        frag.appendChild(span);
+        last = i + 1;
+      }
+    }
+    frag.appendChild(document.createTextNode(text.slice(last)));
+    parent.replaceChild(frag, node);
+  });
+}
+
+// Nach jedem Neuzeichnen einmal über die Seite und das offene Fenster
+if (typeof MutationObserver !== 'undefined' && typeof document !== 'undefined') {
+  let pending = false;
+  const observer = new MutationObserver(() => {
+    if (pending) return;
+    pending = true;
+    (window.requestAnimationFrame || setTimeout)(() => {
+      pending = false;
+      observer.disconnect();
+      tightenCommas(document.querySelector('.main'));
+      tightenCommas(document.getElementById('modalContent'));
+      observe();
+    });
+  });
+  const observe = () => {
+    ['.main', '#modalContent'].forEach(sel => {
+      const el = document.querySelector(sel);
+      if (el) observer.observe(el, { childList: true, subtree: true, characterData: true });
+    });
+  };
+  observe();
+}
+
 function niceYStep(maxVal) {
   if (maxVal <= 0) return 1;
   // Prefer steps that produce clean integer ticks
@@ -545,17 +599,26 @@ function niceYStep(maxVal) {
   return best !== null ? best : 1;
 }
 
+// Bei langen Zyklen zeigt das Diagramm zunächst zwölf Wochen rund um die
+// aktuelle – 52 Balken auf Handybreite sind nicht mehr lesbar. "Alle"
+// schaltet auf den ganzen Zyklus.
+const CHART_WINDOW = 12;
+let chartShowAll = false;
+
 function renderIntensityChart(cycle) {
-  const W = cycle.weeks || 12;
+  const total = cycle.weeks || 12;
+  const currentWeek = getCurrentWeekIndex(cycle);
+  const windowed = total > CHART_WINDOW && !chartShowAll;
+  const from = windowed ? Math.max(0, Math.min(currentWeek - 4, total - CHART_WINDOW)) : 0;
+  const W = windowed ? CHART_WINDOW : total;
   const targets = [];
   const actuals = [];
   const breakdowns = [];
-  for (let i = 0; i < W; i++) {
-    targets.push(cycle.weekTargets[i] || 0);
-    actuals.push(getWeekIntensity(cycle, i));
-    breakdowns.push(getWeekCategoryBreakdown(cycle, i));
+  for (let j = 0; j < W; j++) {
+    targets.push(cycle.weekTargets[from + j] || 0);
+    actuals.push(getWeekIntensity(cycle, from + j));
+    breakdowns.push(getWeekCategoryBreakdown(cycle, from + j));
   }
-  const currentWeek = getCurrentWeekIndex(cycle);
   const allCats = getAllCategoriesInCycle(cycle);
 
   // Y scale with nice steps
@@ -564,112 +627,99 @@ function renderIntensityChart(cycle) {
   const niceMax = Math.ceil(rawMax / step) * step;
   const numSteps = Math.round(niceMax / step);
 
-  // SVG dimensions. Auch 52 Wochen passen in die Breite: Die Werte einer
-  // Woche zeigt das Abtasten mit Finger oder Maus (siehe chartScrub), dafür
-  // muss niemand einen schmalen Balken genau treffen.
+  // Die Werte einer Woche zeigt das Abtasten mit Finger oder Maus (siehe
+  // chartScrub) – dafür muss niemand einen schmalen Balken genau treffen.
   const w = 320, h = 180;
   const padL = 28, padR = 12, padT = 16, padB = 30;
   const chartW = w - padL - padR;
   const chartH = h - padT - padB;
   const stepX = chartW / Math.max(W, 1);
 
-  const xFor = i => padL + (i + 0.5) * stepX;
+  const xFor = j => padL + (j + 0.5) * stepX;
   const yFor = v => padT + chartH - (v / niceMax) * chartH;
   const yZero = yFor(0);
 
-  // Bar width
   const barW = W === 1 ? 24 : Math.max(2, Math.min(22, stepX * 0.55));
 
-  const fmtY = v => (v === Math.floor(v)) ? v.toString() : v.toFixed(1).replace(/\.0$/, '');
-
-  // Y axis grid + labels
+  // Beschriftung in der Textschrift: In der Monospace-Schrift stünde das
+  // Komma mit Lücke da ("0, 5").
+  const T = 'font-size="9" fill="var(--text-dim)"';
   const gridLines = [];
-  const yLabels = [];   // beim Verschieben links festgehalten, siehe unten
+  const yLabels = [];
   for (let g = 0; g <= numSteps; g++) {
     const yVal = step * g;
     const yPx = yFor(yVal);
     gridLines.push(`<line x1="${padL}" y1="${yPx}" x2="${w-padR}" y2="${yPx}" stroke="var(--border)" stroke-width="0.5"/>`);
-    yLabels.push(`<text x="${padL - 4}" y="${yPx + 3}" font-size="9" fill="var(--text-dim)" text-anchor="end" font-family="DM Mono, monospace">${fmtY(yVal)}</text>`);
+    yLabels.push(`<text x="${padL - 4}" y="${yPx + 3}" ${T} text-anchor="end">${fmtNum(yVal)}</text>`);
   }
 
-  // X axis labels: even numbers with sensible spacing
+  // X-Achse: echte Wochennummern, in sinnvollem Abstand
   const labelStep = W <= 1 ? 1 : W <= 12 ? 2 : W <= 24 ? 4 : W <= 48 ? 8 : 10;
   const xLabels = [];
-  if (W === 1) {
-    xLabels.push(`<text x="${xFor(0)}" y="${h - 14}" font-size="9" fill="var(--text-dim)" text-anchor="middle" font-family="DM Mono, monospace">1</text>`);
-  } else {
-    for (let weekNum = labelStep; weekNum <= W; weekNum += labelStep) {
-      const i = weekNum - 1;
-      xLabels.push(`<text x="${xFor(i)}" y="${h - 14}" font-size="9" fill="var(--text-dim)" text-anchor="middle" font-family="DM Mono, monospace">${weekNum}</text>`);
+  for (let j = 0; j < W; j++) {
+    const num = from + j + 1;
+    if (W === 1 || num % labelStep === 0) {
+      xLabels.push(`<text x="${xFor(j)}" y="${h - 14}" ${T} text-anchor="middle">${num}</text>`);
     }
   }
 
   // Stacked bars per week, ordered by allCats (consistent stack order)
   const bars = [];
-  for (let i = 0; i < W; i++) {
-    const bd = breakdowns[i];
+  for (let j = 0; j < W; j++) {
+    const bd = breakdowns[j];
     if (!bd) continue;
     let yBottomPx = yZero;
-    const bx = xFor(i) - barW / 2;
+    const bx = xFor(j) - barW / 2;
     allCats.forEach(cat => {
       const val = bd[cat] || 0;
       if (val <= 0) return;
       const segH = (val / niceMax) * chartH;
       const segY = yBottomPx - segH;
-      const color = categoryColor(cat, allCats);
-      bars.push(`<rect x="${bx.toFixed(1)}" y="${segY.toFixed(1)}" width="${barW.toFixed(1)}" height="${segH.toFixed(1)}" fill="${color}" opacity="0.9"/>`);
+      bars.push(`<rect x="${bx.toFixed(1)}" y="${segY.toFixed(1)}" width="${barW.toFixed(1)}" height="${segH.toFixed(1)}" fill="${categoryColor(cat, allCats)}" opacity="0.9"/>`);
       yBottomPx = segY;
     });
   }
 
   // Target line (accent dashed) + dots
-  const targetPath = targets.map((v, i) => `${i === 0 ? 'M' : 'L'} ${xFor(i)} ${yFor(v)}`).join(' ');
-  const targetDots = targets.map((v, i) => `<circle cx="${xFor(i)}" cy="${yFor(v)}" r="${W > 24 ? 1.2 : 2.5}" fill="var(--accent)"/>`).join('');
+  const targetPath = targets.map((v, j) => `${j === 0 ? 'M' : 'L'} ${xFor(j)} ${yFor(v)}`).join(' ');
+  const targetDots = targets.map((v, j) => `<circle cx="${xFor(j)}" cy="${yFor(v)}" r="${W > 24 ? 1.2 : 2.5}" fill="var(--accent)"/>`).join('');
 
-  // Interactive tooltip: transparent touch targets + floating tooltip group
-  const chartId = 'intChart';
   // Unsichtbare Spalten je Woche – tragen die Werte für die Anzeige
-  const touchTargets = Array.from({length: W}, (_, i) => {
-    const cx = xFor(i);
-    const tx = padL + i * stepX;
-    const topY = yFor(Math.max(targets[i], actuals[i], 0.01));
-    return `<rect x="${tx.toFixed(1)}" y="${padT}" width="${stepX.toFixed(1)}" height="${chartH}" fill="transparent" data-wk="${i}" data-act="${actuals[i]}" data-tgt="${targets[i]}" data-cx="${cx.toFixed(1)}" data-ty="${topY.toFixed(1)}"/>`;
+  const chartId = 'intChart';
+  const touchTargets = Array.from({length: W}, (_, j) => {
+    const topY = yFor(Math.max(targets[j], actuals[j], 0.01));
+    return `<rect x="${(padL + j * stepX).toFixed(1)}" y="${padT}" width="${stepX.toFixed(1)}" height="${chartH}" fill="transparent" data-col="${j}" data-wk="${from + j}" data-act="${actuals[j]}" data-tgt="${targets[j]}" data-cx="${xFor(j).toFixed(1)}" data-ty="${topY.toFixed(1)}"/>`;
   });
-  const unitShort = unitInfo(cycle).short;
   const tipGroup = `<line id="${chartId}_hl" x1="0" x2="0" y1="${padT}" y2="${h - padB}" stroke="var(--text)" stroke-width="0.6" opacity="0.5" style="display:none" pointer-events="none"/>
-    <g id="${chartId}_tip" style="display:none" pointer-events="none" data-unit="${unitShort}"><rect id="${chartId}_bg" x="0" y="0" width="78" height="42" rx="4" fill="#0a0a0a" opacity="0.9"/><text id="${chartId}_tw" x="0" y="0" font-size="8.5" fill="var(--text-muted)" font-family="DM Mono,monospace"></text><text id="${chartId}_ta" x="0" y="0" font-size="8.5" fill="#fff" font-family="DM Mono,monospace"></text><text id="${chartId}_tt" x="0" y="0" font-size="8.5" fill="var(--accent)" font-family="DM Mono,monospace"></text></g>`;
+    <g id="${chartId}_tip" style="display:none" pointer-events="none" data-unit="${unitInfo(cycle).short}"><rect id="${chartId}_bg" x="0" y="0" width="78" height="42" rx="4" fill="#0a0a0a" opacity="0.9"/><text id="${chartId}_tw" x="0" y="0" font-size="8.5" fill="var(--text-muted)"></text><text id="${chartId}_ta" x="0" y="0" font-size="8.5" fill="#fff"></text><text id="${chartId}_tt" x="0" y="0" font-size="8.5" fill="var(--accent)"></text></g>`;
 
-  // Current week marker
-  const cwX = xFor(currentWeek);
-  const currentMarker = `<line x1="${cwX}" y1="${padT}" x2="${cwX}" y2="${h - padB}" stroke="var(--accent)" stroke-width="0.5" stroke-dasharray="2,3" opacity="0.4"/>`;
+  // Current week marker (nur, wenn sie im Ausschnitt liegt)
+  const cj = currentWeek - from;
+  const currentMarker = cj >= 0 && cj < W
+    ? `<line x1="${xFor(cj)}" y1="${padT}" x2="${xFor(cj)}" y2="${h - padB}" stroke="var(--accent)" stroke-width="0.5" stroke-dasharray="2,3" opacity="0.4"/>`
+    : '';
 
-  // Determine which categories actually have data, for legend
-  const usedCats = allCats.filter(cat => {
-    return breakdowns.some(bd => (bd[cat] || 0) > 0);
-  });
-
-  // Legend
-  const targetLegend = `<span style="display:inline-flex;align-items:center;gap:4px;color:var(--text-muted)">
-    <span style="width:14px;height:2px;background:var(--accent);display:inline-block;border-top:1px dashed transparent"></span> Ziel
-  </span>`;
-
-  let legendCats;
-  if (usedCats.length === 0) {
-    legendCats = `<span style="display:inline-flex;align-items:center;gap:4px;color:var(--text-muted)">
-      <span style="width:10px;height:10px;background:#888;display:inline-block;border-radius:2px"></span> Ist
+  const usedCats = allCats.filter(cat => breakdowns.some(bd => (bd[cat] || 0) > 0));
+  const legendItem = (color, label) => `<span style="display:inline-flex;align-items:center;gap:4px;color:var(--text-muted)">
+      <span style="width:10px;height:10px;background:${color};display:inline-block;border-radius:2px"></span> ${esc(label)}
     </span>`;
-  } else {
-    legendCats = usedCats.map(cat => {
-      const color = categoryColor(cat, allCats);
-      return `<span style="display:inline-flex;align-items:center;gap:4px;color:var(--text-muted)">
-        <span style="width:10px;height:10px;background:${color};display:inline-block;border-radius:2px"></span> ${esc(cat)}
-      </span>`;
-    }).join('');
-  }
+  const targetLegend = `<span style="display:inline-flex;align-items:center;gap:4px;color:var(--text-muted)">
+    <span style="width:14px;height:2px;background:var(--accent);display:inline-block"></span> Ziel
+  </span>`;
+  const legendCats = usedCats.length === 0
+    ? legendItem('#888', 'Ist')
+    : usedCats.map(cat => legendItem(categoryColor(cat, allCats), cat)).join('');
 
+  const title = cycleUnit(cycle) === 'int' ? 'Intensitätsverlauf' : `Trainingszeit (${unitInfo(cycle).short})`;
   return `
     <div class="card">
-      <div class="card-title">${cycleUnit(cycle) === 'int' ? 'Intensitätsverlauf' : `Trainingszeit (${unitInfo(cycle).short})`}</div>
+      <div class="card-title" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+        <span>${title}${windowed ? ` · W${from + 1}–${from + W}` : ''}</span>
+        ${total > CHART_WINDOW ? `<div class="seg seg-mini">
+          <button type="button" class="${chartShowAll ? '' : 'on'}" onclick="chartShowAll=false;renderDashboard()">12 Wo.</button>
+          <button type="button" class="${chartShowAll ? 'on' : ''}" onclick="chartShowAll=true;renderDashboard()">Alle</button>
+        </div>` : ''}
+      </div>
       <svg id="${chartId}" class="scrub-chart" viewBox="0 0 ${w} ${h}" style="width:100%;height:auto;display:block" preserveAspectRatio="xMidYMid meet"
         data-padl="${padL}" data-stepx="${stepX}" data-weeks="${W}"
         onpointerdown="chartScrub(event, this, true)" onpointermove="chartScrub(event, this, false)" onpointerleave="chartLeave(event, this)">
@@ -713,11 +763,12 @@ function chartScrub(e, svg, down) {
   if (!down && e.pointerType !== 'mouse' && !(e.buttons & 1)) return;
   const wk = chartWeekAt(e, svg);
   const tip = document.getElementById(svg.id + '_tip');
-  if (down && e.pointerType !== 'mouse' && tip && tip.style.display !== 'none' && tip.getAttribute('data-active') === String(wk)) {
+  const col = svg.querySelector(`rect[data-col="${wk}"]`);
+  if (down && e.pointerType !== 'mouse' && tip && col && tip.style.display !== 'none' && tip.getAttribute('data-active') === col.getAttribute('data-wk')) {
     hideChartTooltip(svg.id);
     return;
   }
-  const el = svg.querySelector(`rect[data-wk="${wk}"]`);
+  const el = svg.querySelector(`rect[data-col="${wk}"]`);
   if (el) showChartTooltip(el, svg.id);
 }
 
@@ -902,7 +953,7 @@ function renderDashboard() {
 
 // Liste aller Wochen. Bei langen Zyklen nur die Umgebung der aktuellen
 // Woche, der Rest auf Wunsch – 52 Zeilen will niemand durchscrollen.
-const WEEK_LIST_SHORT = 8;
+const WEEK_LIST_SHORT = 12;
 let showAllWeeks = false;
 
 function renderWeekList(cycle, weekIdx, paused) {
@@ -980,9 +1031,9 @@ function renderTodayCard(cycle, today) {
   const dayName = DAYS_FULL[weekdayOf(today)];
 
   if (!cycle.exercises.some(ex => exerciseDays(ex).length > 0)) {
-    return `<div class="card" onclick="switchView('plan')" style="cursor:pointer">
+    return `<div class="card" onclick="openPlanSetupModal()" style="cursor:pointer">
       <div class="card-title">Heute · ${dayName}</div>
-      <div class="text-muted">Noch keine Trainingstage festgelegt. Tippe hier und ordne deinen Übungen im <strong>Trainingsplan</strong> Wochentage zu.</div>
+      <div class="text-muted">Noch keine Trainingstage festgelegt. <span style="color:var(--accent)">Wochenplan einrichten ›</span></div>
     </div>`;
   }
 
@@ -1311,7 +1362,9 @@ function renderPlan() {
         <span class="chev">›</span>
       </div></div>` : ''}
     ${planFrom}
-    ${weekPlan ? `<div class="card"><div class="card-title">Wochenplan</div>${weekPlan}</div>` : ''}
+    ${isPlanMode(cycle) && cycle.exercises.length ? `<div class="card" onclick="openPlanSetupModal()" style="cursor:pointer">
+      <div class="card-title" style="display:flex;justify-content:space-between">Wochenplan <span style="color:var(--accent);text-transform:none;letter-spacing:0">Bearbeiten ›</span></div>
+      ${weekPlan || '<div class="text-muted">Noch keine Tage festgelegt.</div>'}</div>` : ''}
     <div class="section-hdr" style="margin-top:0">
       <h2>Übungen</h2>
       <button class="btn btn-primary btn-sm" onclick="openAddExerciseModal()">+ Hinzufügen</button>
@@ -2246,6 +2299,76 @@ function togglePlanMode() {
   if (isPlanMode(cycle)) delete cycle.mode; else cycle.mode = 'plan';
   saveData();
   renderSettings();
+  // Frisch eingeschaltet und noch keine Tage festgelegt: gleich einrichten
+  if (isPlanMode(cycle) && cycle.exercises.length && !cycle.exercises.some(ex => exerciseDays(ex).length)) {
+    openPlanSetupModal();
+  }
+}
+
+// ── Wochenplan einrichten ──
+// Alle Übungen auf einen Blick mit ihren Tagen. Fehlen noch Tage, schlägt
+// die App vor, wie bisher trainiert wurde: Wochentage, an denen eine Übung
+// in mindestens 40 % der Trainingswochen dran war.
+function suggestExerciseDays(cycle) {
+  const weeksWithTraining = new Set();
+  const counts = {};
+  Object.keys(cycle.sessions || {}).forEach(date => {
+    const entries = cycle.sessions[date] || [];
+    if (!entries.length) return;
+    weeksWithTraining.add(Math.floor(daysBetween(cycle.startDate, date) / 7));
+    const wd = weekdayOf(date);
+    entries.forEach(e => {
+      const id = entryId(e);
+      counts[id] = counts[id] || [0, 0, 0, 0, 0, 0, 0];
+      counts[id][wd]++;
+    });
+  });
+  const need = Math.max(2, Math.ceil(weeksWithTraining.size * 0.4));
+  const out = {};
+  cycle.exercises.forEach(ex => {
+    const c = counts[ex.id];
+    out[ex.id] = c ? c.map((n, wd) => n >= need ? wd : -1).filter(wd => wd >= 0) : [];
+  });
+  return out;
+}
+
+function openPlanSetupModal() {
+  const cycle = getActiveCycle();
+  if (!cycle) return;
+  const hasDays = cycle.exercises.some(ex => exerciseDays(ex).length);
+  const suggested = hasDays ? {} : suggestExerciseDays(cycle);
+  const fromHistory = Object.values(suggested).some(d => d.length);
+  openModal(`
+    <div class="modal-title">Wochenplan einrichten</div>
+    <div class="text-muted" style="margin-bottom:16px;line-height:1.5">${fromHistory
+      ? 'Vorgeschlagen aus deinem bisherigen Training – passe die Tage an.'
+      : 'Lege fest, an welchen Tagen du welche Übung machst.'}</div>
+    ${cycle.exercises.map(ex => {
+      const days = hasDays ? exerciseDays(ex) : (suggested[ex.id] || []);
+      return `<div class="setup-row">
+        <div class="setup-name">${esc(ex.name)}</div>
+        <div class="weekday-pick" data-exid="${ex.id}">
+          ${DAYS_DE.map((d, i) => `<button type="button" data-day="${i}" class="${days.includes(i) ? 'on' : ''}" onclick="this.classList.toggle('on')">${d}</button>`).join('')}
+        </div>
+      </div>`;
+    }).join('')}
+    <button class="btn btn-primary btn-full" style="margin-top:16px" onclick="savePlanSetup()">Übernehmen</button>
+    <button class="btn-link" onclick="closeModal()">Später</button>
+  `);
+}
+
+function savePlanSetup() {
+  const cycle = getActiveCycle();
+  if (!cycle) return;
+  document.querySelectorAll('#modalContent .weekday-pick[data-exid]').forEach(box => {
+    const ex = cycle.exercises.find(e => e.id === box.dataset.exid);
+    if (!ex) return;
+    const days = Array.from(box.querySelectorAll('button.on')).map(b => parseInt(b.dataset.day, 10));
+    if (days.length) ex.days = days.sort((a, b) => a - b); else delete ex.days;
+  });
+  saveData();
+  closeModal();
+  render();
 }
 
 function setActiveCycle(id) {

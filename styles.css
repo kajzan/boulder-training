@@ -658,7 +658,19 @@ textarea { resize: vertical; font-size: 14px; line-height: 1.4; }
 .target-cell .tc-date { font-size: 10px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .target-cell input {
   padding: 5px 6px; font-size: 15px; text-align: center;
-  font-family: 'DM Mono', monospace; background: var(--surface);
+  font-variant-numeric: tabular-nums; background: var(--surface);
 }
 .target-cell.read { align-items: center; text-align: center; }
 .target-cell .tc-val { font-family: 'DM Mono', monospace; font-size: 13px; }
+
+/* Wochenplan einrichten */
+.setup-row { padding: 10px 0; border-bottom: 1px solid var(--border); }
+.setup-row:last-of-type { border-bottom: none; }
+.setup-name { font-size: 14px; margin-bottom: 8px; }
+.setup-row .weekday-pick button { padding: 7px 0; font-size: 12px; }
+
+/* Komma in Zahlen der Monospace-Schrift: ohne Lücke (siehe tightenCommas) */
+.dc { margin: 0 -0.16em; }
+.seg-mini { padding: 2px; border-radius: 7px; flex-shrink: 0; }
+.seg-mini button { white-space: nowrap; padding: 3px 9px; font-size: 11px; text-transform: none; letter-spacing: 0; border-radius: 5px; }
+.scrub-chart text { font-family: inherit; }
