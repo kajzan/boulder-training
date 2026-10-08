@@ -33,7 +33,7 @@ Vor jedem Veröffentlichen aus dem Hauptverzeichnis ausführen:
 sh tools/version.sh
 ```
 
-Das zählt die Version in `version.js` hoch und setzt Datum und Uhrzeit
+Das zählt die Version in `version.js` und `sw.js` hoch und setzt Datum und Uhrzeit
 (deutsche Zeit). Beides steht unten in den Einstellungen. Der Service Worker
 liest dieselbe Datei; ohne neue Nummer behalten installierte Geräte unter
 Umständen den alten Stand.

@@ -3455,6 +3455,7 @@ function openModal(content) {
 
 function closeModal() {
   document.getElementById('modalOverlay').classList.remove('open');
+  if (reloadPending) { location.reload(); return; }
   if (currentView === 'dashboard') renderDashboard();
   if (currentView === 'assessment') renderAssessment();
   if (currentView === 'history') renderHistory();
@@ -3483,8 +3484,36 @@ checkPlanLink();
 
 // Offline-Fähigkeit. Fehlt beim Öffnen als lokale Datei – dann läuft die App
 // wie bisher, nur eben ohne Zwischenspeicher.
+//
+// Updates: Eine App vom Home-Bildschirm wird beim Öffnen oft nur fortgesetzt
+// und nicht neu geladen. Deshalb fragt sie bei jedem Zurückkommen nach einer
+// neuen Version. Ist eine da, übernimmt der neue Service Worker sofort und die
+// App lädt sich neu – mit offenem Fenster erst, wenn es geschlossen wird.
+var reloadPending = false;   // var: closeModal liest es auch vor dieser Zeile
+
+function reloadForUpdate() {
+  const modalOpen = document.getElementById('modalOverlay')?.classList.contains('open');
+  if (modalOpen) { reloadPending = true; return; }
+  location.reload();
+}
+
 if ('serviceWorker' in navigator) {
+  let controller = navigator.serviceWorker.controller;
+  let reloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    // Beim allerersten Installieren übernimmt der Service Worker nur – da
+    // gibt es nichts Neues zu laden. Erst ein Wechsel ist ein Update.
+    const wasControlled = !!controller;
+    controller = navigator.serviceWorker.controller;
+    if (!wasControlled || reloading) return;
+    reloading = true;
+    reloadForUpdate();
+  });
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(reg => {
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') reg.update().catch(() => {});
+      });
+    }).catch(() => {});
   });
 }

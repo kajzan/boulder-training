@@ -1,12 +1,11 @@
 /* Service Worker – macht die App offline nutzbar.
  *
  * WICHTIG BEIM DEPLOYEN: Nach jeder Änderung `sh tools/version.sh` ausführen.
- * Das zählt die Version in version.js hoch; die steckt hier im Namen des
- * Zwischenspeichers. Sonst behalten bereits installierte Geräte unter
- * Umständen den alten Stand.
+ * Das zählt die Version hier und in version.js hoch. Nur eine Änderung an
+ * dieser Datei selbst erkennen alle Browser sicher als Update – deshalb steht
+ * die Nummer hier noch einmal und wird nicht aus version.js geladen.
  */
-importScripts('./version.js');
-const VERSION = 'v' + APP_VERSION.name;
+const VERSION = 'v15';
 const CACHE = 'boulder-' + VERSION;
 
 /* Alles, was die App zum Starten braucht. Wird bei der Installation
@@ -44,7 +43,10 @@ const NET_TIMEOUT_MS = 2500;
 self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(CACHE)
-      .then(cache => cache.addAll(APP_SHELL))
+      // 'reload': am Browser-Zwischenspeicher vorbei. GitHub Pages erlaubt
+      // bis zu 10 Minuten Zwischenspeichern – sonst landete womöglich die
+      // alte Fassung im neuen Speicher.
+      .then(cache => cache.addAll(APP_SHELL.map(url => new Request(url, { cache: 'reload' }))))
       .then(() => self.skipWaiting())
   );
 });
@@ -92,7 +94,9 @@ function networkFirst(request) {
       fromCache(request).then(finish);
     }, NET_TIMEOUT_MS);
 
-    fetch(request).then(res => {
+    // 'no-cache': beim Server nachfragen, ob es Neues gibt (kostet bei
+    // unveränderter Datei nur eine kurze Antwort ohne Inhalt).
+    fetch(request, { cache: 'no-cache' }).then(res => {
       clearTimeout(timer);
       if (res && res.ok) putInCache(request, res);
       finish(res);

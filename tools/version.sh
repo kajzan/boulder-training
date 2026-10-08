@@ -7,4 +7,5 @@ alt=$(sed -n "s/.*name: '\([0-9]*\)'.*/\1/p" version.js)
 neu=$((alt + 1))
 jetzt=$(TZ=Europe/Berlin date '+%Y-%m-%d %H:%M')
 sed -i.bak "s/name: '[0-9]*', date: '[^']*'/name: '$neu', date: '$jetzt'/" version.js && rm -f version.js.bak
+sed -i.bak "s/^const VERSION = 'v[0-9]*';/const VERSION = 'v$neu';/" sw.js && rm -f sw.js.bak
 echo "Version $neu · $jetzt"

@@ -10,10 +10,17 @@ const { chromium } = require('playwright');
 const ROOT = path.resolve(__dirname, '../..'), BASE = '/boulder-training';
 const TYPES = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript',
                 '.json': 'application/manifest+json', '.png': 'image/png', '.woff2': 'font/woff2' };
+let versionOverride = null;   // simuliert eine neu veroeffentlichte Version
 const server = http.createServer((req, res) => {
   let p = decodeURIComponent(req.url.split('?')[0]);
   if (!p.startsWith(BASE)) { res.writeHead(404); return res.end(); }
   p = p.slice(BASE.length) || '/'; if (p.endsWith('/')) p += 'index.html';
+  if (versionOverride && (p === '/version.js' || p === '/sw.js')) {
+    res.writeHead(200, { 'Content-Type': 'text/javascript' });
+    return res.end(p === '/version.js'
+      ? `const APP_VERSION = { name: '${versionOverride}', date: '2030-01-01 12:00' };`
+      : fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8').replace(/const VERSION = 'v\d+';/, `const VERSION = 'v${versionOverride}';`));
+  }
   const f = path.join(ROOT, p);
   if (!fs.existsSync(f)) { res.writeHead(404); return res.end(); }
   res.writeHead(200, { 'Content-Type': TYPES[path.extname(f)] || 'application/octet-stream' });
@@ -78,7 +85,7 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
   }
   ok('Version mit Datum in den Einstellungen',
     /Version \d+ · \d+\. \w+ \d{4}, \d{2}:\d{2} Uhr/.test(await page.locator('.settings-foot').innerText()));
-  ok('Service Worker nutzt die Version als Speichername',
+  ok('Service Worker und Anzeige haben dieselbe Version',
     await page.evaluate(() => caches.keys().then(k => k.includes('boulder-v' + APP_VERSION.name))));
   ok('Konto-Zeile erscheint ohne Anmeldung', await page.locator('#cloudBox >> text=Anmelden').isVisible());
   await page.screenshot({ path: path.join(__dirname, 'shot-einstellungen.png'), fullPage: true });
@@ -273,6 +280,16 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
     ok(`${name}: Escape schliesst das Fenster`, !(await gp.evaluate(() => document.getElementById('modalOverlay').classList.contains('open'))));
     await gross.close();
   }
+
+  // Neue Version veroeffentlicht: Die App merkt es beim Zurueckkommen und laedt neu
+  await page.click('.tab-btn:nth-child(1)');
+  versionOverride = '9999';
+  const neuGeladen = page.waitForEvent('load', { timeout: 20000 }).then(() => true, () => false);
+  await page.evaluate(() => navigator.serviceWorker.getRegistration().then(r => r.update()));
+  ok('neue Version wird erkannt und geladen', await neuGeladen);
+  await page.waitForFunction(() => typeof APP_VERSION !== 'undefined' && APP_VERSION.name === '9999', null, { timeout: 10000 })
+    .then(() => ok('danach laeuft die neue Version', true), () => ok('danach laeuft die neue Version', false));
+  versionOverride = null;
 
   // Neustart ohne Netz
   await ctx.setOffline(true);
