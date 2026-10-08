@@ -61,8 +61,27 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
   ok('Uebersicht zeigt den heutigen Tag', await page.locator('.card-title:has-text("Heute")').isVisible());
   await page.screenshot({ path: path.join(__dirname, 'shot-heute.png'), fullPage: true });
   await page.click('.tab-btn:nth-child(2)');
-  ok('Planung zeigt 12 Wochen und 2 geplante Wochen', await page.locator('.tl-cell').count() === 12 &&
-    await page.locator('#planContent .plan-swatch').count() === 2);
+  ok('Planung zeigt 12 Wochen und 3 Wochenarten', await page.locator('.tl-cell').count() === 12 &&
+    await page.locator('#planContent .brush-dot:not(.add)').count() === 3);
+  ok('Uebungen stehen ueber der Planung', await page.evaluate(() => {
+    const h = [...document.querySelectorAll('#planContent .section-hdr h2')].map(x => x.textContent);
+    return h.indexOf('Übungen') < h.indexOf('Planung');
+  }));
+  // Ausmalen: Entlastung waehlen, Woche 1 antippen
+  await page.click('#planContent .list-row:has-text("Entlastungswoche")');
+  await page.click('.tl-cell >> nth=0');
+  ok('Woche 1 als Entlastung gemalt', await page.locator('.tl-cell >> nth=0 >> .tl-name').textContent() === 'Entlastung');
+  // Wegwischen: Belastungswoche nach links ziehen
+  const zeile = await page.locator('#planContent .swipe-content:has-text("Belastungswoche")').boundingBox();
+  await page.mouse.move(zeile.x + zeile.width - 30, zeile.y + zeile.height / 2);
+  await page.mouse.down();
+  for (let i = 1; i <= 10; i++) await page.mouse.move(zeile.x + zeile.width - 30 - i * 12, zeile.y + zeile.height / 2);
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: path.join(__dirname, 'shot-wischen.png') });
+  await page.click('#planContent .swipe-row.open .swipe-action');
+  await page.waitForTimeout(300);
+  ok('Wischen nach links loescht die Wochenart', await page.locator('#planContent .brush-dot:not(.add)').count() === 2);
   await page.screenshot({ path: path.join(__dirname, 'shot-plan.png'), fullPage: true });
   await page.click('.tab-btn:nth-child(1)');
 
@@ -157,7 +176,7 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
     return p.name === 'Testwoche' && p.items[0].days.length === 7 && c.weekAssign.every(id => id === p.id);
   }));
   await page.click('.tab-btn:nth-child(2)');
-  ok('Planung zeigt die Woche in der Leiste', await page.locator('.tl-name:text-is("Testwoche")').count() === 4);
+  ok('Planung zeigt die Woche in der Leiste', await page.locator('.tl-name:text-is("Test")').count() === 4);
   await page.screenshot({ path: path.join(__dirname, 'shot-planung.png'), fullPage: true });
 
   // Pausieren und fortsetzen (die Woche ist noch leer)

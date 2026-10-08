@@ -161,7 +161,7 @@ function applyTemplate(cycle, tpl) {
     return [w.applies, plan];
   });
   created.forEach(([a, plan]) => { if (Array.isArray(a)) a.forEach(i => { if (i < n) assign[i] = plan.id; }); });
-  created.forEach(([a, plan]) => { if (a && a.every) for (let i = a.every - 1; i < n; i += a.every) assign[i] = plan.id; });
+  created.forEach(([a, plan]) => { if (a && a.every) for (let i = (a.at || a.every) - 1; i < n; i += a.every) assign[i] = plan.id; });
   created.forEach(([a, plan]) => { if (a === 'rest') for (let i = 0; i < n; i++) if (!assign[i]) assign[i] = plan.id; });
   cycle.weekAssign = assign;
   cycle.mode = 'plan';
@@ -185,7 +185,7 @@ function copyPlanStructure(src, dst, idMap) {
 // Training.
 function startPlanning(cycle) {
   if (weekPlans(cycle).length) return;
-  if (!cycle.exercises.length) { openTemplatePicker(); return; }
+  if (!cycle.exercises.length) { openAddWeekSheet(); return; }
   const suggested = suggestExerciseDays(cycle);
   const items = cycle.exercises.map(ex => ({ exId: ex.id, days: suggested[ex.id] || [] })).filter(it => it.days.length);
   openWeekEditor(null, { items, allWeeks: true, fromHistory: items.length > 0 });
@@ -218,9 +218,20 @@ function suggestExerciseDays(cycle) {
 // ═══════════════════════════════════════════════
 // ANSICHT IM TRAININGSPLAN
 // ═══════════════════════════════════════════════
+// Planen wie Ausmalen: Eine Wochenart auswählen (z.B. Aufbau) und dann die
+// Wochen antippen, die so aussehen sollen. Nochmal antippen nimmt sie
+// wieder heraus. Wochenarten lassen sich nach links wischen, um sie zu löschen.
+let planBrush = null;
+
 function hexA(hex, a) {
   const n = parseInt(hex.slice(1), 16);
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+
+function currentBrush(cycle) {
+  const plans = weekPlans(cycle);
+  if (!plans.some(p => p.id === planBrush)) planBrush = plans.length ? plans[0].id : null;
+  return planBrush;
 }
 
 function renderPlanning(cycle) {
@@ -228,71 +239,232 @@ function renderPlanning(cycle) {
   const plans = weekPlans(cycle);
   const n = cycle.weeks || 12;
   const current = getCurrentWeekIndex(cycle);
+  const brush = currentBrush(cycle);
+  const brushPlan = weekPlanById(cycle, brush);
 
-  const timeline = `
-    <div class="tl-grid">
-      ${Array.from({ length: n }, (_, i) => {
-        const plan = weekPlanFor(cycle, i);
-        const color = plan ? weekPlanColor(cycle, plan) : null;
-        return `<button type="button" class="tl-cell ${i === current ? 'current' : ''}" onclick="openWeekAssign(${i})"
-          style="${color ? `background:${hexA(color, 0.14)};border-color:${hexA(color, 0.45)}` : ''}">
-          <span class="tl-num">${i + 1}</span>
-          <span class="tl-name" style="${color ? `color:${color}` : ''}">${plan ? esc(plan.name) : '–'}</span>
-        </button>`;
-      }).join('')}
-    </div>`;
+  const tiles = Array.from({ length: n }, (_, i) => {
+    const plan = weekPlanFor(cycle, i);
+    const color = plan ? weekPlanColor(cycle, plan) : null;
+    return `<button type="button" class="tl-cell ${i === current ? 'current' : ''}" onclick="paintWeek(${i})"
+      style="${color ? `background:${hexA(color, 0.16)};border-color:${hexA(color, 0.5)}` : ''}">
+      <span class="tl-num">${i + 1}</span>
+      <span class="tl-name" style="${color ? `color:${color}` : ''}">${plan ? esc(shortWeekName(plan.name)) : ''}</span>
+    </button>`;
+  }).join('');
 
-  const planRows = plans.map(plan => {
+  const typeRows = plans.map(plan => {
     const color = weekPlanColor(cycle, plan);
-    const weeks = weeksOfPlan(cycle, plan);
+    const on = plan.id === brush;
     const days = planDays(plan);
-    return `<div class="list-row" onclick="openWeekEditor('${plan.id}')">
-      <span class="plan-swatch" style="background:${color}"></span>
-      <div class="list-main">
-        <div class="list-title">${esc(plan.name)}</div>
-        <div class="list-sub" style="display:block">${weeks.length ? 'Woche ' + formatWeekRanges(weeks) : 'Keiner Woche zugeordnet'}
-          · ${days.length ? days.map(d => DAYS_DE[d]).join(' ') : 'keine Tage'} · ${fmtAmount(cycle, planTotal(cycle, plan))}</div>
+    const count = weeksOfPlan(cycle, plan).length;
+    return `<div class="swipe-row" data-delete="deleteWeekPlan('${plan.id}')">
+      <div class="swipe-action">Löschen</div>
+      <div class="swipe-content list-row ${on ? 'brush-on' : ''}" onclick="selectBrush('${plan.id}')">
+        <span class="brush-dot" style="border-color:${color};${on ? `background:${color}` : ''}"></span>
+        <div class="list-main">
+          <div class="list-title">${esc(plan.name)}</div>
+          <div class="list-sub">${days.length ? days.map(d => DAYS_DE[d]).join(' ') : 'noch leer'} · ${fmtAmount(cycle, planTotal(cycle, plan))} · ${count} ${count === 1 ? 'Woche' : 'Wochen'}</div>
+        </div>
+        <button type="button" class="edit-btn" onclick="event.stopPropagation();openWeekEditor('${plan.id}')" aria-label="${esc(plan.name)} bearbeiten">Bearbeiten</button>
       </div>
-      <span class="chev">›</span>
     </div>`;
   }).join('');
 
   return `
-    <div class="section-hdr" style="margin-top:0"><h2>Wochen</h2>
-      <button class="btn btn-primary btn-sm" onclick="openAddWeekSheet()">+ Woche</button></div>
+    <div class="section-hdr"><h2>Planung</h2></div>
     ${plans.length ? `
       <div class="card">
-        <div class="card-title">Zyklus · ${n} ${n === 1 ? 'Woche' : 'Wochen'}</div>
-        ${timeline}
-        <div class="group-note" style="margin:10px 0 0">Tippe auf eine Woche, um ihr einen Plan zuzuordnen.</div>
+        <div class="tl-grid">${tiles}</div>
+        <div class="group-note" style="margin:12px 0 0">${brushPlan
+          ? `Tippe auf Wochen, um sie als <strong style="color:${weekPlanColor(cycle, brushPlan)}">${esc(brushPlan.name)}</strong> zu planen.`
+          : 'Wähle unten eine Wochenart.'}</div>
       </div>
-      <div class="list-group">${planRows}</div>`
-    : `<div class="card plan-empty">
-        <div class="plan-empty-title">Noch keine Woche geplant</div>
-        <div class="text-muted" style="margin-bottom:14px">Stell eine Woche aus deinen Übungen zusammen oder starte mit einer Vorlage.</div>
-        <div class="row">
-          <button class="btn btn-ghost" onclick="openWeekEditor(null)">Leere Woche</button>
-          <button class="btn btn-primary" onclick="openTemplatePicker()">Vorlage</button>
+      <div class="list-group">
+        ${typeRows}
+        <div class="list-row" onclick="openAddWeekSheet()">
+          <span class="brush-dot add">+</span>
+          <div class="list-main"><div class="list-title" style="color:var(--accent)">Wochenart hinzufügen</div></div>
         </div>
+      </div>
+      <div class="group-note">Nach links wischen zum Löschen.</div>`
+    : `<div class="card plan-empty">
+        <div class="plan-empty-title">Noch nichts geplant</div>
+        <div class="text-muted" style="margin-bottom:14px;line-height:1.5">Wähle fertige Wochen aus – z.B. Aufbau, Belastung und Entlastung – und passe sie an.</div>
+        <button class="btn btn-primary btn-full" onclick="openAddWeekSheet()">Wochen auswählen</button>
       </div>`}
-    ${renderLibrarySection()}
   `;
 }
 
-function renderLibrarySection() {
-  const lib = appData.weekLibrary || [];
-  if (!lib.length) return '';
-  return `
-    <div class="group-label">Mein Repertoire</div>
-    <div class="list-group">
-      ${lib.map(w => `<div class="list-row" onclick="openLibraryEntry('${esc(w.id)}')">
-        <div class="list-main">
-          <div class="list-title">${esc(w.name)}</div>
-          <div class="list-sub" style="display:block">${w.exercises.length} Übungen · ${libraryDays(w).map(d => DAYS_DE[d]).join(' ')}</div>
-        </div>
-        <span class="chev">›</span>
+// "Entlastungswoche" → "Entlastung" – passt in die Kachel
+function shortWeekName(name) {
+  const t = name.replace(/ungswoche$/i, 'ung').replace(/\s*woche$/i, '').trim();
+  return t || name;
+}
+
+function selectBrush(id) {
+  planBrush = id;
+  render();
+}
+
+function paintWeek(i) {
+  const cycle = getActiveCycle();
+  if (!cycle) return;
+  ensureAssign(cycle);
+  const brush = currentBrush(cycle);
+  if (!brush) { openAddWeekSheet(); return; }
+  cycle.weekAssign[i] = cycle.weekAssign[i] === brush ? null : brush;
+  saveData();
+  render();
+}
+
+function deleteWeekPlan(id) {
+  const cycle = getActiveCycle();
+  const plan = weekPlanById(cycle, id);
+  if (!plan) return;
+  if (!confirm(`„${plan.name}" löschen?`)) { render(); return; }
+  cycle.weekPlans = cycle.weekPlans.filter(p => p.id !== id);
+  cycle.weekAssign = (cycle.weekAssign || []).map(x => x === id ? null : x);
+  saveData();
+  render();
+}
+
+// ── Wochenarten auswählen ──
+// Fertige Wochen aus den Vorlagen und dem Repertoire, zum Ankreuzen. Beim
+// Hinzufügen werden sie gleich sinnvoll verteilt (Aufbau überall, Belastung
+// jede 3., Entlastung jede 4. Woche); danach lässt sich alles ummalen.
+let weekPicks = [];
+
+function weekPresets() {
+  const out = [];
+  PLAN_TEMPLATES.forEach(t => t.plan.forEach((w, k) => out.push({ key: `t:${t.id}:${k}`, tpl: t, week: w,
+    name: w.name, group: t.name.split(' · ')[0] + ' · ' + (t.name.split(' · ')[1] || '') })));
+  (appData.weekLibrary || []).forEach(w => out.push({ key: `l:${w.id}`, lib: w, name: w.name, group: 'Mein Repertoire' }));
+  return out;
+}
+
+function presetSummary(p) {
+  if (p.lib) {
+    const days = libraryDays(p.lib);
+    return `${days.map(d => DAYS_DE[d]).join(' ')} · ${fmtAmount({ unit: p.lib.unit }, p.lib.exercises.reduce((s, e) => s + e.amount * (e.days || []).length, 0))}`;
+  }
+  const days = new Set();
+  let total = 0;
+  p.week.items.forEach(([key, ds, amount]) => {
+    ds.forEach(d => days.add(d));
+    const ex = p.tpl.exercises.find(e => e.key === key);
+    total += (amount !== undefined && amount !== null ? amount : ex.intensity) * ds.length;
+  });
+  const cycle = getActiveCycle();
+  return `${[...days].sort().map(d => DAYS_DE[d]).join(' ')} · ${fmtAmount(cycle, convertAmount(total, 'int', cycleUnit(cycle)))}`;
+}
+
+function openAddWeekSheet() {
+  weekPicks = [];
+  renderAddWeekSheet();
+}
+
+function renderAddWeekSheet() {
+  const presets = weekPresets();
+  const groups = [...new Set(presets.map(p => p.group))];
+  openModal(`
+    <div class="modal-title" style="margin-bottom:4px">Wochen auswählen</div>
+    <div class="text-muted" style="margin-bottom:16px">Fertig befüllt – danach kannst du alles anpassen.</div>
+    ${groups.map(g => `
+      <div class="group-label" style="margin-top:14px">${esc(g)}</div>
+      <div class="list-group">
+        ${presets.filter(p => p.group === g).map(p => {
+          const row = `<div class="list-row ${p.lib ? 'swipe-content' : ''}" onclick="togglePick('${esc(p.key)}')">
+            <span class="pick-box ${weekPicks.includes(p.key) ? 'on' : ''}">${weekPicks.includes(p.key) ? CHECK_SVG : ''}</span>
+            <div class="list-main"><div class="list-title">${esc(p.name)}</div><div class="list-sub">${presetSummary(p)}</div></div>
+          </div>`;
+          return p.lib ? `<div class="swipe-row" data-delete="deleteLibraryWeek('${esc(p.lib.id)}')"><div class="swipe-action">Löschen</div>${row}</div>` : row;
+        }).join('')}
       </div>`).join('')}
-    </div>`;
+    <div class="sheet-actions">
+      <button class="btn btn-primary btn-full" ${weekPicks.length ? '' : 'disabled'} onclick="addPickedWeeks()">${
+        weekPicks.length ? `${weekPicks.length} ${weekPicks.length === 1 ? 'Woche' : 'Wochen'} übernehmen` : 'Wochen ankreuzen'}</button>
+      <button class="btn-link" onclick="addEmptyWeek()">Leere Woche selbst zusammenstellen</button>
+    </div>
+  `);
+}
+
+function togglePick(key) {
+  const i = weekPicks.indexOf(key);
+  if (i >= 0) weekPicks.splice(i, 1); else weekPicks.push(key);
+  const box = document.getElementById('modalBox');
+  const top = box ? box.scrollTop : 0;
+  renderAddWeekSheet();
+  if (box) box.scrollTop = top;
+}
+
+function addPickedWeeks() {
+  const cycle = getActiveCycle();
+  if (!cycle || !weekPicks.length) return;
+  const presets = weekPresets();
+  let last = null;
+  weekPicks.forEach(key => {
+    const p = presets.find(x => x.key === key);
+    if (p) last = addPresetWeek(cycle, p) || last;
+  });
+  weekPicks = [];
+  if (last) planBrush = last;
+  cycle.mode = 'plan';
+  saveData();
+  closeModal();
+  if (currentView !== 'plan') switchView('plan'); else render();
+}
+
+function addEmptyWeek() {
+  closeModal();
+  setTimeout(() => openWeekEditor(null), 250);
+}
+
+// Eine fertige Woche in den Zyklus. Gibt es eine gleichnamige schon, wird
+// sie nur ausgewählt – so entstehen keine Doppel.
+function addPresetWeek(cycle, p) {
+  ensureAssign(cycle);
+  const same = weekPlans(cycle).find(x => x.name.trim().toLowerCase() === p.name.trim().toLowerCase());
+  if (same) return same.id;
+  const unit = cycleUnit(cycle);
+  const byName = new Map(cycle.exercises.map(ex => [ex.name.trim().toLowerCase(), ex]));
+  const getEx = (src, amount) => {
+    let ex = byName.get(src.name.trim().toLowerCase());
+    if (!ex) {
+      ex = cloneExercise(Object.assign({}, src, { intensity: amount }));
+      cycle.exercises.push(ex);
+      byName.set(src.name.trim().toLowerCase(), ex);
+    }
+    return ex;
+  };
+  let items;
+  if (p.lib) {
+    items = p.lib.exercises.map(e => {
+      const amount = convertAmount(e.amount, p.lib.unit || 'int', unit);
+      const ex = getEx(e, amount);
+      const it = { exId: ex.id, days: (e.days || []).slice() };
+      if (amount !== (parseFloat(ex.intensity) || 0)) it.amount = amount;
+      if (e.note) it.note = e.note;
+      return it;
+    });
+  } else {
+    items = p.week.items.map(([key, days, amount, note]) => {
+      const src = p.tpl.exercises.find(e => e.key === key);
+      const ex = getEx(src, templateAmount(src, unit));
+      const it = { exId: ex.id, days: days.slice() };
+      if (amount !== undefined && amount !== null) it.amount = templateAmount({ intensity: amount }, unit);
+      if (note) it.note = note;
+      return it;
+    });
+  }
+  const plan = { id: newId(), name: p.name, items };
+  cycle.weekPlans.push(plan);
+  // Gleich sinnvoll verteilen
+  const n = cycle.weeks || 12;
+  const a = p.week && p.week.applies;
+  if (Array.isArray(a)) a.forEach(i => { if (i < n) cycle.weekAssign[i] = plan.id; });
+  else if (a && a.every) for (let i = (a.at || a.every) - 1; i < n; i += a.every) cycle.weekAssign[i] = plan.id;
+  else for (let i = 0; i < n; i++) if (!cycle.weekAssign[i]) cycle.weekAssign[i] = plan.id;
+  return plan.id;
 }
 
 function libraryDays(w) {
@@ -301,63 +473,68 @@ function libraryDays(w) {
   return [...set].sort((a, b) => a - b);
 }
 
-// ── Eine Zykluswoche zuordnen ──
-function openWeekAssign(i) {
-  const cycle = getActiveCycle();
-  if (!cycle) return;
-  const current = (cycle.weekAssign || [])[i] || null;
-  const wd = getWeekDates(cycle, i);
-  openModal(`
-    <div class="modal-title" style="margin-bottom:4px">Woche ${i + 1}</div>
-    <div class="text-muted" style="margin-bottom:16px">${formatDateRange(wd[0], wd[6])}</div>
-    <div class="list-group">
-      ${weekPlans(cycle).map(plan => `<div class="list-row" onclick="assignWeek(${i}, '${plan.id}')">
-        <span class="plan-swatch" style="background:${weekPlanColor(cycle, plan)}"></span>
-        <div class="list-main"><div class="list-title">${esc(plan.name)}</div>
-          <div class="list-sub">${fmtAmount(cycle, planTotal(cycle, plan))}</div></div>
-        ${plan.id === current ? `<span class="list-check">${CHECK_SVG.replace('#000', 'currentColor')}</span>` : ''}
-      </div>`).join('')}
-      <div class="list-row" onclick="assignWeek(${i}, null)">
-        <span class="plan-swatch" style="background:var(--surface2);border:1px solid var(--border)"></span>
-        <div class="list-main"><div class="list-title">Ohne Plan</div><div class="list-sub">Frei trainieren</div></div>
-        ${!current ? `<span class="list-check">${CHECK_SVG.replace('#000', 'currentColor')}</span>` : ''}
-      </div>
-    </div>
-    <button class="btn btn-ghost btn-full" style="margin-top:14px" onclick="openWeekEditor(null, { weeks: [${i}] })">Neue Woche für Woche ${i + 1}</button>
-    <button class="btn-link" onclick="closeModal()">Fertig</button>
-  `);
+// ── Nach links wischen zum Löschen ──
+// Für Zeilen mit .swipe-row; data-delete enthält den Aufruf. Ein kurzer
+// Wisch legt den Löschen-Knopf frei, ein weiter Wisch löscht sofort.
+let swipeState = null;
+
+function swipeDown(e) {
+  const content = e.target.closest && e.target.closest('.swipe-content');
+  if (!content) return;
+  document.querySelectorAll('.swipe-row.open').forEach(r => { if (r !== content.parentNode) closeSwipe(r); });
+  swipeState = { row: content.parentNode, content, x: e.clientX, y: e.clientY, dx: 0, active: false,
+    base: content.parentNode.classList.contains('open') ? -88 : 0 };
 }
 
-function assignWeek(i, planId) {
-  const cycle = getActiveCycle();
-  if (!cycle) return;
-  ensureAssign(cycle);
-  cycle.weekAssign[i] = planId;
-  saveData();
-  closeModal();
+function swipeMove(e) {
+  const s = swipeState;
+  if (!s) return;
+  const dx = e.clientX - s.x, dy = e.clientY - s.y;
+  if (!s.active) {
+    if (Math.abs(dx) < 8) return;
+    if (Math.abs(dy) > Math.abs(dx)) { swipeState = null; return; }
+    s.active = true;
+  }
+  s.dx = dx;
+  const x = Math.min(0, Math.max(-s.row.offsetWidth, s.base + dx));
+  s.content.style.transition = 'none';
+  s.content.style.transform = `translateX(${x}px)`;
 }
 
-// ── Woche hinzufügen ──
-function openAddWeekSheet() {
-  const lib = appData.weekLibrary || [];
-  openModal(`
-    <div class="modal-title">Woche hinzufügen</div>
-    <div class="list-group">
-      <div class="list-row" onclick="openWeekEditor(null)">
-        <div class="list-main"><div class="list-title">Leere Woche</div><div class="list-sub">Selbst zusammenstellen</div></div>
-        <span class="chev">›</span>
-      </div>
-      ${lib.length ? `<div class="list-row" onclick="openLibraryPicker()">
-        <div class="list-main"><div class="list-title">Aus meinem Repertoire</div><div class="list-sub">${lib.length} gespeicherte ${lib.length === 1 ? 'Woche' : 'Wochen'}</div></div>
-        <span class="chev">›</span>
-      </div>` : ''}
-      <div class="list-row" onclick="openTemplatePicker()">
-        <div class="list-main"><div class="list-title">Vorlage übernehmen</div><div class="list-sub">Ganzer Plan mit Aufbau- und Entlastungswochen</div></div>
-        <span class="chev">›</span>
-      </div>
-    </div>
-    <button class="btn-link" onclick="closeModal()">Abbrechen</button>
-  `);
+function swipeUp() {
+  const s = swipeState;
+  swipeState = null;
+  if (!s || !s.active) return;
+  const x = s.base + s.dx;
+  s.content.style.transition = '';
+  window.addEventListener('click', swallowDragClick, true);
+  setTimeout(() => window.removeEventListener('click', swallowDragClick, true), 350);
+  if (x < -s.row.offsetWidth * 0.6) { s.content.style.transform = `translateX(-100%)`; runSwipeDelete(s.row); return; }
+  if (x < -44) { s.row.classList.add('open'); s.content.style.transform = 'translateX(-88px)'; }
+  else closeSwipe(s.row);
+}
+
+function closeSwipe(row) {
+  row.classList.remove('open');
+  const c = row.querySelector('.swipe-content');
+  if (c) c.style.transform = '';
+}
+
+function runSwipeDelete(row) {
+  const call = row.dataset.delete;
+  const m = /^(\w+)\('([^']*)'\)$/.exec(call || '');
+  if (m && typeof window[m[1]] === 'function') window[m[1]](m[2]);
+}
+
+if (typeof document !== 'undefined' && document.addEventListener) {
+  document.addEventListener('pointerdown', swipeDown);
+  document.addEventListener('pointermove', swipeMove);
+  document.addEventListener('pointerup', swipeUp);
+  document.addEventListener('pointercancel', () => { if (swipeState) closeSwipe(swipeState.row); swipeState = null; });
+  document.addEventListener('click', e => {
+    const btn = e.target.closest && e.target.closest('.swipe-action');
+    if (btn) runSwipeDelete(btn.parentNode);
+  });
 }
 
 // ═══════════════════════════════════════════════
@@ -386,7 +563,7 @@ function openWeekEditor(planId, opts = {}) {
     items: JSON.parse(JSON.stringify(plan ? plan.items : (opts.items || []))),
     weeks: plan ? weeksOfPlan(cycle, plan)
       : opts.weeks ? opts.weeks.slice()
-      : (opts.allWeeks || !weekPlans(cycle).length) ? Array.from({ length: n }, (_, i) => i) : [],
+      : (opts.allWeeks || !cycle.weekAssign.some(Boolean)) ? Array.from({ length: n }, (_, i) => i) : [],
     pickDay: null,
     sel: null,
     notice: opts.fromHistory ? 'Vorgeschlagen aus deinem bisherigen Training – passe die Tage an.' : ''
@@ -401,17 +578,8 @@ function renderWeekEditor() {
   if (!box || !cycle || !weekDraft) return;
   const d = weekDraft;
   const n = cycle.weeks || 12;
-  const myColor = d.planId ? weekPlanColor(cycle, weekPlanById(cycle, d.planId)) : WEEK_COLORS[weekPlans(cycle).length % WEEK_COLORS.length];
   const exName = id => (cycle.exercises.find(e => e.id === id) || {}).name || '?';
   const total = Math.round(d.items.reduce((s, it) => s + itemAmount(cycle, it) * it.days.length, 0) * 100) / 100;
-
-  const weekChips = Array.from({ length: n }, (_, i) => {
-    const on = d.weeks.includes(i);
-    const other = !on && weekPlanById(cycle, cycle.weekAssign[i]);
-    const otherColor = other && other.id !== d.planId ? weekPlanColor(cycle, other) : null;
-    return `<button type="button" class="wk-chip ${on ? 'on' : ''}" onclick="weToggleWeek(${i})"
-      style="${on ? `background:${myColor};border-color:${myColor}` : ''}">${i + 1}${otherColor ? `<span class="wk-dot" style="background:${otherColor}"></span>` : ''}</button>`;
-  }).join('');
 
   const dayRows = DAYS_FULL.map((dayName, day) => {
     const items = d.items.filter(it => it.days.includes(day));
@@ -457,46 +625,16 @@ function renderWeekEditor() {
     <input type="text" class="we-title" value="${esc(d.name)}" oninput="weekDraft.name=this.value" aria-label="Name der Woche">
     ${d.notice ? `<div class="sheet-notice">${esc(d.notice)}</div>` : ''}
     <div class="we-section">
-      <div class="we-label">Gilt in Woche</div>
-      <div class="wk-grid">${weekChips}</div>
-      <div class="we-presets">
-        <button type="button" onclick="wePreset('all')">Alle</button>
-        <button type="button" onclick="wePreset('free')">Alle freien</button>
-        <button type="button" onclick="wePreset('every4')">Jede 4.</button>
-        <button type="button" onclick="wePreset('none')">Keine</button>
-      </div>
-    </div>
-    <div class="we-section">
-      <div class="we-label">Woche <span class="we-total">${fmtAmount(cycle, total)}</span></div>
+      <div class="we-label">Tage <span class="we-total">${fmtAmount(cycle, total)}</span></div>
       ${dayRows}
     </div>
     <button class="btn btn-primary btn-full" style="margin-top:6px" onclick="weSave()">Speichern</button>
-    <div class="row" style="margin-top:10px">
-      <button class="btn btn-ghost btn-sm" onclick="weToLibrary()">Ins Repertoire</button>
-      ${d.planId ? `<button class="btn btn-ghost btn-sm" onclick="weDuplicate()">Duplizieren</button>` : ''}
-    </div>
-    ${d.planId ? `<button class="btn-link" style="color:var(--red)" onclick="weDelete()">Woche löschen</button>` : ''}
-    <button class="btn-link" style="margin-top:0" onclick="closeModal()">Abbrechen</button>
+    <button class="btn btn-ghost btn-full" style="margin-top:10px" onclick="weToLibrary()">Im Repertoire speichern</button>
+    <button class="btn-link" onclick="closeModal()">Abbrechen</button>
   `;
 }
 
-function weToggleWeek(i) {
-  const w = weekDraft.weeks;
-  const k = w.indexOf(i);
-  if (k >= 0) w.splice(k, 1); else w.push(i);
-  renderWeekEditor();
-}
 
-function wePreset(kind) {
-  const cycle = getActiveCycle();
-  const n = cycle.weeks || 12;
-  const all = Array.from({ length: n }, (_, i) => i);
-  if (kind === 'all') weekDraft.weeks = all;
-  if (kind === 'none') weekDraft.weeks = [];
-  if (kind === 'every4') weekDraft.weeks = all.filter(i => i % 4 === 3);
-  if (kind === 'free') weekDraft.weeks = all.filter(i => !cycle.weekAssign[i] || cycle.weekAssign[i] === weekDraft.planId || weekDraft.weeks.includes(i));
-  renderWeekEditor();
-}
 
 function wePick(day) {
   weekDraft.pickDay = weekDraft.pickDay === day ? null : day;
@@ -586,31 +724,14 @@ function commitWeekDraft() {
 }
 
 function weSave() {
-  commitWeekDraft();
-  weekDraft = null;
-  closeModal();
-  render();
-}
-
-function weDuplicate() {
-  const cycle = getActiveCycle();
   const plan = commitWeekDraft();
-  const copy = { id: newId(), name: plan.name + ' (Kopie)', items: JSON.parse(JSON.stringify(plan.items)) };
-  cycle.weekPlans.push(copy);
-  saveData();
-  openWeekEditor(copy.id);
-}
-
-function weDelete() {
-  const cycle = getActiveCycle();
-  if (!weekDraft.planId || !confirm('Diese Woche löschen? Ihre Zuordnung zu den Zykluswochen geht verloren.')) return;
-  cycle.weekPlans = cycle.weekPlans.filter(p => p.id !== weekDraft.planId);
-  cycle.weekAssign = cycle.weekAssign.map(id => id === weekDraft.planId ? null : id);
+  planBrush = plan.id;
   weekDraft = null;
-  saveData();
   closeModal();
   render();
 }
+
+
 
 // ── Repertoire ──
 function weToLibrary() {
@@ -636,80 +757,16 @@ function weToLibrary() {
   renderWeekEditor();
 }
 
-function openLibraryPicker() {
-  const lib = appData.weekLibrary || [];
-  openModal(`
-    <div class="modal-title">Aus meinem Repertoire</div>
-    <div class="list-group">
-      ${lib.map(w => `<div class="list-row" onclick="insertLibraryWeek('${esc(w.id)}')">
-        <div class="list-main"><div class="list-title">${esc(w.name)}</div>
-          <div class="list-sub" style="display:block">${w.exercises.map(e => esc(e.name)).join(', ')}</div></div>
-        <span class="chev">›</span>
-      </div>`).join('')}
-    </div>
-    <button class="btn-link" onclick="openAddWeekSheet()">Zurück</button>
-  `);
-}
 
-function openLibraryEntry(id) {
-  const w = (appData.weekLibrary || []).find(x => x.id === id);
-  if (!w) return;
-  const cycle = getActiveCycle();
-  const unit = { unit: w.unit };
-  openModal(`
-    <div class="modal-title" style="margin-bottom:4px">${esc(w.name)}</div>
-    <div class="text-muted" style="margin-bottom:14px">Aus deinem Repertoire</div>
-    <div class="card">
-      ${DAYS_DE.map((dn, day) => {
-        const exs = w.exercises.filter(e => (e.days || []).includes(day));
-        return exs.length ? `<div class="plan-day"><span class="plan-wd">${dn}</span><span>${exs.map(e => esc(e.name) + ' <span class="text-muted">' + fmtExAmount(unit, e.amount) + '</span>').join(', ')}</span></div>` : '';
-      }).join('')}
-    </div>
-    ${cycle ? `<button class="btn btn-primary btn-full" onclick="insertLibraryWeek('${esc(w.id)}')">In „${esc(cycle.name)}" einfügen</button>` : ''}
-    <button class="btn-link" style="color:var(--red)" onclick="deleteLibraryWeek('${esc(w.id)}')">Aus dem Repertoire löschen</button>
-    <button class="btn-link" style="margin-top:0" onclick="closeModal()">Schließen</button>
-  `);
-}
 
-// Fügt eine Repertoire-Woche in den aktiven Zyklus ein und öffnet sie, damit
-// gleich die Wochen gewählt werden können, in denen sie gilt.
-function insertLibraryWeek(id) {
-  const cycle = getActiveCycle();
-  const w = (appData.weekLibrary || []).find(x => x.id === id);
-  if (!cycle || !w) return;
-  ensureAssign(cycle);
-  const unit = cycleUnit(cycle);
-  const byName = new Map(cycle.exercises.map(ex => [ex.name.trim().toLowerCase(), ex]));
-  const items = w.exercises.map(e => {
-    const amount = convertAmount(e.amount, w.unit || 'int', unit);
-    let ex = byName.get(e.name.trim().toLowerCase());
-    if (!ex) {
-      ex = cloneExercise(Object.assign({}, e, { intensity: amount }));
-      cycle.exercises.push(ex);
-      byName.set(e.name.trim().toLowerCase(), ex);
-    }
-    const it = { exId: ex.id, days: (e.days || []).slice() };
-    if (amount !== (parseFloat(ex.intensity) || 0)) it.amount = amount;
-    if (e.note) it.note = e.note;
-    return it;
-  });
-  const plan = { id: newId(), name: w.name, items };
-  cycle.weekPlans.push(plan);
-  cycle.mode = 'plan';
-  saveData();
-  openWeekEditor(plan.id);
-  // Ist im Zyklus noch nichts zugeordnet, gilt sie zunächst überall
-  if (!cycle.weekAssign.some(Boolean)) weekDraft.weeks = cycle.weekAssign.map((_, i) => i);
-  weekDraft.notice = 'Wähle oben, in welchen Wochen sie gilt.';
-  renderWeekEditor();
-}
 
 function deleteLibraryWeek(id) {
-  if (!confirm('Diese Woche aus dem Repertoire löschen? Zyklen, die sie verwenden, bleiben unverändert.')) return;
-  appData.weekLibrary = (appData.weekLibrary || []).filter(w => w.id !== id);
+  const w = (appData.weekLibrary || []).find(x => x.id === id);
+  if (!w || !confirm(`„${w.name}" aus dem Repertoire löschen? Zyklen, die sie verwenden, bleiben unverändert.`)) { renderAddWeekSheet(); return; }
+  appData.weekLibrary = appData.weekLibrary.filter(x => x.id !== id);
+  weekPicks = weekPicks.filter(k => k !== 'l:' + id);
   saveData();
-  closeModal();
-  render();
+  renderAddWeekSheet();
 }
 
 // ── Vorlagen ──

@@ -21,8 +21,13 @@
  *              halbe Stunden).
  *   plan       die Wochen der Vorlage. items: [Übung, Tage (0 = Montag),
  *              Wert (optional, sonst der der Übung), Hinweis (optional)]
- *              applies: 'rest' = alle übrigen Wochen, { every: 4 } = jede
- *              4. Woche, [0, 1, 2] = genau diese (0 = Woche 1)
+ *              applies: 'rest' = alle übrigen Wochen,
+ *                       { every: 4 } = jede 4. Woche,
+ *                       { every: 4, at: 3 } = jeweils die 3. von 4 Wochen,
+ *                       [0, 1, 2] = genau diese (0 = Woche 1)
+ *
+ * Intensitäten: Die Belastungswoche liegt etwa 15 % über der Aufbauwoche,
+ * die Entlastungswoche bei rund 60 % mit nur zwei Einheiten.
  */
 const PLAN_TEMPLATES = [
   {
@@ -44,8 +49,11 @@ const PLAN_TEMPLATES = [
       { name: 'Aufbauwoche', applies: 'rest', items: [
         ['technik', [0]], ['ausgleich', [0]], ['projekt', [3]], ['rumpf', [3]]
       ] },
+      { name: 'Belastungswoche', applies: { every: 4, at: 3 }, items: [
+        ['technik', [0]], ['ausgleich', [0]], ['projekt', [3], 4, '4–5 Boulder an der Grenze, volle Pausen.'], ['rumpf', [3]]
+      ] },
       { name: 'Entlastungswoche', applies: { every: 4 }, items: [
-        ['technik', [0, 3], 2, 'Locker, nichts an der Grenze.'], ['ausgleich', [0]], ['rumpf', [3]]
+        ['technik', [0, 3], 2, 'Locker, nichts an der Grenze.'], ['ausgleich', [0]]
       ] }
     ]
   },
@@ -70,8 +78,12 @@ const PLAN_TEMPLATES = [
       { name: 'Aufbauwoche', applies: 'rest', items: [
         ['limit', [0]], ['ausgleich', [0, 4]], ['volumen', [2]], ['klimmzug', [2]], ['board', [4]]
       ] },
+      { name: 'Belastungswoche', applies: { every: 4, at: 3 }, items: [
+        ['limit', [0], 3.5, 'Ein Projekt mehr als sonst.'], ['ausgleich', [0, 4]], ['volumen', [2], 3],
+        ['klimmzug', [2], 2, '5 × 5, wenn möglich mit Zusatzgewicht.'], ['board', [4], 3.5]
+      ] },
       { name: 'Entlastungswoche', applies: { every: 4 }, items: [
-        ['volumen', [0, 4], 2, 'Locker, kein Limit.'], ['ausgleich', [0, 4]], ['klimmzug', [2], 1, 'Halbe Sätze.']
+        ['volumen', [0, 4], 2.5, 'Locker, kein Limit.'], ['ausgleich', [0, 4]]
       ] }
     ]
   },
@@ -98,8 +110,8 @@ const PLAN_TEMPLATES = [
         ['limit', [0]], ['volumen', [2]], ['ausgleich', [2]], ['power', [4]]
       ] },
       { name: 'Maximalkraft', applies: [4, 5, 6], items: [
-        ['fingerboard', [0, 4], null, 'Max Hangs: 10 s, 5 Sätze, 3 min Pause. Gewicht so, dass 2–3 s Reserve bleiben.'],
-        ['limit', [0]], ['volumen', [2]], ['ausgleich', [2]], ['power', [4]]
+        ['fingerboard', [0, 4], 2.5, 'Max Hangs: 10 s, 5 Sätze, 3 min Pause. Gewicht so, dass 2–3 s Reserve bleiben.'],
+        ['limit', [0], 3], ['volumen', [2]], ['ausgleich', [2]], ['power', [4]]
       ] },
       { name: 'Power', applies: 'rest', items: [
         ['fingerboard', [0], 1.5, 'Max Hangs 7 s, 4 Sätze – kürzer, dafür etwas mehr Gewicht.'],
@@ -107,7 +119,7 @@ const PLAN_TEMPLATES = [
         ['power', [4], null, 'Dynamische Züge und Sprünge; Campus nur mit Erfahrung, 3–5 Leitern, volle Pausen.']
       ] },
       { name: 'Entlastungswoche', applies: { every: 4 }, items: [
-        ['volumen', [0, 4], 2, 'Locker, kein Fingerboard, kein Limit.'], ['ausgleich', [2], 1]
+        ['volumen', [0, 4], 2.5, 'Locker, kein Fingerboard, kein Limit.'], ['ausgleich', [0, 4]]
       ] }
     ]
   }

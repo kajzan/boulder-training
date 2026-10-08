@@ -1161,18 +1161,22 @@ togglePlanMode();
 // Wochen-Editor
 currentView = 'plan';
 openWeekEditor('P1');
-check('Editor zeigt die Woche', el('modalContent').innerHTML.includes('weekEditor'));
-weToggleWeek(3);                       // Woche 4 dazu
+check('Editor zeigt die Woche ohne Wochenauswahl', el('weekEditor').innerHTML.includes('we-day') && !el('weekEditor').innerHTML.includes('Gilt in Woche'));
 wePick(4); weAdd(4, 'c');              // Dehnen am Freitag
 weSelect(4, 'c'); weSetAmount('0,5'); weSetNote('nur kurz');
 weSave();
-eq('Speichern: Woche 4 wechselt zu Aufbau', wp.weekAssign, ['P1', 'P1', 'P1', 'P1']);
 eq('neue Übung am Freitag mit eigenem Wert und Hinweis', wp.weekPlans[0].items.find(it => it.exId === 'c'), { exId: 'c', days: [4], amount: 0.5, note: 'nur kurz' });
-openWeekEditor(null, { weeks: [3] });
-weekDraft.name = 'Test';
-wePick(1); weAdd(1, 'a');
-weSave();
-eq('neue Woche übernimmt Woche 4', weekPlanFor(wp, 3).name, 'Test');
+eq('Speichern ändert die Zuordnung nicht', wp.weekAssign, ['P1', 'P1', 'P1', 'P2']);
+
+// Ausmalen: Wochenart wählen, Wochen antippen
+selectBrush('P2');
+paintWeek(1);
+eq('antippen malt die Woche mit der gewählten Art', wp.weekAssign, ['P1', 'P2', 'P1', 'P2']);
+paintWeek(1);
+eq('nochmal antippen nimmt sie heraus', wp.weekAssign, ['P1', null, 'P1', 'P2']);
+renderPlan();
+check('Planung steht unter den Übungen', el('planContent').innerHTML.indexOf('Übungen') < el('planContent').innerHTML.indexOf('Planung'));
+check('Wochenarten lassen sich wegwischen', el('planContent').innerHTML.includes(`data-delete="deleteWeekPlan('P2')"`));
 
 // Repertoire
 openWeekEditor('P1');
@@ -1181,11 +1185,27 @@ eq('Woche im Repertoire, mit eigenen Übungen', appData.weekLibrary[0].exercises
   [['Limit', [0], 3], ['Volumen', [2], 2], ['Dehnen', [4], 0.5]]);
 closeModal();
 const leer = neuerZyklus({ mode: 'plan', unit: 'h', exercises: [] });
-insertLibraryWeek(appData.weekLibrary[0].id);
+const repPreset = weekPresets().find(p => p.lib);
+addPresetWeek(leer, repPreset);
 eq('einfügen in anderen Zyklus legt Übungen an, rechnet um', leer.exercises.map(e => [e.name, e.intensity]),
   [['Limit', 1.5], ['Volumen', 1], ['Dehnen', 0.5]]);
-weSave();
-eq('und gilt danach in den gewählten Wochen (leer → alle)', leer.weekAssign.filter(Boolean).length, 4);
+eq('gilt in allen freien Wochen', leer.weekAssign.filter(Boolean).length, 4);
+addPresetWeek(leer, repPreset);
+eq('nochmal einfügen erzeugt keine Kopie', leer.weekPlans.length, 1);
+
+// Fertige Wochen ankreuzen
+const frisch = neuerZyklus({ mode: 'plan', exercises: [], weeks: 12, weekTargets: Array(12).fill(0) });
+openAddWeekSheet();
+const keys = weekPresets().filter(p => p.tpl && p.tpl.id === 'fortgeschritten').map(p => p.key);
+keys.forEach(togglePick);
+addPickedWeeks();
+eq('Aufbau, Belastung, Entlastung verteilt', frisch.weekAssign.map(id => weekPlanById(frisch, id).name[0]).join(''), 'AABEAABEAABE');
+const t = i => getWeekTarget(frisch, i);
+check('Belastung > Aufbau > Entlastung', t(2) > t(0) && t(0) > t(3));
+check('Entlastung um 60 % mit 2 Einheiten', Math.abs(t(3) / t(0) - 0.6) < 0.1 && planDays(weekPlanFor(frisch, 3)).length === 2);
+eq('Übungen nur einmal angelegt', frisch.exercises.length, new Set(frisch.exercises.map(e => e.name)).size);
+openAddWeekSheet(); keys.forEach(togglePick); addPickedWeeks();
+eq('erneutes Hinzufügen kopiert nichts', frisch.weekPlans.length, 3);
 
 // Vorlagen
 const tpl = PLAN_TEMPLATES[1];
@@ -1198,8 +1218,8 @@ createCycle();
 const ausVorlage = getActiveCycle();
 check('Zyklus aus Vorlage ist im Wochenplan-Modus', ausVorlage.mode === 'plan');
 eq('übernimmt den Vorlagennamen', ausVorlage.name, tpl.name.split(' · ')[0]);
-eq('Wochen der Vorlage', ausVorlage.weekPlans.map(p => p.name), ['Aufbauwoche', 'Entlastungswoche']);
-eq('Entlastung jede 4. Woche', ausVorlage.weekAssign.map(id => weekPlanById(ausVorlage, id).name[0]).join(''), 'AAAEAAAEAAAE');
+eq('Wochen der Vorlage', ausVorlage.weekPlans.map(p => p.name), ['Aufbauwoche', 'Belastungswoche', 'Entlastungswoche']);
+eq('Aufbau, Belastung, Entlastung im Rhythmus', ausVorlage.weekAssign.map(id => weekPlanById(ausVorlage, id).name[0]).join(''), 'AABEAABEAABE');
 check('Entlastungswoche ist leichter', getWeekTarget(ausVorlage, 3) < getWeekTarget(ausVorlage, 2));
 check('Übungen haben keine Tage mehr an sich', ausVorlage.exercises.every(e => !('days' in e)));
 check('alle Vorlagen sind stimmig', PLAN_TEMPLATES.every(t => t.plan.every(w => w.items.every(([key, days]) =>
@@ -1212,7 +1232,7 @@ eq('Phasen-Vorlage über 16 Wochen', fk.weekAssign.map(id => weekPlanById(fk, id
 el('newCycleName').value = 'Kopie'; el('copyFromCycle').value = ausVorlage.id;
 createCycle();
 const kp = getActiveCycle();
-eq('Kopie: Wochen und Zuordnung', [kp.weekPlans.length, kp.weekAssign.filter(Boolean).length, kp.mode], [2, 12, 'plan']);
+eq('Kopie: Wochen und Zuordnung', [kp.weekPlans.length, kp.weekAssign.filter(Boolean).length, kp.mode], [3, 12, 'plan']);
 check('Kopie: Wochen zeigen auf die neuen Übungen', kp.weekPlans.every(p => p.items.every(it => kp.exercises.some(e => e.id === it.exId))));
 
 // Altdaten: Tage an den Übungen werden zur Standardwoche
@@ -1272,7 +1292,9 @@ eq('Pyramide ohne Projekte, höchster Grad oben',
 renderHistory();
 const lb = el('historyContent').innerHTML;
 check('höchster Grad 7A', lb.includes('>7A<'));
-check('Tage: Heute und ein anderer Tag', lb.includes('>Heute <span>2</span>') && lb.includes('Mo, 19. Jan'));
+check('auf der Seite nur der heutige Tag, der Rest im Verlauf', lb.includes('2 heute') && !lb.includes('19. Jan') && lb.includes('3 Boulder an 2 Tagen'));
+openLogHistory();
+check('Verlauf nach Monaten mit allen Tagen', el('logHistory').innerHTML.includes('Mo, 19. Jan') && el('logHistory').innerHTML.includes('>Heute <span>2</span>'));
 check('alte Projekte und Namen erscheinen nicht', !lb.includes('Dach') && !lb.includes("removeAscent('proj')"));
 logScaleSel = 'vscale';
 renderHistory();
@@ -1490,7 +1512,7 @@ check('auch Ersetzen lässt sich zurücknehmen', gleich(toDocs(appData), toDocs(
   eq('gilt in allen Wochen', frei.weekAssign.filter(Boolean).length, 4);
   const ohneUebungen = neuerZyklus({ exercises: [] });
   togglePlanMode();
-  check('ohne Übungen: Vorlagen werden angeboten', el('modalContent').innerHTML.includes('Vorlage übernehmen'));
+  check('ohne Übungen: fertige Wochen werden angeboten', el('modalContent').innerHTML.includes('Wochen auswählen') && el('modalContent').innerHTML.includes('Belastungswoche'));
   appData.activeCycleId = 'F';
   togglePlanMode();
   check('Ausschalten', !isPlanMode(frei));

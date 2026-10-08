@@ -1359,15 +1359,13 @@ function renderPlan() {
         <span class="chev">›</span>
       </div></div>` : ''}
     ${planFrom}
-    ${plan ? renderPlanning(cycle) : ''}
-    <div class="section-hdr" style="${plan ? '' : 'margin-top:0'}">
+    <div class="section-hdr" style="margin-top:0">
       <h2>Übungen</h2>
-      <button class="btn ${plan ? 'btn-ghost' : 'btn-primary'} btn-sm" onclick="openAddExerciseModal()">+ Übung</button>
+      <button class="btn btn-ghost btn-sm" onclick="openAddExerciseModal()">+ Übung</button>
     </div>
-    ${plan && cycle.exercises.length ? `<div class="group-note" style="margin:-4px 4px 10px">Dein Baukasten – in den Wochen oben legst du fest, wann welche Übung dran ist.</div>` : ''}
 
     ${cycle.exercises.length === 0
-      ? `<div class="card text-muted" style="text-align:center;padding:22px 16px">Noch keine Übungen.${plan ? '' : ' Füge deine erste hinzu – oder schalte in den Einstellungen den Wochenplan ein und starte mit einer Vorlage.'}</div>`
+      ? `<div class="card text-muted" style="text-align:center;padding:22px 16px">Noch keine Übungen.${plan ? ' Wähle unten fertige Wochen aus – die Übungen kommen mit.' : ' Füge deine erste hinzu – oder schalte unten den Wochenplan ein.'}</div>`
       : (() => {
           const allCats = getAllCategoriesInCycle(cycle);
           return `<div id="exerciseList">` + cycle.exercises.map(ex => {
@@ -1395,6 +1393,7 @@ function renderPlan() {
     ${cycle.exercises.length > 1
       ? `<div style="font-size:11px;color:var(--text-dim);text-align:center;margin-top:2px;margin-bottom:8px">Am Anfasser links ziehen, um die Reihenfolge zu ändern.</div>`
       : ''}
+    ${plan ? renderPlanning(cycle) : ''}
 
     ${plan ? '' : `
     <div class="section-hdr"><h2>Wochenziele</h2></div>
@@ -1920,7 +1919,8 @@ function renderLogbook() {
     byDay.get(a.date).push(a);
   });
   const days = [...byDay.keys()].sort((x, y) => y.localeCompare(x));
-  const shownDays = logShowAll ? days : days.slice(0, 6);
+  const dayEntries = (byDay.get(day) || []).slice().sort((x, y) => y.grade - x.grade);
+  const total = days.reduce((s, d) => s + byDay.get(d).length, 0);
   const chip = a => `<button type="button" class="log-chip ${a.style === 'flash' ? 'flash' : ''} ${logAdded === a.id ? 'new' : ''}"
       onclick="removeAscent('${esc(a.id)}')" title="Antippen zum Löschen">${esc(ascentGrade(a))}${a.style === 'flash' ? '<span class="log-flash">⚡</span>' : ''}</button>`;
   const dayLabel = d => d === today ? 'Heute' : d === addDays(today, -1) ? 'Gestern' : `${DAYS_DE[weekdayOf(d)]}, ${formatDay(d)}`;
@@ -1939,8 +1939,9 @@ function renderLogbook() {
       <div class="log-grades" data-focus="${typical}">
         ${steps.map((g, i) => `<button type="button" class="log-grade" onclick="quickAddAscent(${i})">${g}</button>`).join('')}
       </div>
+      ${dayEntries.length ? `<div class="log-today">${dayEntries.map(chip).join('')}</div>` : ''}
       <div class="log-add-foot">
-        <span>Grad antippen zum Eintragen</span>
+        <span>${dayEntries.length ? `${dayEntries.length} ${day === today ? 'heute' : 'an diesem Tag'} · antippen zum Löschen` : 'Grad antippen zum Eintragen'}</span>
         <label class="log-date">${day === today ? 'Anderer Tag' : 'Tag'}
           <input type="date" value="${day}" max="${today}" onchange="logDate=this.value===toDateStr(new Date())?null:this.value;renderHistory()">
         </label>
@@ -1950,14 +1951,53 @@ function renderLogbook() {
     ${days.length ? `
       ${renderPyramid(scaleId)}
       <div class="list-group">
-        ${shownDays.map(d => `<div class="log-day">
-          <div class="log-day-name">${dayLabel(d)} <span>${byDay.get(d).length}</span></div>
-          <div class="log-chips">${byDay.get(d).sort((x, y) => y.grade - x.grade).map(chip).join('')}</div>
-        </div>`).join('')}
-      </div>
-      ${days.length > 6 ? `<button class="btn-link" onclick="logShowAll=!logShowAll;renderHistory()">${logShowAll ? 'Weniger anzeigen' : `Alle ${days.length} Tage anzeigen`}</button>` : ''}
-      <div class="group-note" style="text-align:center">Eintrag antippen, um ihn zu löschen.</div>`
+        <div class="list-row" onclick="openLogHistory()">
+          <div class="list-main"><div class="list-title">Verlauf</div>
+            <div class="list-sub">${total} Boulder an ${days.length} ${days.length === 1 ? 'Tag' : 'Tagen'}</div></div>
+          <span class="chev">›</span>
+        </div>
+      </div>`
     : `<div class="text-muted" style="text-align:center;padding:10px 20px 4px;line-height:1.5">Tipp nach jedem geschafften Boulder kurz auf seinen Grad – daraus entsteht deine Pyramide.</div>`}`;
+}
+
+// Alle Tage, nach Monaten gegliedert – in einem eigenen Fenster, damit die
+// Logbuch-Seite kurz bleibt.
+function openLogHistory() {
+  openModal('<div id="logHistory"></div>');
+  renderLogHistory();
+}
+
+function renderLogHistory() {
+  const box = document.getElementById('logHistory');
+  if (!box) return;
+  const today = toDateStr(new Date());
+  const byDay = new Map();
+  sortedAscents().filter(a => a.style !== 'project').forEach(a => {
+    if (!byDay.has(a.date)) byDay.set(a.date, []);
+    byDay.get(a.date).push(a);
+  });
+  const days = [...byDay.keys()].sort((x, y) => y.localeCompare(x));
+  const months = [];
+  days.forEach(d => {
+    const key = d.slice(0, 7);
+    if (!months.length || months[months.length - 1].key !== key) months.push({ key, days: [] });
+    months[months.length - 1].days.push(d);
+  });
+  const monthName = key => { const d = parseDate(key + '-01'); return d.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' }); };
+  const label = d => d === today ? 'Heute' : `${DAYS_DE[weekdayOf(d)]}, ${formatDay(d)}`;
+  box.innerHTML = `
+    <div class="modal-title">Verlauf</div>
+    ${months.map(m => `
+      <div class="group-label" style="margin-top:14px">${esc(monthName(m.key))}</div>
+      <div class="list-group">
+        ${m.days.map(d => `<div class="log-day">
+          <div class="log-day-name">${label(d)} <span>${byDay.get(d).length}</span></div>
+          <div class="log-chips">${byDay.get(d).sort((x, y) => y.grade - x.grade).map(a => `<button type="button" class="log-chip ${a.style === 'flash' ? 'flash' : ''}"
+            onclick="removeAscent('${esc(a.id)}')">${esc(ascentGrade(a))}${a.style === 'flash' ? '<span class="log-flash">⚡</span>' : ''}</button>`).join('')}</div>
+        </div>`).join('')}
+      </div>`).join('') || '<div class="text-muted">Noch keine Einträge.</div>'}
+    <div class="group-note" style="text-align:center;margin-top:12px">Eintrag antippen, um ihn zu löschen.</div>
+    <button class="btn btn-ghost btn-full" style="margin-top:14px" onclick="closeModal()">Fertig</button>`;
 }
 
 function quickAddAscent(grade) {
@@ -1978,6 +2018,7 @@ function removeAscent(id) {
   appData.ascents = appData.ascents.filter(x => x.id !== id);
   saveData();
   renderHistory();
+  renderLogHistory();
 }
 
 // Die Grad-Leiste so schieben, dass der übliche Grad sichtbar ist
@@ -2234,6 +2275,8 @@ function createCycle() {
   saveData();
   closeModal();
   render();
+  // Leerer Wochenplan: gleich fertige Wochen zur Auswahl anbieten
+  if (isPlanMode(cycle) && !cycle.exercises.length) setTimeout(() => { switchView('plan'); openAddWeekSheet(); }, 300);
 }
 
 // Kopie einer Übung mit neuer ID – für Vorlagen, kopierte Zyklen und

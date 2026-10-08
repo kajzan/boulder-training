@@ -855,3 +855,35 @@ textarea { resize: vertical; font-size: 14px; line-height: 1.4; }
 }
 .week-total-val { font-size: 40px; }
 .check-row.day-ex:last-of-type { border-bottom: none; }
+
+/* Planung: Wochenarten als Pinsel, Kacheln zum Ausmalen */
+.brush-dot {
+  width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
+  border: 2px solid var(--border); display: flex; align-items: center; justify-content: center;
+  transition: background 0.15s;
+}
+.brush-dot.add { border-style: dashed; color: var(--accent); font-size: 15px; border-color: var(--text-dim); }
+.list-row.brush-on { background: var(--surface2); }
+.edit-btn {
+  background: none; border: none; color: var(--accent); font-family: inherit; font-size: 13px;
+  padding: 8px 0 8px 8px; cursor: pointer; flex-shrink: 0;
+}
+.tl-cell { min-height: 54px; }
+.tl-cell:empty::after { content: ''; }
+.pick-box {
+  width: 24px; height: 24px; border-radius: 50%; flex-shrink: 0;
+  border: 2px solid var(--border); display: flex; align-items: center; justify-content: center;
+}
+.pick-box.on { background: var(--accent); border-color: var(--accent); }
+.sheet-actions { position: sticky; bottom: -20px; background: var(--surface); padding: 14px 0 4px; margin-top: 10px; }
+
+/* Nach links wischen */
+.swipe-row { position: relative; overflow: hidden; touch-action: pan-y; }
+.swipe-row + .swipe-row, .swipe-row + .list-row { border-top: 1px solid var(--border); }
+.swipe-content { position: relative; z-index: 1; background: var(--surface); transition: transform 0.2s ease; }
+.swipe-action {
+  position: absolute; right: 0; top: 0; bottom: 0; width: 88px; z-index: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--red); color: #fff; font-size: 14px; font-weight: 600; cursor: pointer;
+}
+.log-today { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 16px 0; }
