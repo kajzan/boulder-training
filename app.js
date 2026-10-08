@@ -70,6 +70,18 @@ function migrateCycles(d = appData) {
     while (c.weekTargets.length < c.weeks) c.weekTargets.push(0);
     if (c.weekTargets.length > c.weeks) c.weekTargets = c.weekTargets.slice(0, c.weeks);
 
+    // Pausen wurden anfangs in ganzen Wochen gezählt; jetzt in Tagen
+    if (Array.isArray(c.pausedWeeks) || Number.isInteger(c.pausedSince)) {
+      const weekStart = o => addDays(c.startDate, o * 7);
+      c.pauses = (c.pauses || []).concat((c.pausedWeeks || []).filter(Number.isInteger)
+        .map(o => ({ from: weekStart(o), to: addDays(weekStart(o), 6) })));
+      if (!c.pauses.length) delete c.pauses;
+      if (Number.isInteger(c.pausedSince) && !c.pausedAt) c.pausedAt = weekStart(c.pausedSince);
+      delete c.pausedWeeks;
+      delete c.pausedSince;
+      changed = true;
+    }
+
     // Migrate exercises from a single category string to a list of categories.
     // Eine Übung wie eine Campus-Board-Session trainiert mehreres zugleich.
     (c.exercises || []).forEach(ex => {
@@ -319,113 +331,102 @@ function refreshCategoryChips(inputId, multi) {
 }
 
 // ── Pausen ──
-// Ein Zyklus zählt Trainingswochen, keine Kalenderwochen. Pausierte Wochen
-// werden übersprungen, alle späteren rücken nach hinten – nach zwei Wochen
-// Urlaub geht es mit derselben Trainingswoche weiter, statt dass der Plan
-// davonläuft.
+// Ein Zyklus zählt Trainingstage, keine Kalendertage. Pausierte Tage werden
+// übersprungen, alles Spätere rückt um genau so viele Tage nach hinten –
+// nach vier Tagen krank geht es mit demselben Trainingstag weiter.
 //
-// Gezählt wird in Wochen ab dem Startdatum (0 = erste Woche):
-//   pausedWeeks  abgeschlossene Pausen, z.B. [5, 6]
-//   pausedSince  eine laufende Pause; reicht bis einschließlich heute
-function calendarWeekOf(cycle, dateStr) {
-  return Math.floor(daysBetween(cycle.startDate, dateStr) / 7);
-}
-
-function pausedWeekSet(cycle) {
-  const set = new Set((cycle.pausedWeeks || []).filter(n => Number.isInteger(n) && n >= 0));
-  if (Number.isInteger(cycle.pausedSince) && cycle.pausedSince >= 0) {
-    const now = calendarWeekOf(cycle, toDateStr(new Date()));
-    for (let o = cycle.pausedSince; o <= Math.max(now, cycle.pausedSince); o++) set.add(o);
-  }
-  return set;
-}
-
-// Die Kalenderwoche (ab Start), in der Trainingswoche weekIndex liegt.
-function weekOffset(cycle, weekIndex) {
-  const paused = pausedWeekSet(cycle);
-  if (paused.size === 0 || weekIndex < 0) return weekIndex;
-  let o = 0, n = -1;
-  for (;;) {
-    if (!paused.has(o) && ++n === weekIndex) return o;
-    o++;
-  }
-}
-
-// Pausiert ist ein Zyklus, sobald die Pause gedrückt wurde – auch wenn die
-// laufende Woche (weil schon trainiert) noch als Trainingswoche zählt.
-function isCyclePaused(cycle) {
-  return !!cycle && Number.isInteger(cycle.pausedSince);
-}
-
-// Die Trainingswoche, mit der es nach der Pause weitergeht
-function resumeWeekIndex(cycle) {
-  const paused = new Set((cycle.pausedWeeks || []));
-  let n = 0;
-  for (let o = 0; o < cycle.pausedSince; o++) if (!paused.has(o)) n++;
-  return Math.min(n, (cycle.weeks || 12) - 1);
-}
-
-// Ab diesem Tag wird während einer Pause nichts mehr eingetragen
-function pauseStartDate(cycle) {
-  return cycle.pausedAt || calendarWeekStart(cycle, cycle.pausedSince);
-}
-
-function isPausedDay(cycle, dateStr) {
-  return isCyclePaused(cycle) && dateStr >= pauseStartDate(cycle);
-}
-
-// Erster Tag einer Kalenderwoche des Zyklus
-function calendarWeekStart(cycle, offset) {
-  const d = parseDate(cycle.startDate);
-  d.setDate(d.getDate() + offset * 7);
+// Eine Trainingswoche sind die nächsten sieben nicht pausierten Tage. Liegt
+// eine Pause mitten in einer Woche, verteilt sich die Woche eben auf mehr als
+// sieben Kalendertage.
+//
+//   pauses    abgeschlossene Pausen: [{ from, to }] (beide Tage inklusive)
+//   pausedAt  eine laufende Pause seit diesem Tag; reicht bis einschließlich
+//             heute. Bis zum Fortsetzen lässt sich ab diesem Tag nichts
+//             eintragen.
+function addDays(dateStr, n) {
+  const d = parseDate(dateStr);
+  d.setDate(d.getDate() + n);
   return toDateStr(d);
 }
 
-// Pausiert sofort. Wurde diese Woche schon trainiert, bleibt sie als
-// Trainingswoche bestehen und die übersprungenen Wochen beginnen mit der
-// nächsten – die Einträge sollen ihrer Woche nicht verloren gehen.
+function isCyclePaused(cycle) {
+  return !!cycle && typeof cycle.pausedAt === 'string';
+}
+
+// Für den Wochenplan: Ist dieser Tag übersprungen?
+function isPausedDate(cycle, dateStr, today) {
+  if ((cycle.pauses || []).some(p => p && dateStr >= p.from && dateStr <= p.to)) return true;
+  return isCyclePaused(cycle) && dateStr >= cycle.pausedAt && dateStr <= (today || toDateStr(new Date()));
+}
+
+// Fürs Eintragen: ab Pausenbeginn gesperrt, bis fortgesetzt wird
+function isPausedDay(cycle, dateStr) {
+  return isCyclePaused(cycle) && dateStr >= cycle.pausedAt;
+}
+
+// Die Kalendertage der ersten n Trainingstage. Zwischengespeichert, weil die
+// Ansichten das für jede Woche abfragen.
+const trainingDayCache = new Map();
+function trainingDays(cycle, n) {
+  const today = toDateStr(new Date());
+  const key = [cycle.id, cycle.startDate, n, today, cycle.pausedAt || '', JSON.stringify(cycle.pauses || [])].join('|');
+  if (trainingDayCache.has(key)) return trainingDayCache.get(key);
+  const out = [];
+  let d = cycle.startDate;
+  for (let guard = 0; out.length < n && guard < 20000; guard++) {
+    if (!isPausedDate(cycle, d, today)) out.push(d);
+    d = addDays(d, 1);
+  }
+  if (trainingDayCache.size > 200) trainingDayCache.clear();
+  trainingDayCache.set(key, out);
+  return out;
+}
+
+// Pausiert sofort. Wurde heute schon trainiert, beginnt die Pause morgen –
+// die Einträge von heute sollen ihrem Tag nicht verloren gehen.
 function pauseCycle() {
   const cycle = getActiveCycle();
   if (!cycle) return;
-  const now = calendarWeekOf(cycle, toDateStr(new Date()));
-  if (now < 0) return;
-  const trained = Array.from({ length: 7 }, (_, i) => {
-    const d = parseDate(calendarWeekStart(cycle, now));
-    d.setDate(d.getDate() + i);
-    return toDateStr(d);
-  }).some(d => (cycle.sessions[d] || []).length > 0);
-  cycle.pausedSince = trained ? now + 1 : now;
-  cycle.pausedAt = toDateStr(new Date());
+  const today = toDateStr(new Date());
+  const trained = (cycle.sessions[today] || []).length > 0;
+  cycle.pausedAt = trained ? addDays(today, 1) : today;
   saveData();
   render();
 }
 
-// Beendet die Pause. Die laufende Woche zählt wieder als Trainingswoche.
+// Beendet die Pause; heute ist wieder ein Trainingstag.
 function resumeCycle() {
   const cycle = getActiveCycle();
-  if (!cycle || !Number.isInteger(cycle.pausedSince)) return;
-  const now = calendarWeekOf(cycle, toDateStr(new Date()));
-  const weeks = new Set(cycle.pausedWeeks || []);
-  for (let o = cycle.pausedSince; o < now; o++) weeks.add(o);
-  cycle.pausedWeeks = Array.from(weeks).sort((a, b) => a - b);
-  if (cycle.pausedWeeks.length === 0) delete cycle.pausedWeeks;
-  delete cycle.pausedSince;
+  if (!isCyclePaused(cycle)) return;
+  const today = toDateStr(new Date());
+  if (today > cycle.pausedAt) {
+    cycle.pauses = (cycle.pauses || []).concat([{ from: cycle.pausedAt, to: addDays(today, -1) }]);
+  }
   delete cycle.pausedAt;
   saveData();
   render();
 }
 
+// Anzahl pausierter Tage in einem Zeitraum (beide Tage inklusive)
+function pausedDaysBetween(cycle, from, to) {
+  let n = 0;
+  for (let d = from; d <= to; d = addDays(d, 1)) if (isPausedDate(cycle, d)) n++;
+  return n;
+}
+
+// Wer pausiert und wieder einsteigt, steht hier: Woche und Tag in der Woche
+function trainingPosition(cycle) {
+  const today = toDateStr(new Date());
+  const upTo = isCyclePaused(cycle) && cycle.pausedAt < today ? cycle.pausedAt : today;
+  let n = 0;
+  for (let d = cycle.startDate; d < upTo; d = addDays(d, 1)) if (!isPausedDate(cycle, d)) n++;
+  const maxDay = (cycle.weeks || 12) * 7 - 1;
+  n = Math.min(n, maxDay);
+  return { week: Math.floor(n / 7), day: n % 7 };
+}
+
 function getWeekDates(cycle, weekIndex) {
-  const start = parseDate(cycle.startDate);
-  start.setHours(0,0,0,0);
-  const offset = weekOffset(cycle, weekIndex);
-  const days = [];
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(start);
-    d.setDate(d.getDate() + offset * 7 + i);
-    days.push(toDateStr(d));
-  }
-  return days;
+  return trainingDays(cycle, (weekIndex + 1) * 7).slice(weekIndex * 7);
 }
 
 function getWeekIntensity(cycle, weekIndex) {
@@ -462,12 +463,8 @@ function intensityLabel(current, target) {
 
 // Während einer Pause ist das die Woche, mit der es danach weitergeht.
 function getCurrentWeekIndex(cycle) {
-  const now = calendarWeekOf(cycle, toDateStr(new Date()));
-  const paused = pausedWeekSet(cycle);
-  let weekIdx = 0;
-  for (let o = 0; o < now; o++) if (!paused.has(o)) weekIdx++;
-  const maxW = (cycle.weeks || 12) - 1;
-  return Math.max(0, Math.min(maxW, weekIdx));
+  if (toDateStr(new Date()) < cycle.startDate) return 0;
+  return trainingPosition(cycle).week;
 }
 
 function formatDateRange(d1, d2) {
@@ -750,7 +747,7 @@ function renderDashboard() {
     <div class="pause-hero">
       <div class="pause-icon">${PAUSE_ICON}</div>
       <div class="sheet-title">Training pausiert</div>
-      <div class="sheet-text">Seit ${pauseStartDate(cycle) === today ? 'heute' : formatDay(pauseStartDate(cycle))}. Danach geht es mit <strong>Woche ${resumeWeekIndex(cycle) + 1}</strong> weiter – der Zyklus verlängert sich um die Pause.</div>
+      <div class="sheet-text">${cycle.pausedAt > today ? 'Ab morgen' : cycle.pausedAt === today ? 'Seit heute' : `Seit ${formatDay(cycle.pausedAt)} · ${pausedDaysBetween(cycle, cycle.pausedAt, today)} Tage`}. Danach geht es mit <strong>Woche ${trainingPosition(cycle).week + 1}, Tag ${trainingPosition(cycle).day + 1}</strong> weiter – der Zyklus verlängert sich um jeden Pausentag.</div>
       <button class="btn btn-primary btn-full" style="margin-top:18px" onclick="resumeCycle()">Training fortsetzen</button>
     </div>` : '';
 
@@ -818,12 +815,12 @@ function renderDashboard() {
       const wc = intensityClass(wint, wtgt);
       const wd = getWeekDates(cycle, i);
       const isCurrent = i === weekIdx && !paused;
-      const gap = weekOffset(cycle, i) - (i > 0 ? weekOffset(cycle, i - 1) : -1) - 1;
-      return (gap > 0 ? `<div class="pause-row">Pause · ${gap} ${gap === 1 ? 'Woche' : 'Wochen'}</div>` : '') +
-      `<div class="week-row ${isCurrent ? 'current-week' : ''}" onclick="openWeekModal(${i})">
+      // Pausentage seit dem Ende der Vorwoche bis zum Ende dieser Woche
+      const gap = pausedDaysBetween(cycle, i > 0 ? addDays(getWeekDates(cycle, i - 1)[6], 1) : cycle.startDate, wd[6]);
+      return `<div class="week-row ${isCurrent ? 'current-week' : ''}" onclick="openWeekModal(${i})">
         <div class="week-row-left">
           <div class="week-row-num">Woche ${i+1}${isCurrent ? ' · Aktuell' : ''}</div>
-          <div class="week-row-date">${formatDateRange(wd[0], wd[6])}</div>
+          <div class="week-row-date">${formatDateRange(wd[0], wd[6])}${gap ? ` <span class="pause-note">· ${gap} ${gap === 1 ? 'Tag' : 'Tage'} Pause</span>` : ''}</div>
         </div>
         <div style="display:flex;align-items:center;gap:8px">
           <span style="font-family:'DM Mono',monospace;font-size:14px;color:var(--text-muted)">${wint}/${wtgt}</span>

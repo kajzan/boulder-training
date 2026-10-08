@@ -596,7 +596,7 @@ const BESTAND = {
   cycles: [
     { id: 'c2', name: 'Sommer', startDate: '2026-06-01', weeks: 2, weekTargets: [8, 9], notes: {},
       zukunftsfeld: { von: 'einer spaeteren Version' },
-      mode: 'plan', pausedWeeks: [1], pausedSince: 3,
+      mode: 'plan', pauses: [{ from: '2026-06-03', to: '2026-06-05' }], pausedAt: '2026-06-20',
       exercises: [
         { id: 'e2', name: 'Campus', categories: ['Pull', 'Finger'], intensity: 3, days: [0, 4], desc: '3 Leitern' },
         { id: 'e1', name: 'Hangboard', categories: ['Finger'], intensity: 2, measure: true, unit: 'kg' },
@@ -657,9 +657,9 @@ eq('Logbuch liegt je Jahr in einem eigenen Dokument',
 check('Logbuch-Dokumente gelten als Ablage, nicht als Altbestand',
   isStorageGroup('a~2026') && flattenStorage({ 'a~2026': { k: { 'ascent:2026:l1': { id: 'l1' } } } }).legacy.length === 0);
 eq('Pausen, Wochenplan und Trainingstage reisen mit',
-  [bestandDocs['cycle:c2'].mode, bestandDocs['cycle:c2'].pausedWeeks, bestandDocs['cycle:c2'].pausedSince,
+  [bestandDocs['cycle:c2'].mode, bestandDocs['cycle:c2'].pauses, bestandDocs['cycle:c2'].pausedAt,
    bestandDocs['exercise:c2:e2'].days],
-  ['plan', [1], 3, [0, 4]]);
+  ['plan', [{ from: '2026-06-03', to: '2026-06-05' }], '2026-06-20', [0, 4]]);
 
 const zurueck = fromDocs(bestandDocs);
 eq('Zyklen nach Anlegezeitpunkt geordnet', zurueck.cycles.map(c => c.id), ['c1', 'c2']);
@@ -1066,60 +1066,63 @@ function neuerZyklus(extra) {
 
 try {
 group('Zyklus pausieren');
-heuteIst('2026-01-21');   // Mittwoch der dritten Woche (Kalenderwoche 2 ab Start)
+heuteIst('2026-01-21');   // Mittwoch, Trainingstag 17 (Woche 3, Tag 3) ab Start Mo 05.01.
 let pz = neuerZyklus();
 eq('ohne Pause: dritte Woche', getCurrentWeekIndex(pz), 2);
 pauseCycle();
-eq('leere Woche: Pause beginnt sofort', pz.pausedSince, 2);
+eq('ohne Training heute: Pause beginnt heute', pz.pausedAt, '2026-01-21');
 check('der Zyklus gilt als pausiert', isCyclePaused(pz));
-eq('danach geht es mit Woche 3 weiter', getCurrentWeekIndex(pz), 2);
-eq('Woche 3 rückt eine Woche nach hinten', getWeekDates(pz, 2)[0], '2026-01-26');
-eq('das Ende verschiebt sich um eine Woche', getCycleEndDate(pz), '2026-02-08');
-heuteIst('2026-02-04');   // zwei Wochen später fortsetzen
-eq('eine laufende Pause wächst mit (Woche 3 frühestens nächste Woche)', getWeekDates(pz, 2)[0], '2026-02-09');
+eq('weiter geht es mit Woche 3, Tag 3', trainingPosition(pz), { week: 2, day: 2 });
+heuteIst('2026-01-24');   // drei Tage später, Pause läuft (21.–24. = 4 Tage)
+eq('laufende Pause: Woche 3 nimmt die Tage vor und nach der Pause',
+  getWeekDates(pz, 2), ['2026-01-19', '2026-01-20', '2026-01-25', '2026-01-26', '2026-01-27', '2026-01-28', '2026-01-29']);
+heuteIst('2026-01-25');   // nach vier Tagen Pause fortsetzen
 resumeCycle();
-eq('beim Fortsetzen werden die vergangenen Pausenwochen festgeschrieben', pz.pausedWeeks, [2, 3]);
-check('keine laufende Pause mehr', pz.pausedSince === undefined && !isCyclePaused(pz));
-eq('die laufende Woche ist wieder Woche 3', getCurrentWeekIndex(pz), 2);
-eq('Woche 3 beginnt in der laufenden Kalenderwoche', getWeekDates(pz, 2)[0], '2026-02-02');
-eq('die ersten Wochen bleiben, wo sie waren', getWeekDates(pz, 1)[0], '2026-01-12');
+eq('genau die vier Tage sind festgeschrieben', pz.pauses, [{ from: '2026-01-21', to: '2026-01-24' }]);
+check('keine laufende Pause mehr', !isCyclePaused(pz) && pz.pausedAt === undefined);
+eq('heute ist wieder Woche 3, Tag 3', trainingPosition(pz), { week: 2, day: 2 });
+eq('alles danach rückt um genau 4 Tage', getWeekDates(pz, 3)[0], '2026-01-30');
+eq('das Ende verschiebt sich um 4 Tage', getCycleEndDate(pz), '2026-02-05');
+eq('die ersten Wochen bleiben, wo sie waren', getWeekDates(pz, 1), ['2026-01-12', '2026-01-13', '2026-01-14', '2026-01-15', '2026-01-16', '2026-01-17', '2026-01-18']);
+renderDashboard();
+check('Übersicht zeigt die Pausentage bei der Woche', el('dashContent').innerHTML.includes('4 Tage Pause'));
 
 heuteIst('2026-01-21');
 pz = neuerZyklus();
-pz.sessions['2026-01-19'] = [{ exId: 'x' }];
+pz.sessions['2026-01-21'] = [{ exId: 'x' }];
 pauseCycle();
-eq('schon trainiert: Pause beginnt erst nächste Woche', pz.pausedSince, 3);
+eq('heute schon trainiert: Pause beginnt morgen', pz.pausedAt, '2026-01-22');
 check('trotzdem sofort pausiert', isCyclePaused(pz));
-eq('die trainierte Woche bleibt Woche 3, weiter geht es mit Woche 4',
-  [getWeekDates(pz, 2)[0], resumeWeekIndex(pz)], ['2026-01-19', 3]);
-toggleDayEx('2026-01-21', 'x');
-check('ab dem Pausentag wird nichts eingetragen', !pz.sessions['2026-01-21']);
-check('der Tagesdialog bietet stattdessen Fortsetzen an', buildDayModalContent('2026-01-21').includes('resumeCycle()'));
+toggleDayEx('2026-01-22', 'x');
+check('ab dem Pausentag wird nichts eingetragen', !pz.sessions['2026-01-22']);
+check('der Tagesdialog bietet stattdessen Fortsetzen an', buildDayModalContent('2026-01-22').includes('resumeCycle()'));
 toggleDayEx('2026-01-20', 'x');
 check('vor der Pause darf nachgetragen werden', (pz.sessions['2026-01-20'] || []).length === 1);
 renderDashboard();
 check('Übersicht zeigt die Pause statt der Woche',
-  el('dashContent').innerHTML.includes('Training pausiert') && el('dashContent').innerHTML.includes('Woche 4</strong>') &&
+  el('dashContent').innerHTML.includes('Training pausiert') && el('dashContent').innerHTML.includes('Ab morgen') &&
   !el('dashContent').innerHTML.includes('Diese Trainingswoche'));
 resumeCycle();
-check('Fortsetzen in derselben Woche hinterlässt keine Pause',
-  pz.pausedSince === undefined && pz.pausedAt === undefined && pz.pausedWeeks === undefined);
+check('Fortsetzen vor Beginn hinterlässt keine Pause', pz.pausedAt === undefined && pz.pauses === undefined);
 
-pz = neuerZyklus({ startDate: '2026-01-05', pausedSince: 2 });
-heuteIst('2026-01-19');
-pauseCycle();   // erneut pausieren in derselben Woche ändert nichts Schlimmes
+pz = neuerZyklus();
+pauseCycle();
 resumeCycle();
-check('pausieren und gleich fortsetzen: keine Pausenwoche', pz.pausedWeeks === undefined);
+check('pausieren und am selben Tag fortsetzen: keine Pause', pz.pauses === undefined);
 
 heuteIst('2026-01-21');
-pz = neuerZyklus({ pausedSince: 2 });
-el('dashContent').innerHTML = '';
-currentView = 'dashboard';
+pz = neuerZyklus({ pausedAt: '2026-01-19' });
 renderDashboard();
-check('Übersicht zeigt die Pause mit Fortsetzen-Knopf', el('dashContent').innerHTML.includes('resumeCycle()'));
-pz.pausedWeeks = [1]; delete pz.pausedSince;
-renderDashboard();
-check('Übersicht markiert die Pause zwischen den Wochen', el('dashContent').innerHTML.includes('Pause · 1 Woche'));
+check('Übersicht zeigt die Pause mit Fortsetzen-Knopf und Dauer',
+  el('dashContent').innerHTML.includes('resumeCycle()') && el('dashContent').innerHTML.includes('3 Tage'));
+
+// Alte, wochenweise gespeicherte Pausen werden übernommen
+const altPause = { cycles: [{ id: 'ap', name: 'A', startDate: '2026-01-05', weeks: 4, weekTargets: [], exercises: [],
+  sessions: {}, notes: {}, pausedWeeks: [1], pausedSince: 3 }] };
+normalizeData(altPause);
+eq('alte Wochen-Pausen werden zu Tagen', [altPause.cycles[0].pauses, altPause.cycles[0].pausedAt,
+  'pausedWeeks' in altPause.cycles[0], 'pausedSince' in altPause.cycles[0]],
+  [[{ from: '2026-01-12', to: '2026-01-18' }], '2026-01-26', false, false]);
 
 group('Wochenplan');
 heuteIst('2026-01-21');   // Mittwoch

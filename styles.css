@@ -636,3 +636,4 @@ textarea { resize: vertical; font-size: 14px; line-height: 1.4; }
   .tab-btn.active { background: var(--accent-dim); color: var(--accent); }
   .nav { z-index: 150; }
 }
+.pause-note { color: var(--accent); font-size: 12px; }
