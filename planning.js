@@ -255,21 +255,20 @@ function suggestExerciseDays(cycle) {
 // ═══════════════════════════════════════════════
 // ANSICHT IM TRAININGSPLAN
 // ═══════════════════════════════════════════════
-// Planen in zwei Tipps: Woche(n) antippen, dann die Wochenart, die dort
-// gelten soll. Ohne ausgewählte Woche öffnet ein Tipp auf die Wochenart
-// ihren Inhalt. Wochenarten lassen sich nach links wischen, um sie zu löschen.
-let weekSel = [];          // ausgewählte Zykluswochen (Index ab 0)
-let weekSelCycle = null;   // zu welchem Zyklus die Auswahl gehört
+// Oben die Wochen des Zyklus als Kacheln, darunter die Wochenarten als
+// Marken. Eine Marke auf Kacheln ziehen ordnet sie zu – über mehrere Kacheln
+// gezogen gleich alle auf einmal. Ein Tipp auf eine Kachel öffnet ein Menü
+// mit den Wochenarten, ein Tipp auf eine Marke ihren Inhalt.
 
 function hexA(hex, a) {
   const n = parseInt(hex.slice(1), 16);
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
 }
 
-function selectedWeeks(cycle) {
-  if (weekSelCycle !== cycle.id) { weekSel = []; weekSelCycle = cycle.id; }
-  weekSel = weekSel.filter(i => i < (cycle.weeks || 12));
-  return weekSel;
+const MORE_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>`;
+
+function tileStyle(color) {
+  return color ? `background:${hexA(color, 0.16)};border-color:${hexA(color, 0.5)}` : '';
 }
 
 function renderPlanning(cycle) {
@@ -277,57 +276,37 @@ function renderPlanning(cycle) {
   const plans = weekPlans(cycle);
   const n = cycle.weeks || 12;
   const current = getCurrentWeekIndex(cycle);
-  const sel = selectedWeeks(cycle);
 
   const tiles = Array.from({ length: n }, (_, i) => {
     const plan = weekPlanFor(cycle, i);
     const color = plan ? weekPlanColor(cycle, plan) : null;
-    const on = sel.includes(i);
-    return `<button type="button" class="tl-cell ${i === current ? 'current' : ''} ${on ? 'selected' : ''}" onclick="toggleWeekSel(${i})"
-      style="${color ? `background:${hexA(color, 0.16)};border-color:${hexA(color, 0.5)}` : ''}" aria-pressed="${on}">
+    return `<button type="button" class="tl-cell ${i === current ? 'current' : ''}" data-drop="week:${i}"
+      onclick="openWeekMenu(this, ${i})" style="${tileStyle(color)}" aria-label="Woche ${i + 1}${plan ? ': ' + esc(plan.name) : ''}">
       <span class="tl-num">${i + 1}</span>
       <span class="tl-name" style="${color ? `color:${color}` : ''}">${plan ? esc(shortWeekName(plan.name)) : ''}</span>
-      ${on ? `<span class="tl-check">${CHECK_SVG}</span>` : ''}
     </button>`;
   }).join('');
 
-  const typeRows = plans.map(plan => {
+  const tokens = plans.map(plan => {
     const color = weekPlanColor(cycle, plan);
-    const days = planDays(plan);
-    const count = weeksOfPlan(cycle, plan).length;
-    return `<div class="swipe-row" data-delete="deleteWeekPlan('${plan.id}')">
-      <div class="swipe-action">Löschen</div>
-      <div class="swipe-content list-row ${sel.length ? 'assignable' : ''}" onclick="${sel.length ? `assignSelected('${plan.id}')` : `openWeekEditor('${plan.id}')`}">
-        <span class="brush-dot" style="border-color:${color};background:${color}"></span>
-        <div class="list-main">
-          <div class="list-title">${esc(plan.name)}</div>
-          <div class="list-sub">${days.length ? days.map(d => DAYS_DE[d]).join(' ') : 'noch leer'} · ${fmtAmount(cycle, planTotal(cycle, plan))} · ${count} ${count === 1 ? 'Woche' : 'Wochen'}</div>
-        </div>
-        ${sel.length ? `<span class="assign-hint">Zuordnen</span>`
-          : `<button type="button" class="edit-btn" onclick="event.stopPropagation();openWeekEditor('${plan.id}')" aria-label="${esc(plan.name)} bearbeiten">Bearbeiten</button>`}
-      </div>
-    </div>`;
+    return `<button type="button" class="wk-token" style="--c:${color}"
+      onpointerdown="dndPress(event, { kind: 'week', plan: '${plan.id}', label: '${esc(jsStr(plan.name))}', color: '${color}' })"
+      onclick="openWeekEditor('${plan.id}')">
+      <span class="tok-dot"></span>${esc(plan.name)}
+    </button>`;
   }).join('');
 
-  const hint = sel.length
-    ? `<div class="sel-bar">
-        <span><strong>${sel.length === 1 ? 'Woche ' + (sel[0] + 1) : sel.length + ' Wochen'}</strong></span>
-        <span class="sel-actions"><a class="link" onclick="assignSelected(null)">Ohne Plan</a> · <a class="link" onclick="clearWeekSel()">Abbrechen</a></span>
-      </div>`
-    : `<div class="sel-all"><a class="link" onclick="selectAllWeeks()">Alle auswählen</a></div>`;
-
   return `
-    <div class="section-hdr"><h2>Planung</h2></div>
+    <div class="section-hdr">
+      <h2>Planung</h2>
+      <button type="button" class="icon-btn" onclick="openPlanMenu(this)" aria-label="Mehr">${MORE_ICON}</button>
+    </div>
     ${plans.length ? `
-      <div class="card">
+      <div class="card plan-board">
         <div class="tl-grid">${tiles}</div>
-        ${hint}
-      </div>
-      <div class="list-group">
-        ${typeRows}
-        <div class="list-row" onclick="openAddWeekSheet()">
-          <span class="brush-dot add">+</span>
-          <div class="list-main"><div class="list-title" style="color:var(--accent)">Wochenart hinzufügen</div></div>
+        <div class="wk-tokens">
+          ${tokens}
+          <button type="button" class="wk-token add" onclick="openAddWeekSheet()" aria-label="Wochenart hinzufügen">+</button>
         </div>
       </div>`
     : `<div class="card plan-empty">
@@ -337,44 +316,56 @@ function renderPlanning(cycle) {
   `;
 }
 
+// Für Werte in onclick="…'${…}'…": Backslash und Apostroph maskieren
+function jsStr(s) {
+  return String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
 // "Entlastungswoche" → "Entlastung" – passt in die Kachel
 function shortWeekName(name) {
   const t = name.replace(/ungswoche$/i, 'ung').replace(/\s*woche$/i, '').trim();
   return t || name;
 }
 
-function toggleWeekSel(i) {
-  const cycle = getActiveCycle();
-  if (!cycle) return;
-  if (!weekPlans(cycle).length) { openAddWeekSheet(); return; }
-  const sel = selectedWeeks(cycle);
-  const k = sel.indexOf(i);
-  if (k >= 0) sel.splice(k, 1); else sel.push(i);
-  render();
-}
-
-function selectAllWeeks() {
-  const cycle = getActiveCycle();
-  if (!cycle) return;
-  selectedWeeks(cycle);
-  weekSel = Array.from({ length: cycle.weeks || 12 }, (_, i) => i);
-  render();
-}
-
-function clearWeekSel() {
-  weekSel = [];
-  render();
-}
-
-// Ordnet die ausgewählten Wochen einer Wochenart zu (null = ohne Plan)
-function assignSelected(planId) {
+// Ordnet Zykluswochen einer Wochenart zu (null = ohne Plan)
+function assignWeeks(indices, planId) {
   const cycle = getActiveCycle();
   if (!cycle) return;
   ensureAssign(cycle);
-  selectedWeeks(cycle).forEach(i => { cycle.weekAssign[i] = planId; });
-  weekSel = [];
+  indices.forEach(i => { if (i >= 0 && i < (cycle.weeks || 12)) cycle.weekAssign[i] = planId; });
   saveData();
   render();
+}
+
+function openWeekMenu(anchor, i) {
+  const cycle = getActiveCycle();
+  if (!cycle) return;
+  const cur = weekPlanFor(cycle, i);
+  const n = cycle.weeks || 12;
+  const items = weekPlans(cycle).map(p => ({
+    label: p.name, color: weekPlanColor(cycle, p), check: cur === p, run: () => assignWeeks([i], p.id)
+  }));
+  items.push({ label: 'Ohne Plan', check: !cur, run: () => assignWeeks([i], null) });
+  if (cur) {
+    items.push('-');
+    if (i < n - 1) items.push({ label: `Auf Woche ${i + 2}–${n} übertragen`, run: () =>
+      assignWeeks(Array.from({ length: n - i - 1 }, (_, k) => i + 1 + k), cur.id) });
+    items.push({ label: `${cur.name} bearbeiten`, run: () => openWeekEditor(cur.id) });
+  }
+  openMenu(anchor, items, `Woche ${i + 1}`);
+}
+
+function openPlanMenu(anchor) {
+  const cycle = getActiveCycle();
+  if (!cycle) return;
+  const items = [
+    { label: 'Wochenart hinzufügen', run: () => openAddWeekSheet() },
+    { label: 'Vorlage übernehmen', run: () => openTemplatePicker() }
+  ];
+  if (weekPlans(cycle).length) items.push({ label: 'In den Kalender', run: () => openCalendarExport() });
+  if (cycle.exercises.length) items.push({ label: 'Plan teilen', run: () => openSharePlanModal() });
+  items.push('-', { label: 'Wochenplan ausschalten', run: () => togglePlanMode() });
+  openMenu(anchor, items);
 }
 
 function deleteWeekPlan(id) {
@@ -387,6 +378,196 @@ function deleteWeekPlan(id) {
   saveData();
   render();
   return true;
+}
+
+// ── Menü ──
+// Kleines Aufklappmenü an einem Knopf. items: { label, color?, check?,
+// danger?, run } oder '-' als Trennlinie.
+let menuState = null;
+
+function openMenu(anchor, items, title) {
+  closeMenu();
+  const m = document.createElement('div');
+  m.className = 'pop-menu';
+  m.setAttribute('role', 'menu');
+  m.innerHTML = (title ? `<div class="pop-title">${esc(title)}</div>` : '') + items.map((it, k) => it === '-'
+    ? '<div class="pop-sep"></div>'
+    : `<button type="button" role="menuitem" class="pop-item ${it.danger ? 'danger' : ''}" data-k="${k}">
+        ${it.color ? `<span class="pop-dot" style="background:${it.color}"></span>` : ''}
+        <span class="pop-label">${esc(it.label)}</span>
+        ${it.check ? `<span class="pop-check">${CHECK_SVG.replace('#000', 'currentColor')}</span>` : ''}
+      </button>`).join('');
+  m.addEventListener('click', e => {
+    const b = e.target.closest('.pop-item');
+    if (!b) return;
+    const it = items[+b.dataset.k];
+    closeMenu();
+    it.run();
+  });
+  document.body.appendChild(m);
+  const r = anchor.getBoundingClientRect();
+  const w = m.offsetWidth, h = m.offsetHeight;
+  const left = Math.min(Math.max(8, r.left + r.width / 2 - w / 2), window.innerWidth - w - 8);
+  let top = r.bottom + 6;
+  if (top + h > window.innerHeight - 8) top = Math.max(8, r.top - h - 6);
+  m.style.left = left + 'px';
+  m.style.top = top + 'px';
+  m.style.transformOrigin = `${r.left + r.width / 2 - left}px ${top > r.top ? 0 : h}px`;
+  anchor.classList.add('menu-open');
+  menuState = { m, anchor };
+  requestAnimationFrame(() => m.classList.add('open'));
+  // Der öffnende Tipp ist schon durch (Klick kommt nach pointerdown)
+  document.addEventListener('pointerdown', menuOutside, true);
+  window.addEventListener('scroll', closeMenu, true);
+  window.addEventListener('resize', closeMenu);
+}
+
+function closeMenu() {
+  if (!menuState) return;
+  menuState.m.remove();
+  menuState.anchor.classList.remove('menu-open');
+  menuState = null;
+  document.removeEventListener('pointerdown', menuOutside, true);
+  window.removeEventListener('scroll', closeMenu, true);
+  window.removeEventListener('resize', closeMenu);
+}
+
+// Ein Tipp daneben schließt nur das Menü
+function menuOutside(e) {
+  if (!menuState || menuState.m.contains(e.target)) return;
+  closeMenu();
+  window.addEventListener('click', swallowDragClick, true);
+  setTimeout(() => window.removeEventListener('click', swallowDragClick, true), 400);
+}
+
+// ── Ziehen & Ablegen ──
+// Pointer-Events statt der HTML5-Drag-API (die auf iOS nicht greift). Ein
+// kurzer Tipp bleibt ein normaler Klick; erst ab ein paar Pixeln Bewegung
+// wird gezogen. Ziele tragen data-drop="art:wert".
+//   kind 'week'  Wochenart → Kacheln "week:i" (über mehrere ziehen = alle)
+//   kind 'ex'    Übung → Tage im Wochen-Editor "day:d", ab einem Tag auch
+//                "trash" zum Entfernen
+//   kind 'date'  geplanter Trainingstag → anderer Tag "date:yyyy-mm-dd"
+let dnd = null;
+
+function dndPress(e, spec) {
+  if (e.button > 0 || dnd) return;
+  dnd = { spec, src: e.currentTarget, x: e.clientX, y: e.clientY, active: false, over: null, painted: [],
+    scroller: e.currentTarget.closest('.modal') || document.scrollingElement || document.documentElement };
+  window.addEventListener('pointermove', dndMove);
+  window.addEventListener('pointerup', dndUp);
+  window.addEventListener('pointercancel', dndCancel);
+}
+
+function dndAccepts(spec, target) {
+  const t = target.dataset.drop || '';
+  if (spec.kind === 'week') return t.startsWith('week:');
+  if (spec.kind === 'ex') return t.startsWith('day:') ? +t.slice(4) !== spec.from : (t === 'trash' && spec.from !== undefined);
+  if (spec.kind === 'date') return t.startsWith('date:') && t.slice(5) !== spec.from;
+  return false;
+}
+
+function dndMove(e) {
+  const s = dnd;
+  if (!s) return;
+  s.cx = e.clientX; s.cy = e.clientY;
+  if (!s.active) {
+    if (Math.hypot(e.clientX - s.x, e.clientY - s.y) < 6) return;
+    s.active = true;
+    closeMenu();
+    const g = document.createElement('div');
+    g.className = 'dnd-ghost';
+    if (s.spec.color) g.style.setProperty('--c', s.spec.color);
+    g.innerHTML = `${s.spec.color ? '<span class="tok-dot"></span>' : ''}${esc(s.spec.label || '')}`;
+    document.body.appendChild(g);
+    s.ghost = g;
+    s.src.classList.add('dnd-src');
+    document.body.classList.add('dnd-on', 'dnd-' + s.spec.kind + (s.spec.from !== undefined ? '-from' : ''));
+    dndAutoScroll();
+  }
+  e.preventDefault();
+  if (!s.gw) s.gw = s.ghost.offsetWidth;
+  const gx = Math.max(8, Math.min(e.clientX - 20, window.innerWidth - s.gw - 8));
+  s.ghost.style.transform = `translate(${gx}px, ${e.clientY - 54}px)`;
+  const hit = document.elementFromPoint(e.clientX, e.clientY);
+  const target = hit && hit.closest('[data-drop]');
+  const ok = target && dndAccepts(s.spec, target) ? target : null;
+  if (ok !== s.over) {
+    if (s.over) s.over.classList.remove('drop-over');
+    if (ok) ok.classList.add('drop-over');
+    s.over = ok;
+  }
+  if (ok && s.spec.kind === 'week') {
+    const i = +ok.dataset.drop.slice(5);
+    if (!s.painted.includes(i)) {
+      s.painted.push(i);
+      ok.style.cssText = tileStyle(s.spec.color);
+      ok.classList.add('painted');
+      const name = ok.querySelector('.tl-name');
+      if (name) { name.textContent = shortWeekName(s.spec.label); name.style.color = s.spec.color; }
+    }
+  }
+}
+
+// Am oberen und unteren Rand läuft die Liste mit
+function dndAutoScroll() {
+  const s = dnd;
+  if (!s || !s.active) return;
+  if (s.cy !== undefined) {
+    const isPage = s.scroller === document.scrollingElement || s.scroller === document.documentElement;
+    const r = isPage ? { top: 0, bottom: window.innerHeight } : s.scroller.getBoundingClientRect();
+    const edge = 56;
+    const dy = s.cy < r.top + edge ? -Math.ceil((r.top + edge - s.cy) / 4)
+      : s.cy > r.bottom - edge ? Math.ceil((s.cy - (r.bottom - edge)) / 4) : 0;
+    if (dy) s.scroller.scrollTop += dy;
+  }
+  requestAnimationFrame(dndAutoScroll);
+}
+
+function dndCleanup() {
+  const s = dnd;
+  dnd = null;
+  window.removeEventListener('pointermove', dndMove);
+  window.removeEventListener('pointerup', dndUp);
+  window.removeEventListener('pointercancel', dndCancel);
+  if (!s) return null;
+  if (s.ghost) s.ghost.remove();
+  if (s.over) s.over.classList.remove('drop-over');
+  s.src.classList.remove('dnd-src');
+  document.body.className = document.body.className.split(' ').filter(c => !c.startsWith('dnd-')).join(' ');
+  return s;
+}
+
+function dndCancel() {
+  const s = dndCleanup();
+  if (s && s.active) render();
+}
+
+function dndUp() {
+  const s = dndCleanup();
+  if (!s || !s.active) return;
+  window.addEventListener('click', swallowDragClick, true);
+  setTimeout(() => window.removeEventListener('click', swallowDragClick, true), 350);
+  dndDrop(s.spec, s.over ? s.over.dataset.drop : null, s.painted);
+}
+
+function dndDrop(spec, target, painted) {
+  if (spec.kind === 'week') {
+    if (painted && painted.length) assignWeeks(painted, spec.plan || null); else render();
+    return;
+  }
+  if (spec.kind === 'ex') {
+    if (!target) return;
+    if (target === 'trash') weRemoveDay(spec.exId, spec.from);
+    else weMoveTo(spec.exId, spec.from, +target.slice(4));
+    return;
+  }
+  if (spec.kind === 'date' && target) {
+    moveTrainingDay(spec.from, target.slice(5));
+    weekMoveFrom = null;
+    if (spec.week !== undefined && document.getElementById('weekView')) renderWeekView(spec.week);
+    render();
+  }
 }
 
 // ── Wochenarten auswählen ──
@@ -631,31 +812,46 @@ function openWeekEditor(planId, opts = {}) {
   renderWeekEditor();
 }
 
+// Oben die Übungen als Marken (auf einen Tag ziehen fügt hinzu), darunter
+// die Tage. Übungen an einem Tag lassen sich auf einen anderen Tag ziehen
+// oder auf den Papierkorb, der beim Ziehen erscheint.
+const TRASH_ICON = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 002 2h6a2 2 0 002-2l1-12M9 7V4h6v3"/></svg>`;
+
 function renderWeekEditor() {
   const box = document.getElementById('weekEditor');
   const cycle = getActiveCycle();
   if (!box || !cycle || !weekDraft) return;
   const d = weekDraft;
-  const n = cycle.weeks || 12;
   const exName = id => (cycle.exercises.find(e => e.id === id) || {}).name || '?';
   const total = Math.round(d.items.reduce((s, it) => s + itemAmount(cycle, it) * it.days.length, 0) * 100) / 100;
+  const allCats = getAllCategoriesInCycle(cycle);
+  const exColor = id => {
+    const ex = cycle.exercises.find(e => e.id === id);
+    const cats = ex ? exerciseCategories(ex) : [];
+    return cats.length ? categoryColor(cats[0], allCats) : 'var(--text-dim)';
+  };
+  const dragSpec = (exId, from) =>
+    `dndPress(event, { kind: 'ex', exId: '${exId}', ${from !== null ? `from: ${from}, ` : ''}label: '${esc(jsStr(exName(exId)))}' })`;
+
+  const palette = cycle.exercises.map(ex => `
+    <button type="button" class="we-token" style="--c:${exColor(ex.id)}" onpointerdown="${dragSpec(ex.id, null)}"
+      onclick="weExerciseMenu(this, '${ex.id}')"><span class="tok-dot"></span>${esc(ex.name)}</button>`).join('');
 
   const dayRows = DAYS_FULL.map((dayName, day) => {
     const items = d.items.filter(it => it.days.includes(day));
     const picking = d.pickDay === day;
     const selItem = d.sel && d.sel.day === day ? d.items.find(it => it.exId === d.sel.exId) : null;
-    const available = cycle.exercises.filter(ex => !items.some(it => it.exId === ex.id));
-    return `<div class="we-day ${items.length ? 'has' : ''}">
+    return `<div class="we-day ${items.length ? 'has' : ''}" data-drop="day:${day}">
       <div class="we-day-row">
         <span class="we-day-name">${DAYS_DE[day]}</span>
         <div class="we-chips">${items.length ? items.map(it => `
-          <button type="button" class="we-chip ${selItem && selItem.exId === it.exId ? 'sel' : ''}" onclick="weSelect(${day}, '${it.exId}')">
+          <button type="button" class="we-chip ${selItem && selItem.exId === it.exId ? 'sel' : ''}" style="--c:${exColor(it.exId)}"
+            onpointerdown="${dragSpec(it.exId, day)}" onclick="weSelect(${day}, '${it.exId}')">
             ${esc(exName(it.exId))}<span class="we-amt">${fmtExAmount(cycle, itemAmount(cycle, it))}</span>${it.note ? '<span class="we-has-note">•</span>' : ''}
           </button>`).join('') : '<span class="we-rest">Ruhetag</span>'}</div>
-        <button type="button" class="we-add ${picking ? 'on' : ''}" onclick="wePick(${day})" aria-label="Übung am ${dayName} hinzufügen">${picking ? '×' : '+'}</button>
+        <button type="button" class="we-add" onclick="wePick(this, ${day})" aria-label="Übung am ${dayName} hinzufügen">+</button>
       </div>
       ${picking ? `<div class="we-picker">
-        ${available.map(ex => `<button type="button" class="we-option" onclick="weAdd(${day}, '${ex.id}')">${esc(ex.name)}</button>`).join('')}
         <div class="we-new">
           <input type="text" id="weNewName" placeholder="Neue Übung" onkeydown="if(event.key==='Enter')weNewExercise(${day})">
           <input type="number" id="weNewAmt" inputmode="decimal" step="${unitInfo(cycle).step}" min="0" placeholder="${unitInfo(cycle).short || 'Wert'}">
@@ -664,16 +860,16 @@ function renderWeekEditor() {
       </div>` : ''}
       ${selItem ? `<div class="we-edit">
         <div class="we-edit-row">
-          <label>${unitInfo(cycle).amount} in dieser Woche</label>
+          <label>${unitInfo(cycle).amount}</label>
           <input type="number" inputmode="decimal" step="${unitInfo(cycle).step}" min="0" value="${selItem.amount !== undefined ? selItem.amount : ''}"
             placeholder="${fmtNum(parseFloat((cycle.exercises.find(e => e.id === selItem.exId) || {}).intensity) || 0)}" oninput="weSetAmount(this.value)">
         </div>
         <div class="we-edit-row">
-          <label>Hinweis für diese Woche</label>
+          <label>Hinweis</label>
           <input type="text" value="${esc(selItem.note || '')}" placeholder="z.B. Max Hangs 10 s, 5 Sätze" oninput="weSetNote(this.value)">
         </div>
         <div class="we-edit-actions">
-          <button type="button" class="btn btn-ghost btn-sm" onclick="weRemove(${day})">Am ${dayName} entfernen</button>
+          <button type="button" class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="weRemove(${day})">Entfernen</button>
           <button type="button" class="btn btn-ghost btn-sm" onclick="weSelect(null)">Fertig</button>
         </div>
       </div>` : ''}
@@ -681,24 +877,77 @@ function renderWeekEditor() {
   }).join('');
 
   box.innerHTML = `
-    <input type="text" class="we-title" value="${esc(d.name)}" oninput="weekDraft.name=this.value" aria-label="Name der Woche">
+    <div class="we-head">
+      <input type="text" class="we-title" value="${esc(d.name)}" oninput="weekDraft.name=this.value" aria-label="Name der Woche">
+      <button type="button" class="icon-btn" onclick="weMenu(this)" aria-label="Mehr">${MORE_ICON}</button>
+    </div>
     ${d.notice ? `<div class="sheet-notice">${esc(d.notice)}</div>` : ''}
+    <div class="we-palette">
+      <div class="we-tokens">${palette}</div>
+      <div class="we-trash" data-drop="trash">${TRASH_ICON}<span>Entfernen</span></div>
+    </div>
     <div class="we-section">
       <div class="we-label">Tage <span class="we-total">${fmtAmount(cycle, total)}</span></div>
       ${dayRows}
     </div>
-    <button class="btn btn-primary btn-full" style="margin-top:6px" onclick="weSave()">Speichern</button>
-    <button class="btn btn-ghost btn-full" style="margin-top:10px" onclick="weToLibrary()">Im Repertoire speichern</button>
-    ${d.planId ? `<button class="btn-link" style="color:var(--red)" onclick="if(deleteWeekPlan('${d.planId}'))closeModal()">Wochenart löschen</button>` : ''}
-    <button class="btn-link" onclick="closeModal()">Abbrechen</button>
+    <div class="row">
+      <button class="btn btn-ghost" onclick="closeModal()">Abbrechen</button>
+      <button class="btn btn-primary" onclick="weSave()">Speichern</button>
+    </div>
   `;
 }
 
+function weMenu(anchor) {
+  const items = [{ label: 'Im Repertoire speichern', run: () => weToLibrary() }];
+  if (weekDraft && weekDraft.planId) {
+    const id = weekDraft.planId;
+    items.push('-', { label: 'Wochenart löschen', danger: true, run: () => { if (deleteWeekPlan(id)) closeModal(); } });
+  }
+  openMenu(anchor, items);
+}
 
+// Plus an einem Tag: Übung aus der Liste oder eine neue
+function wePick(anchor, day) {
+  const cycle = getActiveCycle();
+  if (!cycle || !weekDraft) return;
+  const has = new Set(weekDraft.items.filter(it => it.days.includes(day)).map(it => it.exId));
+  const items = cycle.exercises.filter(ex => !has.has(ex.id)).map(ex => ({ label: ex.name, run: () => weAdd(day, ex.id) }));
+  if (items.length) items.push('-');
+  items.push({ label: 'Neue Übung', run: () => {
+    weekDraft.pickDay = day; weekDraft.sel = null; renderWeekEditor();
+    const inp = document.getElementById('weNewName');
+    if (inp) inp.focus();
+  } });
+  openMenu(anchor, items, DAYS_FULL[day]);
+}
 
-function wePick(day) {
-  weekDraft.pickDay = weekDraft.pickDay === day ? null : day;
-  weekDraft.sel = null;
+// Tipp auf eine Übung oben: an welchen Tagen sie stattfindet
+function weExerciseMenu(anchor, exId) {
+  const it = weekDraft && weekDraft.items.find(x => x.exId === exId);
+  const days = it ? it.days : [];
+  const cycle = getActiveCycle();
+  const ex = cycle && cycle.exercises.find(e => e.id === exId);
+  openMenu(anchor, DAYS_FULL.map((name, day) => ({
+    label: name, check: days.includes(day),
+    run: () => days.includes(day) ? weRemoveDay(exId, day) : weAdd(day, exId)
+  })), ex ? ex.name : '');
+}
+
+// Verschiebt eine Übung von einem Tag auf einen anderen (from undefined = neu)
+function weMoveTo(exId, from, to) {
+  if (!weekDraft) return;
+  const it = weekDraft.items.find(x => x.exId === exId);
+  if (it && from !== undefined && from !== null) it.days = it.days.filter(x => x !== from);
+  weAdd(to, exId);
+}
+
+function weRemoveDay(exId, day) {
+  if (!weekDraft) return;
+  const it = weekDraft.items.find(x => x.exId === exId);
+  if (!it) return;
+  it.days = it.days.filter(x => x !== day);
+  if (!it.days.length) weekDraft.items = weekDraft.items.filter(x => x !== it);
+  if (weekDraft.sel && weekDraft.sel.exId === exId) weekDraft.sel = null;
   renderWeekEditor();
 }
 

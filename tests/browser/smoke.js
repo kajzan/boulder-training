@@ -62,32 +62,34 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
   await page.screenshot({ path: path.join(__dirname, 'shot-heute.png'), fullPage: true });
   await page.click('.tab-btn:nth-child(2)');
   ok('Planung zeigt 12 Wochen und 3 Wochenarten', await page.locator('.tl-cell').count() === 12 &&
-    await page.locator('#planContent .brush-dot:not(.add)').count() === 3);
+    await page.locator('#planContent .wk-token:not(.add)').count() === 3);
   ok('Uebungen stehen ueber der Planung', await page.evaluate(() => {
     const h = [...document.querySelectorAll('#planContent .section-hdr h2')].map(x => x.textContent);
     return h.indexOf('Übungen') < h.indexOf('Planung');
   }));
-  // Erst Woche 2 antippen, dann Aufbauwoche: Woche 2 wird Aufbau
+  // Woche 2 antippen, im Menü Entlastungswoche wählen
   await page.click('.tl-cell >> nth=1');
-  ok('Woche 2 ausgewaehlt', await page.locator('.tl-cell.selected').count() === 1);
-  await page.screenshot({ path: path.join(__dirname, 'shot-auswahl.png') });
-  await page.click('#planContent .list-row:has-text("Entlastungswoche")');
+  ok('Kachel öffnet das Wochenmenü', await page.locator('.pop-menu .pop-item').count() >= 4);
+  await page.screenshot({ path: path.join(__dirname, 'shot-wochenmenue.png') });
+  await page.click('.pop-menu .pop-item:has-text("Entlastungswoche")');
   ok('Woche 2 als Entlastung zugeordnet', await page.locator('.tl-cell >> nth=1 >> .tl-name').textContent() === 'Entlastung' &&
-    await page.locator('.tl-cell.selected').count() === 0);
-  await page.click('.tl-cell >> nth=1');
-  await page.click('#planContent .list-row:has-text("Aufbauwoche")');
-  ok('und zurueck auf Aufbau', await page.locator('.tl-cell >> nth=1 >> .tl-name').textContent() === 'Aufbau');
-  // Wegwischen: Belastungswoche nach links ziehen
-  const zeile = await page.locator('#planContent .swipe-content:has-text("Belastungswoche")').boundingBox();
-  await page.mouse.move(zeile.x + zeile.width - 30, zeile.y + zeile.height / 2);
-  await page.mouse.down();
-  for (let i = 1; i <= 10; i++) await page.mouse.move(zeile.x + zeile.width - 30 - i * 12, zeile.y + zeile.height / 2);
-  await page.mouse.up();
-  await page.waitForTimeout(300);
-  await page.screenshot({ path: path.join(__dirname, 'shot-wischen.png') });
-  await page.click('#planContent .swipe-row.open .swipe-action');
-  await page.waitForTimeout(300);
-  ok('Wischen nach links loescht die Wochenart', await page.locator('#planContent .brush-dot:not(.add)').count() === 2);
+    await page.locator('.pop-menu').count() === 0);
+  // Aufbauwoche auf Woche 2 und 3 ziehen
+  await drag(page, '#planContent .wk-token:has-text("Aufbauwoche")', ['.tl-cell >> nth=1', '.tl-cell >> nth=2']);
+  ok('Ziehen ordnet zu, auch über mehrere Wochen', await page.locator('.tl-cell >> nth=1 >> .tl-name').textContent() === 'Aufbau' &&
+    await page.locator('.tl-cell >> nth=2 >> .tl-name').textContent() === 'Aufbau');
+  ok('nach dem Ziehen öffnet sich kein Editor', !(await page.locator('#weekEditor').count()));
+  // Antippen und daneben tippen schließt das Menü nur
+  await page.click('.tl-cell >> nth=0');
+  await page.mouse.click(5, 5);
+  ok('Tipp daneben schließt das Menü', await page.locator('.pop-menu').count() === 0);
+  // Löschen über das Menü im Editor
+  await page.click('#planContent .wk-token:has-text("Belastungswoche")');
+  await page.waitForSelector('#weekEditor');
+  await page.click('#weekEditor .we-head .icon-btn');
+  await page.click('.pop-menu .pop-item:has-text("Wochenart löschen")');
+  await page.waitForTimeout(400);
+  ok('Wochenart über das Menü gelöscht', await page.locator('#planContent .wk-token:not(.add)').count() === 2);
   await page.screenshot({ path: path.join(__dirname, 'shot-plan.png'), fullPage: true });
   await page.click('.tab-btn:nth-child(1)');
 
@@ -168,8 +170,12 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
   await page.waitForSelector('#weekEditor');
   await page.fill('.we-title', 'Testwoche');
   for (let d = 0; d < 7; d++) {
-    await page.click(`#weekEditor .we-day >> nth=${d} >> .we-add`);
-    await page.click('#weekEditor .we-option:text-is("Klimmzug max")');
+    if (d < 4) {
+      await page.click(`#weekEditor .we-day >> nth=${d} >> .we-add`);
+      await page.click('.pop-menu .pop-item:has-text("Klimmzug max")');
+    } else {
+      await drag(page, '#weekEditor .we-token:has-text("Klimmzug max")', [`#weekEditor .we-day >> nth=${d}`]);
+    }
   }
   await page.click('#weekEditor .we-chip >> nth=0');
   await page.fill('#weekEditor .we-edit-row input >> nth=1', 'einarmig erlaubt');
@@ -230,7 +236,8 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
   // Plan teilen (ohne Teilen-Menue im Testbrowser: Link in die Zwischenablage)
   await ctx.grantPermissions(['clipboard-read', 'clipboard-write']);
   await page.click('.tab-btn:nth-child(2)');
-  await page.click('.list-row:has-text("Plan teilen")');
+  await page.click('#planContent .section-hdr .icon-btn');
+  await page.click('.pop-menu .pop-item:has-text("Plan teilen")');
   await page.fill('#sharePlanAuthor', 'Trainerin Lisa');
   await page.fill('#sharePlanNote', 'Immer gut aufwaermen.');
   await page.click('button:has-text("Link teilen")');
@@ -387,9 +394,7 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
   await page.waitForSelector('#weekView');
   const planVorher = await page.evaluate(() => { const c = getActiveCycle(); return getWeekDates(c, 1).map(d => plannedItems(c, d).length); });
   const von = planVorher.findIndex(n => n > 0), nach = planVorher.findIndex(n => n === 0);
-  await page.click(`#weekView .wv-day >> nth=${von} >> .wv-move`);
-  await page.screenshot({ path: path.join(__dirname, 'shot-verschieben.png') });
-  await page.click(`#weekView .wv-day >> nth=${nach}`);
+  await drag(page, `#weekView .wv-day >> nth=${von} >> .wv-grip`, [`#weekView .wv-day >> nth=${nach}`], 'shot-verschieben.png');
   const planDanach = await page.evaluate(() => { const c = getActiveCycle(); return getWeekDates(c, 1).map(d => plannedItems(c, d).length); });
   ok('Trainingstag in der Woche verschoben', planDanach[von] === 0 && planDanach[nach] === planVorher[von], JSON.stringify([planVorher, planDanach]));
   await page.click('#weekView button:text-is("Schließen")');
@@ -397,7 +402,8 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
 
   // Kalender-Export
   await page.click('.tab-btn:nth-child(2)');
-  await page.click('.list-row:has-text("In den Kalender")');
+  await page.click('#planContent .section-hdr .icon-btn');
+  await page.click('.pop-menu .pop-item:has-text("In den Kalender")');
   const [ics] = await Promise.all([page.waitForEvent('download'), page.click('#modalContent button:text-is("Exportieren")')]);
   const icsPfad = path.join(__dirname, 'test.ics');
   await ics.saveAs(icsPfad);
@@ -444,3 +450,21 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
   console.log(log.join('\n'));
   await browser.close(); server.close();
 })().catch(e => { console.log(log.join('\n')); console.log('ABBRUCH:', e.message); process.exit(1); });
+
+// Zieht mit der Maus (Pointer-Events) von einem Element über weitere Ziele
+async function drag(page, from, targets, shot) {
+  const box = async sel => { const l = page.locator(sel).first(); await l.scrollIntoViewIfNeeded(); return l.boundingBox(); };
+  const a = await box(from);
+  await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
+  await page.mouse.down();
+  let x = a.x + a.width / 2, y = a.y + a.height / 2;
+  for (const t of targets) {
+    const b = await page.locator(t).first().boundingBox();
+    const tx = b.x + b.width / 2, ty = b.y + b.height / 2;
+    for (let i = 1; i <= 8; i++) await page.mouse.move(x + (tx - x) * i / 8, y + (ty - y) * i / 8);
+    x = tx; y = ty;
+  }
+  if (shot) await page.screenshot({ path: path.join(__dirname, shot) });
+  await page.mouse.up();
+  await page.waitForTimeout(400);
+}

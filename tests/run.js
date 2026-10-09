@@ -1162,29 +1162,44 @@ togglePlanMode();
 currentView = 'plan';
 openWeekEditor('P1');
 check('Editor zeigt die Woche ohne Wochenauswahl', el('weekEditor').innerHTML.includes('we-day') && !el('weekEditor').innerHTML.includes('Gilt in Woche'));
-wePick(4); weAdd(4, 'c');              // Dehnen am Freitag
+weAdd(4, 'c');                         // Dehnen am Freitag
 weSelect(4, 'c'); weSetAmount('0,5'); weSetNote('nur kurz');
 weSave();
 eq('neue Übung am Freitag mit eigenem Wert und Hinweis', wp.weekPlans[0].items.find(it => it.exId === 'c'), { exId: 'c', days: [4], amount: 0.5, note: 'nur kurz' });
 eq('Speichern ändert die Zuordnung nicht', wp.weekAssign, ['P1', 'P1', 'P1', 'P2']);
 
-// Ausmalen: Wochenart wählen, Wochen antippen
-toggleWeekSel(1);
-check('Woche antippen wählt sie aus', el('planContent').innerHTML.includes('<strong>Woche 2</strong>') && weekSel.includes(1));
-assignSelected('P2');
-eq('dann Wochenart antippen ordnet sie zu', wp.weekAssign, ['P1', 'P2', 'P1', 'P2']);
-toggleWeekSel(0); toggleWeekSel(2); toggleWeekSel(2);
-assignSelected('P2');
-eq('mehrere auswählen, eine wieder abwählen', wp.weekAssign, ['P2', 'P2', 'P1', 'P2']);
-selectAllWeeks(); assignSelected(null);
-eq('alle auswählen, ohne Plan', wp.weekAssign, [null, null, null, null]);
-toggleWeekSel(0); clearWeekSel();
-check('Abbrechen leert die Auswahl', !el('planContent').innerHTML.includes('ausgewählt'));
+// Im Editor ziehen: Übung von Freitag auf Mittwoch, aus der Leiste dazu, in den Papierkorb
+openWeekEditor('P1');
+check('Übungen oben ziehbar, Tage sind Ablageziele',
+  el('weekEditor').innerHTML.includes("kind: 'ex', exId: 'c', label:") && el('weekEditor').innerHTML.includes('data-drop="day:6"') && el('weekEditor').innerHTML.includes('data-drop="trash"'));
+dndDrop({ kind: 'ex', exId: 'c', from: 4 }, 'day:2');
+eq('verschoben, Wert und Hinweis bleiben', weekDraft.items.find(it => it.exId === 'c'), { exId: 'c', days: [2], amount: 0.5, note: 'nur kurz' });
+dndDrop({ kind: 'ex', exId: 'c' }, 'day:5');
+eq('aus der Leiste hinzugefügt', weekDraft.items.find(it => it.exId === 'c').days, [2, 5]);
+dndDrop({ kind: 'ex', exId: 'c', from: 2 }, 'day:5');
+eq('auf einen Tag, an dem sie schon ist: zusammengeführt', weekDraft.items.find(it => it.exId === 'c').days, [5]);
+dndDrop({ kind: 'ex', exId: 'c', from: 5 }, 'trash');
+check('in den Papierkorb: entfernt', !weekDraft.items.some(it => it.exId === 'c'));
+check('ohne Ziel abgelegt: nichts passiert', (dndDrop({ kind: 'ex', exId: 'a', from: 0 }, null), weekDraft.items.length > 0));
+closeModal(); weekDraft = null;
+
+// Zuordnen: Wochenart auf Kacheln ziehen, oder Kachel antippen → Menü
+renderPlan();
+check('Kacheln sind Ablageziele, Wochenarten ziehbar',
+  el('planContent').innerHTML.includes('data-drop="week:1"') && el('planContent').innerHTML.includes("kind: 'week', plan: 'P2'"));
+dndDrop({ kind: 'week', plan: 'P2' }, 'week:1', [1]);
+eq('Wochenart auf Woche 2 gezogen', wp.weekAssign, ['P1', 'P2', 'P1', 'P2']);
+dndDrop({ kind: 'week', plan: 'P2' }, 'week:2', [0, 2]);
+eq('über mehrere Wochen gezogen', wp.weekAssign, ['P2', 'P2', 'P2', 'P2']);
+assignWeeks([0, 1, 2, 3], null);
+eq('ohne Plan', wp.weekAssign, [null, null, null, null]);
+dndDrop({ kind: 'week', plan: 'P1' }, null, []);
+eq('nichts überfahren ändert nichts', wp.weekAssign, [null, null, null, null]);
 wp.weekAssign = ['P1', null, 'P1', 'P2'];
 renderPlan();
 check('Planung steht unter den Übungen', el('planContent').innerHTML.indexOf('Übungen') < el('planContent').innerHTML.indexOf('Planung'));
-check('Wochenarten lassen sich wegwischen', el('planContent').innerHTML.includes(`data-delete="deleteWeekPlan('P2')"`));
-check('ohne Auswahl öffnet die Wochenart ihren Editor', el('planContent').innerHTML.includes(`onclick="openWeekEditor('P2')"`));
+check('Kachel antippen öffnet das Wochenmenü', el('planContent').innerHTML.includes('onclick="openWeekMenu(this, 1)"'));
+check('Tipp auf die Wochenart öffnet ihren Editor', el('planContent').innerHTML.includes(`onclick="openWeekEditor('P2')"`));
 
 // Repertoire
 openWeekEditor('P1');

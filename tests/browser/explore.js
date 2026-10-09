@@ -107,7 +107,7 @@ const note = (scenario, msg) => { problems.push(`[${scenario}] ${msg}`); };
     await page.evaluate(() => {
       const c = getActiveCycle();
       c.mode = 'plan';
-      openWeekEditor(null); wePick(0); weAdd(0, c.exercises[2].id); wePick(2); weAdd(2, c.exercises[0].id); weSave();
+      openWeekEditor(null); weAdd(0, c.exercises[2].id); dndDrop({ kind: 'ex', exId: c.exercises[0].id }, 'day:2'); weSave();
       deleteExercise(c.exercises[2].id);
     });
   });
@@ -137,7 +137,7 @@ const note = (scenario, msg) => { problems.push(`[${scenario}] ${msg}`); };
       switchView('plan'); openAddWeekSheet();
       weekPresets().forEach(p => togglePick(p.key));     // alle ankreuzen, auch Gleichnamige aus mehreren Vorlagen
       addPickedWeeks();
-      toggleWeekSel(0); toggleWeekSel(11); assignSelected(weekPlans(c)[1].id); selectAllWeeks(); clearWeekSel(); toggleWeekSel(3); assignSelected(null);
+      dndDrop({ kind: 'week', plan: weekPlans(c)[1].id }, 'week:11', [0, 11]); assignWeeks([3], null);
     });
   });
 
@@ -250,7 +250,7 @@ const note = (scenario, msg) => { problems.push(`[${scenario}] ${msg}`); };
       const c = getActiveCycle() || (() => { const x = getDefaultCycle('L', 2); getAppData().cycles.push(x); getAppData().activeCycleId = x.id; return x; })();
       c.exercises.push({ id: 'lang', name: 'X'.repeat(200) + "'\"<>", categories: ['<i>'], intensity: 0 });
       c.mode = 'plan';
-      openWeekEditor(null); weekDraft.name = "Woche 'mit' \"Zeichen\" <b>"; wePick(0); weAdd(0, 'lang'); weSave();
+      openWeekEditor(null); weekDraft.name = "Woche 'mit' \"Zeichen\" <b>"; weAdd(0, 'lang'); weSave();
       saveData(); render();
     });
   });

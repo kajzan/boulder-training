@@ -1042,6 +1042,7 @@ function renderWeekList(cycle, weekIdx, paused) {
 }
 
 const PAUSE_ICON = '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.2"/><rect x="14" y="5" width="4" height="14" rx="1.2"/></svg>';
+const GRIP_ICON = '<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><circle cx="5.5" cy="3.5" r="1.3"/><circle cx="10.5" cy="3.5" r="1.3"/><circle cx="5.5" cy="8" r="1.3"/><circle cx="10.5" cy="8" r="1.3"/><circle cx="5.5" cy="12.5" r="1.3"/><circle cx="10.5" cy="12.5" r="1.3"/></svg>';
 
 function formatDay(dateStr) {
   const d = parseDate(dateStr);
@@ -1391,9 +1392,12 @@ function renderWeekView(weekIdx) {
         ? `onclick="finishMoveDay(${weekIdx}, '${dateStr}')"`
         : isFrom ? `onclick="startMoveDay(${weekIdx}, '${dateStr}')"`
         : `onclick="closeModal();setTimeout(()=>openDayModal('${dateStr}', ${weekIdx}),250)"`;
-      return `<div class="wv-day ${isTarget ? 'target' : ''} ${isFrom ? 'from' : ''} ${!entries.length && !planned.length ? 'empty' : ''}" ${action}>
+      const dropOk = dateStr >= today && !isPausedDay(cycle, dateStr);
+      return `<div class="wv-day ${isTarget ? 'target' : ''} ${isFrom ? 'from' : ''} ${!entries.length && !planned.length ? 'empty' : ''} ${canMove ? 'movable' : ''}" ${dropOk ? `data-drop="date:${dateStr}"` : ''} ${action}>
+        ${canMove ? `<button type="button" class="wv-grip" aria-label="Verschieben"
+          onpointerdown="dndPress(event, { kind: 'date', from: '${dateStr}', week: ${weekIdx}, label: '${esc(jsStr(DAYS_FULL[weekdayOf(dateStr)] + ' · ' + planned.map(x => x.ex.name).join(', ')))}' })"
+          onclick="event.stopPropagation();startMoveDay(${weekIdx}, '${dateStr}')">${GRIP_ICON}</button>` : ''}
         ${head}${body}
-        ${canMove ? `<button type="button" class="wv-move" onclick="event.stopPropagation();startMoveDay(${weekIdx}, '${dateStr}')">↔ Verschieben</button>` : ''}
         ${isTarget ? `<div class="wv-hint">Hierher verschieben</div>` : ''}
       </div>`;
     }).join('')}
@@ -1485,23 +1489,18 @@ function renderPlan() {
     ${(cycle.weeks || 12) > 4 ? `<button class="btn btn-ghost btn-full btn-sm" style="margin-top:10px" onclick="repeatWeekTargets()">Woche 1–4 auf alle Wochen übertragen</button>` : ''}
     `}
 
-    <div class="list-group" style="margin-top:20px">
-      ${plan ? '' : `<div class="list-row" onclick="togglePlanMode()">
+    ${plan ? '' : `<div class="list-group" style="margin-top:20px">
+      <div class="list-row" onclick="togglePlanMode()">
         <span class="list-icon">${CALENDAR_ICON}</span>
         <div class="list-main"><div class="list-title">Wochenplan einschalten</div></div>
         <span class="chev">›</span>
-      </div>`}
-      ${plan && weekPlans(cycle).length ? `<div class="list-row" onclick="openCalendarExport()">
-        <span class="list-icon">${CALENDAR_ICON}</span>
-        <div class="list-main"><div class="list-title">In den Kalender</div></div>
-        <span class="chev">›</span>
-      </div>` : ''}
+      </div>
       ${cycle.exercises.length ? `<div class="list-row" onclick="openSharePlanModal()">
         <span class="list-icon">${SHARE_ICON}</span>
         <div class="list-main"><div class="list-title">Plan teilen</div></div>
         <span class="chev">›</span>
       </div>` : ''}
-    </div>
+    </div>`}
   `;
 }
 
@@ -2455,7 +2454,6 @@ function createDraft() {
 function editDraft(id) {
   switchView('plan');
   draftEditId = id;
-  weekSel = [];
   render();
 }
 
