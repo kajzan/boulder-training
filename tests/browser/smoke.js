@@ -47,49 +47,55 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
   ok('Scope deckt den Unterpfad',
     await page.evaluate(() => navigator.serviceWorker.ready.then(r => r.scope.endsWith('/boulder-training/'))));
 
-  // Erster Start: Wahl zwischen Wochenplan und frei, Zyklus aus Vorlage
+  // Erster Start: Wahl zwischen Wochenplan und frei; keine Vorlagen mehr
   ok('erster Start bietet Wochenplan, frei und Trainer-Plan an', (await page.locator('.choice-card').count()) === 3);
   await page.screenshot({ path: path.join(__dirname, 'shot-start.png') });
   await page.click('.choice-card:has-text("Mit Wochenplan")');
   ok('Wochenplan ist vorgewaehlt', (await page.inputValue('#newCycleMode')) === 'plan');
-  await page.selectOption('#copyFromCycle', 'tpl:fortgeschritten');
-  ok('Vorlage setzt die Wochenzahl', (await page.inputValue('#newCycleWeeks')) === '12');
-  ok('Vorlage erklaert sich', (await page.locator('#copyInfo').innerText()).includes('Entlastungswoche'));
-  await page.screenshot({ path: path.join(__dirname, 'shot-vorlage.png') });
+  ok('keine Vorlagen zur Auswahl', !(await page.locator('#copyFromCycle optgroup[label="Vorlagen"]').count()));
+  await page.fill('#newCycleName', 'Herbst');
   await page.click('button:text-is("Starten")');
   await page.waitForTimeout(400);
-  ok('Uebersicht zeigt den heutigen Tag', await page.locator('.card-title:has-text("Heute")').isVisible());
-  await page.screenshot({ path: path.join(__dirname, 'shot-heute.png'), fullPage: true });
-  await page.click('.tab-btn:nth-child(2)');
-  ok('Planung zeigt 12 Wochen und 3 Wochenarten', await page.locator('.tl-cell').count() === 12 &&
-    await page.locator('#planContent .wk-token:not(.add)').count() === 3);
-  ok('Uebungen stehen ueber der Planung', await page.evaluate(() => {
-    const h = [...document.querySelectorAll('#planContent .section-hdr h2')].map(x => x.textContent);
-    return h.indexOf('Übungen') < h.indexOf('Planung');
+  ok('neuer Wochenplan oeffnet das Planungsbrett', await page.locator('#planContent .pb').isVisible() &&
+    await page.locator('#planContent .ws').count() === 12 && await page.locator('#planContent .pb-day').count() === 7);
+  ok('keine vorgegebenen Uebungen', await page.evaluate(() => getActiveCycle().exercises.length === 0));
+  for (const [name, wert] of [['Limit', '3'], ['Ausgleich', '1']]) {
+    await page.click('#planContent .we-token.add');
+    await page.fill('#newExName', name);
+    await page.fill('#newExInt', wert);
+    await page.click('#modalContent button:text-is("Hinzufügen")');
+    await page.waitForTimeout(350);
+  }
+  // Limit auf Montag ziehen, Ausgleich am Mittwoch über das Plus
+  await drag(page, '#planContent .we-token:has-text("Limit")', ['#planContent .pb-day >> nth=0']);
+  await page.click('#planContent .pb-day >> nth=2 >> .pb-plus');
+  ok('Tipp auf einen Tag zeigt die Übungen', await page.locator('.pop-menu .pop-item:has-text("Ausgleich")').isVisible());
+  await page.click('.pop-menu .pop-item:has-text("Ausgleich")');
+  ok('Woche 1 geplant: Mo Limit, Mi Ausgleich', await page.evaluate(() => {
+    const c = getActiveCycle(), p = weekPlanFor(c, 0);
+    return !!p && p.items.map(it => c.exercises.find(e => e.id === it.exId).name + it.days.join('')).join() === 'Limit0,Ausgleich2';
   }));
-  // Woche 2 antippen, im Menü Entlastungswoche wählen
-  await page.click('.tl-cell >> nth=1');
-  ok('Kachel öffnet das Wochenmenü', await page.locator('.pop-menu .pop-item').count() >= 4);
-  await page.screenshot({ path: path.join(__dirname, 'shot-wochenmenue.png') });
-  await page.click('.pop-menu .pop-item:has-text("Entlastungswoche")');
-  ok('Woche 2 als Entlastung zugeordnet', await page.locator('.tl-cell >> nth=1 >> .tl-name').textContent() === 'Entlastung' &&
-    await page.locator('.pop-menu').count() === 0);
-  // Aufbauwoche auf Woche 2 und 3 ziehen
-  await drag(page, '#planContent .wk-token:has-text("Aufbauwoche")', ['.tl-cell >> nth=1', '.tl-cell >> nth=2']);
-  ok('Ziehen ordnet zu, auch über mehrere Wochen', await page.locator('.tl-cell >> nth=1 >> .tl-name').textContent() === 'Aufbau' &&
-    await page.locator('.tl-cell >> nth=2 >> .tl-name').textContent() === 'Aufbau');
-  ok('nach dem Ziehen öffnet sich kein Editor', !(await page.locator('#weekEditor').count()));
-  // Antippen und daneben tippen schließt das Menü nur
-  await page.click('.tl-cell >> nth=0');
-  await page.mouse.click(5, 5);
-  ok('Tipp daneben schließt das Menü', await page.locator('.pop-menu').count() === 0);
-  // Löschen über das Menü im Editor
-  await page.click('#planContent .wk-token:has-text("Belastungswoche")');
-  await page.waitForSelector('#weekEditor');
-  await page.click('#weekEditor .we-head .icon-btn');
-  await page.click('.pop-menu .pop-item:has-text("Wochenart löschen")');
-  await page.waitForTimeout(400);
-  ok('Wochenart über das Menü gelöscht', await page.locator('#planContent .wk-token:not(.add)').count() === 2);
+  // Woche 1 über die Wochen 2–4 ziehen
+  await drag(page, '#planContent .ws.on', ['#planContent .ws >> nth=1', '#planContent .ws >> nth=3']);
+  ok('Woche über weitere Wochen gezogen', await page.evaluate(() => {
+    const a = getActiveCycle().weekAssign; return a[0] && a.slice(0, 4).every(x => x === a[0]) && !a[4];
+  }));
+  // In Woche 3 nur dort tauschen
+  await page.click('#planContent .ws >> nth=2');
+  await page.click('#planContent .pb-scope button:has-text("Nur Woche 3")');
+  await page.click('#planContent .pb-day >> nth=0 >> .pb-chip');
+  await page.click('.pop-menu .pop-item:has-text("Tauschen")');
+  await page.click('.pop-menu .pop-item:has-text("Ausgleich")');
+  ok('nur in Woche 3 getauscht', await page.evaluate(() => {
+    const c = getActiveCycle(), name = id => c.exercises.find(e => e.id === id).name;
+    const w3 = weekPlanFor(c, 2), w1 = weekPlanFor(c, 0);
+    return w3 !== w1 && w3.items.every(it => name(it.exId) === 'Ausgleich') && w1.items.some(it => name(it.exId) === 'Limit');
+  }));
+  // Übung vom Montag in den Papierkorb
+  await page.click('#planContent .ws >> nth=0');
+  await drag(page, '#planContent .pb-day >> nth=0 >> .pb-chip', ['#planContent .pb-palette']);
+  ok('in den Papierkorb gezogen', await page.evaluate(() => !weekPlanFor(getActiveCycle(), 0).items.some(it => it.days.includes(0))));
+  ok('Planung ohne Scrollen sichtbar', await page.evaluate(() => document.querySelector('.pb').getBoundingClientRect().bottom < window.innerHeight - 60));
   await page.screenshot({ path: path.join(__dirname, 'shot-plan.png'), fullPage: true });
   await page.click('.tab-btn:nth-child(1)');
 
@@ -132,11 +138,10 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
   await page.waitForTimeout(300);
   await page.click('#settingsContent .list-row:has-text("Wochenplan")');
   ok('Wochenplan-Schalter', await page.evaluate(() => isPlanMode(getActiveCycle())));
-  await page.waitForSelector('#weekEditor');
-  ok('Einschalten ohne Wochen oeffnet eine neue Woche', true);
-  await page.screenshot({ path: path.join(__dirname, 'shot-plan-einrichten.png') });
-  await page.click('#weekEditor button:text-is("Abbrechen")');
   await page.waitForTimeout(300);
+  ok('Einschalten zeigt das Planungsbrett', await page.locator('#planContent .pb').isVisible());
+  await page.screenshot({ path: path.join(__dirname, 'shot-plan-einrichten.png') });
+  await page.click('.tab-btn:nth-child(5)');
   await page.click('#settingsContent .list-row:has-text("Wochenplan")');
   await page.click('#settingsContent .list-row >> nth=1');
   ok('Zyklen-Fenster', await page.locator('#cyclesSheet .list-row').count() === 1);
@@ -167,28 +172,29 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
   await page.waitForTimeout(400);
   await page.click('.tab-btn:nth-child(5)');
   await page.click('#settingsContent .list-row:has-text("Wochenplan")');
-  await page.waitForSelector('#weekEditor');
-  await page.fill('.we-title', 'Testwoche');
+  await page.waitForSelector('#planContent .pb');
   for (let d = 0; d < 7; d++) {
     if (d < 4) {
-      await page.click(`#weekEditor .we-day >> nth=${d} >> .we-add`);
-      await page.click('.pop-menu .pop-item:has-text("Klimmzug max")');
+      await drag(page, '#planContent .we-token:has-text("Klimmzug max")', [`#planContent .pb-day >> nth=${d}`]);
     } else {
-      await drag(page, '#weekEditor .we-token:has-text("Klimmzug max")', [`#weekEditor .we-day >> nth=${d}`]);
+      await page.click(`#planContent .pb-day >> nth=${d} >> .pb-plus`);
+      await page.click('.pop-menu .pop-item:has-text("Klimmzug max")');
     }
   }
-  await page.click('#weekEditor .we-chip >> nth=0');
-  await page.fill('#weekEditor .we-edit-row input >> nth=1', 'einarmig erlaubt');
-  await page.click('#weekEditor button:text-is("Fertig")');
+  await page.click('#planContent .pb-day >> nth=0 >> .pb-chip:has-text("Klimmzug")');
+  await page.click('.pop-menu .pop-item:has-text("Wert und Hinweis")');
+  await page.fill('#itemNote', 'einarmig erlaubt');
+  await page.click('#modalContent button:text-is("Speichern")');
+  await page.waitForTimeout(300);
+  await page.click('#planContent .pb-head .icon-btn');
+  await page.click('.pop-menu .pop-item:has-text("Auf alle Wochen übertragen")');
   await page.screenshot({ path: path.join(__dirname, 'shot-woche.png'), fullPage: true });
-  await page.click('#weekEditor button:text-is("Speichern")');
-  await page.waitForTimeout(400);
-  ok('Woche gespeichert und ueberall zugeordnet', await page.evaluate(() => {
-    const c = getActiveCycle(), p = weekPlans(c)[0];
-    return p.name === 'Testwoche' && p.items[0].days.length === 7 && c.weekAssign.every(id => id === p.id);
+  ok('Woche geplant und ueberall zugeordnet', await page.evaluate(() => {
+    const c = getActiveCycle(), p = weekPlanFor(c, 0);
+    const it = p.items.find(i => c.exercises.find(e => e.id === i.exId).name === 'Klimmzug max');
+    return it.days.length === 7 && it.note === 'einarmig erlaubt' && c.weekAssign.every(id => id === p.id);
   }));
-  await page.click('.tab-btn:nth-child(2)');
-  ok('Planung zeigt die Woche in der Leiste', await page.locator('.tl-name:text-is("Test")').count() === 4);
+  ok('Planung zeigt alle Wochen belegt', await page.locator('#planContent .ws.has').count() === 4);
   await page.screenshot({ path: path.join(__dirname, 'shot-planung.png'), fullPage: true });
 
   // Pausieren und fortsetzen (die Woche ist noch leer)
@@ -213,19 +219,29 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
     const c = getActiveCycle(), e = (c.sessions[toDateStr(new Date())] || [])[0];
     return !!e && e.value === 12.5 && e.note === 'einarmig, Band';
   }));
-  await page.click('button:text-is("Fertig")');
+  await page.click('#modalContent button:text-is("Fertig")');
 
-  // Logbuch: Grad antippen, fertig
+  // Logbuch: Grad antippen; Flash hervorgehoben; Eintrag öffnen für Versuche und Name
   await page.click('.tab-btn:nth-child(4)');
   await page.click('.log-grade:text-is("6B+")');
-  await page.click('.log-flash-toggle');
+  await page.click('.log-style-seg button:has-text("Flash")');
   await page.click('.log-grade:text-is("6C")');
-  ok('zwei Tipps, zwei Eintraege', (await page.locator('.log-chip').count()) === 2 &&
+  ok('zwei Tipps, zwei Eintraege, Flash hervorgehoben', (await page.locator('.log-chip').count()) === 2 &&
     await page.locator('.log-chip.flash:has-text("6C")').isVisible());
-  ok('Pyramide zeigt den hoechsten Grad', await page.locator('.log-big:text-is("6C")').isVisible());
+  ok('Pyramide zeigt den hoechsten Grad und Flash', await page.locator('.log-big:text-is("6C")').count() === 2);
+  await page.click('.log-chip:has-text("6B+")');
+  await page.click('#ascentSheet .asc-step:text-is("+")');
+  await page.click('#ascentSheet .asc-step:text-is("+")');
+  await page.fill('#ascName', 'Dachkante');
+  await page.screenshot({ path: path.join(__dirname, 'shot-eintrag.png') });
+  await page.click('#ascentSheet button:text-is("Fertig")');
+  await page.waitForTimeout(300);
+  ok('Versuche und Name am Eintrag', await page.locator('.log-chip:has-text("6B+"):has-text("3×"):has-text("Dachkante")').isVisible());
   await page.screenshot({ path: path.join(__dirname, 'shot-logbuch.png'), fullPage: true });
   await page.click('.log-chip:has-text("6B+")');
-  ok('Antippen loescht', (await page.locator('.log-chip').count()) === 1);
+  await page.click('#ascentSheet button:text-is("Löschen")');
+  await page.waitForTimeout(300);
+  ok('Eintrag geloescht', (await page.locator('.log-chip').count()) === 1);
   await page.click('.list-row:has-text("Verlauf")');
   await page.click('#logHistory .day-del');
   await page.waitForTimeout(300);
@@ -236,7 +252,7 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
   // Plan teilen (ohne Teilen-Menue im Testbrowser: Link in die Zwischenablage)
   await ctx.grantPermissions(['clipboard-read', 'clipboard-write']);
   await page.click('.tab-btn:nth-child(2)');
-  await page.click('#planContent .section-hdr .icon-btn');
+  await page.click('#planContent .pb-head .icon-btn');
   await page.click('.pop-menu .pop-item:has-text("Plan teilen")');
   await page.fill('#sharePlanAuthor', 'Trainerin Lisa');
   await page.fill('#sharePlanNote', 'Immer gut aufwaermen.');
@@ -373,7 +389,7 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
     }
     await gp.screenshot({ path: path.join(__dirname, `shot-${name}-uebersicht.png`) });
     await gp.click('.tab-btn:nth-child(2)');
-    await gp.click('#exerciseList .exercise-item >> nth=0');
+    await gp.click('#planContent .we-token:not(.add) >> nth=0');
     await gp.waitForTimeout(400);
     const box = await gp.locator('#modalBox').boundingBox();
     ok(`${name}: Fenster als zentrierter Dialog`, box.width <= 520 && box.y > 20, JSON.stringify(box));
@@ -388,7 +404,10 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
   const aktivVorher = await page.evaluate(() => getAppData().activeCycleId);
   await page.evaluate(() => {
     const c = getDefaultCycle('Verschieben', 4); c.mode = 'plan'; c.startDate = toDateStr(new Date());
-    getAppData().cycles.push(c); getAppData().activeCycleId = c.id; applyTemplate(c, PLAN_TEMPLATES[1]); saveData(); switchView('dashboard');
+    c.exercises = [{ id: 'v1', name: 'Limit', categories: [], intensity: 3 }, { id: 'v2', name: 'Ausgleich', categories: [], intensity: 1 }];
+    c.weekPlans = [{ id: 'VP', name: 'Plan A', items: [{ exId: 'v1', days: [0, 4] }, { exId: 'v2', days: [2] }] }];
+    c.weekAssign = ['VP', 'VP', 'VP', 'VP'];
+    getAppData().cycles.push(c); getAppData().activeCycleId = c.id; saveData(); switchView('dashboard');
   });
   await page.click('.week-row >> nth=1');
   await page.waitForSelector('#weekView');
@@ -402,25 +421,26 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
 
   // Kalender-Export
   await page.click('.tab-btn:nth-child(2)');
-  await page.click('#planContent .section-hdr .icon-btn');
+  await page.click('#planContent .pb-head .icon-btn');
   await page.click('.pop-menu .pop-item:has-text("In den Kalender")');
   const [ics] = await Promise.all([page.waitForEvent('download'), page.click('#modalContent button:text-is("Exportieren")')]);
   const icsPfad = path.join(__dirname, 'test.ics');
   await ics.saveAs(icsPfad);
   const icsText = fs.readFileSync(icsPfad, 'utf8');
-  ok('Kalenderdatei mit Terminen', icsText.startsWith('BEGIN:VCALENDAR') && (icsText.match(/BEGIN:VEVENT/g) || []).length >= 10, String((icsText.match(/BEGIN:VEVENT/g) || []).length));
+  ok('Kalenderdatei mit Terminen', icsText.startsWith('BEGIN:VCALENDAR') && (icsText.match(/BEGIN:VEVENT/g) || []).length >= 8, String((icsText.match(/BEGIN:VEVENT/g) || []).length));
   fs.unlinkSync(icsPfad);
 
   // Plan fuer jemand anderen
   await page.click('.tab-btn:nth-child(5)');
   await page.click('.list-row:has-text("Plan für jemand anderen erstellen")');
   await page.fill('#draftWho', 'Mara');
-  await page.selectOption('#draftFrom', 'tpl:einsteiger');
   await page.click('button:text-is("Plan erstellen")');
   await page.waitForTimeout(400);
-  ok('Entwurf im Trainingsplan', await page.locator('.draft-bar:has-text("Plan für Mara")').isVisible());
-  await page.screenshot({ path: path.join(__dirname, 'shot-entwurf.png'), fullPage: true });
-  await page.click('.draft-bar button:text-is("Fertig")');
+  ok('Entwurf auf eigener Seite', await page.locator('#draftScreen .draft-who:text-is("Mara")').isVisible() &&
+    await page.locator('#draftScreen .pb').isVisible());
+  await page.screenshot({ path: path.join(__dirname, 'shot-entwurf.png') });
+  await page.click('#draftScreen .draft-btn:text-is("Fertig")');
+  ok('Entwurfsseite geschlossen', !(await page.locator('#draftScreen').isVisible()));
   ok('danach wieder der eigene Zyklus', await page.evaluate(() => getActiveCycle().name === 'Verschieben'));
   ok('Entwurf in den Einstellungen', await page.locator('#settingsContent .list-row:has-text("Plan für Mara")').isVisible());
   await page.evaluate(id => { const d = getAppData(); d.cycles = d.cycles.filter(c => c.name !== 'Verschieben' && !c.forOther); d.activeCycleId = id; saveData(); render(); }, aktivVorher);
@@ -440,9 +460,9 @@ const ok = (n, c, x = '') => { log.push((c ? 'PASS  ' : 'FAIL  ') + n + (c ? '' 
   await page.reload({ waitUntil: 'load' });
   ok('startet offline', (await page.locator('.tab-btn').count()) === 5);
   await page.click('.tab-btn:nth-child(2)');
-  ok('Daten offline vorhanden', await page.locator('.exercise-name:has-text("Hang")').isVisible());
+  ok('Daten offline vorhanden', await page.locator('#planContent .we-token:has-text("Hang")').isVisible());
   ok('Reihenfolge ueberlebt den Neustart',
-    (await page.locator('#exerciseList .exercise-name').allInnerTexts()).join() === 'Hang,Dehnen,Aufwaermen,Klimmzug max');
+    await page.evaluate(() => getActiveCycle().exercises.map(e => e.name).join()) === 'Hang,Dehnen,Aufwaermen,Klimmzug max');
   await page.click('.tab-btn:nth-child(5)');
   ok('Konto-Zeile auch offline da', await page.locator('#cloudBox >> text=Anmelden').isVisible());
 

@@ -1158,105 +1158,71 @@ togglePlanMode();
 check('Wochenplan lässt sich ausschalten, Wochen bleiben', !isPlanMode(wp) && wp.weekPlans.length === 2 && getWeekTarget(wp, 0) === 1);
 togglePlanMode();
 
-// Wochen-Editor
+// Planungsbrett: Woche wählen, Übungen auf Tage ziehen
+heuteIst('2026-01-21');
 currentView = 'plan';
-openWeekEditor('P1');
-check('Editor zeigt die Woche ohne Wochenauswahl', el('weekEditor').innerHTML.includes('we-day') && !el('weekEditor').innerHTML.includes('Gilt in Woche'));
-weAdd(4, 'c');                         // Dehnen am Freitag
-weSelect(4, 'c'); weSetAmount('0,5'); weSetNote('nur kurz');
-weSave();
-eq('neue Übung am Freitag mit eigenem Wert und Hinweis', wp.weekPlans[0].items.find(it => it.exId === 'c'), { exId: 'c', days: [4], amount: 0.5, note: 'nur kurz' });
-eq('Speichern ändert die Zuordnung nicht', wp.weekAssign, ['P1', 'P1', 'P1', 'P2']);
-
-// Im Editor ziehen: Übung von Freitag auf Mittwoch, aus der Leiste dazu, in den Papierkorb
-openWeekEditor('P1');
-check('Übungen oben ziehbar, Tage sind Ablageziele',
-  el('weekEditor').innerHTML.includes("kind: 'ex', exId: 'c', label:") && el('weekEditor').innerHTML.includes('data-drop="day:6"') && el('weekEditor').innerHTML.includes('data-drop="trash"'));
-dndDrop({ kind: 'ex', exId: 'c', from: 4 }, 'day:2');
-eq('verschoben, Wert und Hinweis bleiben', weekDraft.items.find(it => it.exId === 'c'), { exId: 'c', days: [2], amount: 0.5, note: 'nur kurz' });
-dndDrop({ kind: 'ex', exId: 'c' }, 'day:5');
-eq('aus der Leiste hinzugefügt', weekDraft.items.find(it => it.exId === 'c').days, [2, 5]);
-dndDrop({ kind: 'ex', exId: 'c', from: 2 }, 'day:5');
-eq('auf einen Tag, an dem sie schon ist: zusammengeführt', weekDraft.items.find(it => it.exId === 'c').days, [5]);
-dndDrop({ kind: 'ex', exId: 'c', from: 5 }, 'trash');
-check('in den Papierkorb: entfernt', !weekDraft.items.some(it => it.exId === 'c'));
-check('ohne Ziel abgelegt: nichts passiert', (dndDrop({ kind: 'ex', exId: 'a', from: 0 }, null), weekDraft.items.length > 0));
-closeModal(); weekDraft = null;
-
-// Zuordnen: Wochenart auf Kacheln ziehen, oder Kachel antippen → Menü
+boardSel = { cycleId: null, week: 0 };
 renderPlan();
-check('Kacheln sind Ablageziele, Wochenarten ziehbar',
-  el('planContent').innerHTML.includes('data-drop="week:1"') && el('planContent').innerHTML.includes("kind: 'week', plan: 'P2'"));
-dndDrop({ kind: 'week', plan: 'P2' }, 'week:1', [1]);
-eq('Wochenart auf Woche 2 gezogen', wp.weekAssign, ['P1', 'P2', 'P1', 'P2']);
-dndDrop({ kind: 'week', plan: 'P2' }, 'week:2', [0, 2]);
-eq('über mehrere Wochen gezogen', wp.weekAssign, ['P2', 'P2', 'P2', 'P2']);
-assignWeeks([0, 1, 2, 3], null);
-eq('ohne Plan', wp.weekAssign, [null, null, null, null]);
-dndDrop({ kind: 'week', plan: 'P1' }, null, []);
-eq('nichts überfahren ändert nichts', wp.weekAssign, [null, null, null, null]);
-wp.weekAssign = ['P1', null, 'P1', 'P2'];
-renderPlan();
-check('Planung steht unter den Übungen', el('planContent').innerHTML.indexOf('Übungen') < el('planContent').innerHTML.indexOf('Planung'));
-check('Kachel antippen öffnet das Wochenmenü', el('planContent').innerHTML.includes('onclick="openWeekMenu(this, 1)"'));
-check('Tipp auf die Wochenart öffnet ihren Editor', el('planContent').innerHTML.includes(`onclick="openWeekEditor('P2')"`));
+const pc = () => el('planContent').innerHTML;
+check('Brett zeigt die laufende Woche (3) von Mo bis So', boardWeek(wp) === 2 && pc().includes('data-drop="bday:0"') && pc().includes('data-drop="bday:6"'));
+check('Übungen als ziehbare Marken', pc().includes("kind: 'bex', exId: 'c', label:"));
+check('keine lange Übungsliste über der Planung', !pc().includes('exerciseList'));
+check('Wochenleiste: gewählte Woche lässt sich über andere ziehen', pc().includes("kind: 'week', plan: 'P1', label: 'Woche 3'") && pc().includes('data-drop="week:3"'));
+check('mehrfach genutzte Woche: Nur diese oder alle', pc().includes('Nur Woche 3') && pc().includes('Alle 3 Wochen'));
+dndDrop({ kind: 'bex', exId: 'c' }, 'bday:4');
+eq('Übung auf Freitag gezogen – gilt in allen Wochen dieses Plans', wp.weekPlans[0].items.find(it => it.exId === 'c').days, [4]);
+eq('Zuordnung bleibt', wp.weekAssign, ['P1', 'P1', 'P1', 'P2']);
+dndDrop({ kind: 'bex', exId: 'c', from: 4 }, 'bday:2');
+eq('zwischen Tagen verschoben', wp.weekPlans[0].items.find(it => it.exId === 'c').days, [2]);
+dndDrop({ kind: 'bex', exId: 'a', from: 0 }, 'bday:2');
+dndDrop({ kind: 'bex', exId: 'c', from: 2 }, 'trash');
+check('in den Papierkorb: entfernt', !wp.weekPlans[0].items.some(it => it.exId === 'c'));
+dndDrop({ kind: 'bex', exId: 'b', from: 2 }, null);
+check('ohne Ziel abgelegt: nichts passiert', wp.weekPlans[0].items.some(it => it.exId === 'b'));
+boardSwap('a', 2, 'c');
+eq('tauschen: am Mittwoch Dehnen statt Limit', wp.weekPlans[0].items.map(it => [it.exId, it.days]), [['b', [2]], ['c', [2]]]);
+openItemModal('c');
+el('itemAmount').value = '0,5'; el('itemNote').value = ' nur kurz ';
+saveItemModal('c');
+eq('Wert und Hinweis für diese Woche', wp.weekPlans[0].items.find(it => it.exId === 'c'), { exId: 'c', days: [2], amount: 0.5, note: 'nur kurz' });
+boardScope = 'one';
+boardAdd('a', 0);
+const abgetrennt = wp.weekAssign[2];
+check('nur diese Woche: Plan wird abgetrennt, die anderen bleiben', abgetrennt !== 'P1' && wp.weekAssign[0] === 'P1' && wp.weekAssign[1] === 'P1'
+  && !wp.weekPlans[0].items.some(it => it.exId === 'a') && weekPlanById(wp, abgetrennt).items.some(it => it.exId === 'a'));
+dndDrop({ kind: 'week', plan: abgetrennt, from: 2 }, 'week:3', [2, 3]);
+eq('Woche auf die nächste Woche gezogen', wp.weekAssign, ['P1', 'P1', abgetrennt, abgetrennt]);
+dndDrop({ kind: 'week', plan: abgetrennt, from: 2 }, null, [2]);
+eq('nur auf sich selbst: nichts passiert', wp.weekAssign, ['P1', 'P1', abgetrennt, abgetrennt]);
+assignWeeks([1], null);
+boardSel.week = 1;
+boardAdd('b', 3);
+check('leere Woche: erste Übung legt einen eigenen Plan an', /^Plan [A-Z]$/.test(weekPlanFor(wp, 1).name) && weeksOfPlan(wp, weekPlanFor(wp, 1)).length === 1);
+boardRemove('b', 3);
+check('letzte Übung weg: Woche wieder leer, Plan verschwindet', wp.weekAssign[1] === null && wp.weekPlans.every(p => p.items.length));
+check('Deload-Plan ohne Woche bleibt erhalten', !!weekPlanById(wp, 'P2'));
+wp.weekAssign = ['P1', 'P1', 'P1', 'P2'];
 
 // Repertoire
-openWeekEditor('P1');
-weToLibrary();
+saveToLibrary('P1');
 eq('Woche im Repertoire, mit eigenen Übungen', appData.weekLibrary[0].exercises.map(e => [e.name, e.days, e.amount]),
-  [['Limit', [0], 3], ['Volumen', [2], 2], ['Dehnen', [4], 0.5]]);
-closeModal();
+  [['Volumen', [2], 2], ['Dehnen', [2], 0.5]]);
 const leer = neuerZyklus({ mode: 'plan', unit: 'h', exercises: [] });
-const repPreset = weekPresets().find(p => p.lib);
-addPresetWeek(leer, repPreset);
+useLibraryWeek(appData.weekLibrary[0].id);
 eq('einfügen in anderen Zyklus legt Übungen an, rechnet um', leer.exercises.map(e => [e.name, e.intensity]),
-  [['Limit', 1.5], ['Volumen', 1], ['Dehnen', 0.5]]);
-eq('gilt in allen freien Wochen', leer.weekAssign.filter(Boolean).length, 4);
-addPresetWeek(leer, repPreset);
+  [['Volumen', 1], ['Dehnen', 0.5]]);
+eq('gilt in der gewählten Woche', leer.weekAssign.filter(Boolean).length, 1);
+useLibraryWeek(appData.weekLibrary[0].id);
 eq('nochmal einfügen erzeugt keine Kopie', leer.weekPlans.length, 1);
 
-// Fertige Wochen ankreuzen
-const frisch = neuerZyklus({ mode: 'plan', exercises: [], weeks: 12, weekTargets: Array(12).fill(0) });
-openAddWeekSheet();
-const keys = weekPresets().filter(p => p.tpl && p.tpl.id === 'fortgeschritten').map(p => p.key);
-keys.forEach(togglePick);
-addPickedWeeks();
-eq('Aufbau, Belastung, Entlastung verteilt', frisch.weekAssign.map(id => weekPlanById(frisch, id).name[0]).join(''), 'AABEAABEAABE');
-const t = i => getWeekTarget(frisch, i);
-check('Belastung > Aufbau > Entlastung', t(2) > t(0) && t(0) > t(3));
-check('Entlastung um 60 % mit 2 Einheiten', Math.abs(t(3) / t(0) - 0.6) < 0.1 && planDays(weekPlanFor(frisch, 3)).length === 2);
-eq('Übungen nur einmal angelegt', frisch.exercises.length, new Set(frisch.exercises.map(e => e.name)).size);
-openAddWeekSheet(); keys.forEach(togglePick); addPickedWeeks();
-eq('erneutes Hinzufügen kopiert nichts', frisch.weekPlans.length, 3);
-
-// Vorlagen
-const tpl = PLAN_TEMPLATES[1];
-el('newCycleName').value = '';
-el('newCycleDate').value = '2026-02-02';
-el('newCycleWeeks').value = '12';
-el('newCycleMode').value = 'plan';
-el('copyFromCycle').value = 'tpl:' + tpl.id;
-createCycle();
-const ausVorlage = getActiveCycle();
-check('Zyklus aus Vorlage ist im Wochenplan-Modus', ausVorlage.mode === 'plan');
-eq('übernimmt den Vorlagennamen', ausVorlage.name, tpl.name.split(' · ')[0]);
-eq('Wochen der Vorlage', ausVorlage.weekPlans.map(p => p.name), ['Aufbauwoche', 'Belastungswoche', 'Entlastungswoche']);
-eq('Aufbau, Belastung, Entlastung im Rhythmus', ausVorlage.weekAssign.map(id => weekPlanById(ausVorlage, id).name[0]).join(''), 'AABEAABEAABE');
-check('Entlastungswoche ist leichter', getWeekTarget(ausVorlage, 3) < getWeekTarget(ausVorlage, 2));
-check('Übungen haben keine Tage mehr an sich', ausVorlage.exercises.every(e => !('days' in e)));
-check('alle Vorlagen sind stimmig', PLAN_TEMPLATES.every(t => t.plan.every(w => w.items.every(([key, days]) =>
-  t.exercises.some(e => e.key === key) && days.length && days.every(d => d >= 0 && d <= 6)))));
-const fk = neuerZyklus({ weeks: 16, weekTargets: Array(16).fill(0), exercises: [] });
-applyTemplate(fk, PLAN_TEMPLATES[2]);
-eq('Phasen-Vorlage über 16 Wochen', fk.weekAssign.map(id => weekPlanById(fk, id).name[0]).join(''), 'BBBEMMMEPPPEPPPE');
-
 // Kopie eines Zyklus behält die Wochen
-el('newCycleName').value = 'Kopie'; el('copyFromCycle').value = ausVorlage.id;
+el('newCycleName').value = 'Kopie'; el('copyFromCycle').value = wp.id;
+el('newCycleDate').value = '2026-02-02'; el('newCycleWeeks').value = '4'; el('newCycleMode').value = 'plan';
 createCycle();
 const kp = getActiveCycle();
-eq('Kopie: Wochen und Zuordnung', [kp.weekPlans.length, kp.weekAssign.filter(Boolean).length, kp.mode], [3, 12, 'plan']);
+eq('Kopie: Wochen und Zuordnung', [kp.weekPlans.length, kp.weekAssign.filter(Boolean).length, kp.mode], [wp.weekPlans.length, 4, 'plan']);
 check('Kopie: Wochen zeigen auf die neuen Übungen', kp.weekPlans.every(p => p.items.every(it => kp.exercises.some(e => e.id === it.exId))));
+check('keine Vorlagen mehr', typeof PLAN_TEMPLATES === 'undefined' && !el('modalContent').innerHTML.includes('Vorlage'));
 
 // Altdaten: Tage an den Übungen werden zur Standardwoche
 const alt = normalizeData({ cycles: [{ id: 'alt', name: 'Alt', startDate: '2026-01-05', weeks: 2, weekTargets: [], mode: 'plan',
@@ -1298,15 +1264,38 @@ check('Messwert abwählen entfernt Einheit', !('measure' in neu) && !('unit' in 
 group('Logbuch');
 heuteIst('2026-01-21');
 appData.ascents = [];
-logScaleSel = null; logDate = null; logFlash = false;
+logScaleSel = null; logDate = null; logStyle = 'top';
 renderHistory();
 check('leeres Logbuch zeigt nur die Grad-Leiste', el('historyContent').innerHTML.includes('log-grade') && !el('historyContent').innerHTML.includes('Verlauf'));
 check('Grad-Leiste zum Antippen', el('historyContent').innerHTML.includes('quickAddAscent(7)'));
 quickAddAscent(7);                                     // 6C Top heute
-logFlash = true; quickAddAscent(7);                    // 6C Flash
-eq('ein Tipp trägt ein, Flash gilt nur einmal', appData.ascents.map(a => [a.date, a.grade, a.style, a.scaleId]),
+logStyle = 'flash'; quickAddAscent(7);                 // 6C Flash
+eq('ein Tipp trägt ein, als Redpoint oder Flash', appData.ascents.map(a => [a.date, a.grade, a.style, a.scaleId]),
   [['2026-01-21', 7, 'top', 'font'], ['2026-01-21', 7, 'flash', 'font']]);
-check('Flash schaltet sich danach wieder aus', logFlash === false);
+renderHistory();
+check('Flash-Schalter bleibt und ist hervorgehoben', logStyle === 'flash' && el('historyContent').innerHTML.includes('is-flash'));
+check('Flash-Eintrag hervorgehoben', el('historyContent').innerHTML.includes('log-chip flash') && el('historyContent').innerHTML.includes('1 Flash'));
+logStyle = 'top';
+// Eintrag öffnen: Versuche, Name, Stil
+const rp = appData.ascents[0];
+openAscent(rp.id);
+check('Eintrag öffnet sich statt gelöscht zu werden', el('ascentSheet').innerHTML.includes('Versuche') && appData.ascents.length === 2);
+stepTries(rp.id, 1);
+eq('Redpoint: erster Schritt sind 2 Versuche', rp.tries, 2);
+stepTries(rp.id, 1); stepTries(rp.id, 1);
+eq('weitere Versuche', rp.tries, 4);
+stepTries(rp.id, -1); stepTries(rp.id, -1); stepTries(rp.id, -1);
+check('unter 2 Versuchen: nicht gezählt', !('tries' in rp));
+stepTries(rp.id, 1); stepTries(rp.id, 1);
+el('ascName').value = '  Dachkante <b> ';
+closeAscent(rp.id);
+eq('Name und Versuche gespeichert', [rp.name, rp.tries], ['Dachkante <b>', 3]);
+renderHistory();
+check('Versuche und Name am Eintrag, maskiert', el('historyContent').innerHTML.includes('3×') && el('historyContent').innerHTML.includes('Dachkante &lt;b&gt;'));
+updateAscent(rp.id, { style: 'flash' });
+check('Flash setzt Versuche zurück', rp.style === 'flash' && !('tries' in rp));
+updateAscent(rp.id, { style: 'top' }); updateAscent(rp.id, { name: '' }, true);
+check('Name leeren entfernt ihn', !('name' in rp));
 logDate = '2026-01-19'; quickAddAscent(9);             // 7A an einem anderen Tag
 logDate = null;
 appData.ascents.push({ id: 'proj', date: '2026-01-20', scaleId: 'font', grade: 11, style: 'project', place: 'fels', name: '<Dach>' });
@@ -1315,7 +1304,7 @@ eq('Pyramide ohne Projekte, höchster Grad oben',
 renderHistory();
 const lb = el('historyContent').innerHTML;
 check('höchster Grad 7A', lb.includes('>7A<'));
-check('auf der Seite nur der heutige Tag, der Rest im Verlauf', lb.includes('2 heute') && !lb.includes('19. Jan') && lb.includes('3 Boulder an 2 Tagen'));
+check('auf der Seite nur der heutige Tag, der Rest im Verlauf', lb.includes('2 Boulder') && !lb.includes('19. Jan') && lb.includes('3 Boulder an 2 Tagen'));
 openLogHistory();
 check('Verlauf nach Monaten mit allen Tagen', el('logHistory').innerHTML.includes('Mo, 19. Jan') && el('logHistory').innerHTML.includes('>Heute <span>2 '));
 removeAscentDay(toDateStr(new Date()));
@@ -1327,7 +1316,7 @@ check('Skala umschaltbar', el('historyContent').innerHTML.includes('quickAddAsce
 logScaleSel = null;
 const vorLoeschen = appData.ascents.length;
 removeAscent(appData.ascents[0].id);
-eq('antippen löscht (nach Rückfrage)', appData.ascents.length, vorLoeschen - 1);
+eq('löschen (nach Rückfrage)', appData.ascents.length, vorLoeschen - 1);
 check('Logbuch reist durch den Abgleich', gleich(fromDocs(toDocs(appData)).ascents, kopie(appData.ascents).sort((a, b) => a.id < b.id ? -1 : 1)));
 } finally {
   globalThis.Date = EchtesDate;
@@ -1449,18 +1438,19 @@ check('auch Ersetzen lässt sich zurücknehmen', gleich(toDocs(appData), toDocs(
   eq('Toleranz je Einheit: 190 von 240 min gilt als erreicht', intensityClass(190, 240, unitInfo(mz2).tol), 'int-green-dark');
   eq('bei Stunden ±1 h', intensityClass(3, 4, unitInfo({ unit: 'h' }).tol), 'int-green-dark');
   eq('bei Intensität wären 10 Punkte daneben nur fast erreicht', intensityClass(230, 240), 'int-green-light');
-  const tplF = PLAN_TEMPLATES[1];
   eq('2 Punkte Intensität = 1 Stunde', convertAmount(2, 'int', 'h'), 1);
   eq('aufgerundet auf halbe Stunden', [convertAmount(1, 'int', 'h'), convertAmount(2.5, 'int', 'h'), convertAmount(3, 'int', 'h')], [0.5, 1.5, 1.5]);
   eq('in Minuten', convertAmount(3, 'int', 'min'), 90);
   eq('zurück in Intensität', [convertAmount(1.5, 'h', 'int'), convertAmount(90, 'min', 'int')], [3, 3]);
-  eq('Vorlage in Minuten', templateAmount(tplF.exercises[0], 'min'), convertAmount(tplF.exercises[0].intensity, 'int', 'min'));
   el('newCycleName').value = 'Zeit'; el('newCycleDate').value = '2026-03-02'; el('newCycleWeeks').value = '8';
-  el('newCycleMode').value = 'plan'; el('copyFromCycle').value = 'tpl:' + tplF.id; el('newCycleUnit').dataset.val = 'min';
+  el('newCycleMode').value = 'plan'; el('copyFromCycle').value = ''; el('newCycleUnit').dataset.val = 'min';
   createCycle();
   const zz = getActiveCycle();
-  eq('neuer Zyklus zählt in Minuten', [zz.unit, zz.exercises[0].intensity], ['min', convertAmount(tplF.exercises[0].intensity, 'int', 'min')]);
-  check('Wochenziele in Minuten', getWeekTarget(zz, 0) % 5 === 0 && getWeekTarget(zz, 0) > 100);
+  zz.exercises.push({ id: 'zb', name: 'Bouldern', categories: [], intensity: 90 });
+  boardSel = { cycleId: null, week: 0 };
+  boardAdd('zb', 0); boardAdd('zb', 3);
+  assignWeeks(Array.from({ length: 8 }, (_, i) => i), zz.weekAssign[boardWeek(zz)]);
+  eq('neuer Zyklus zählt in Minuten', [zz.unit, getWeekTarget(zz, 0), getWeekTarget(zz, 7)], ['min', 180, 180]);
   el('newCycleName').value = 'Kopie'; el('copyFromCycle').value = zz.id; el('newCycleUnit').dataset.val = 'int';
   createCycle();
   eq('eine Kopie behält die Einheit des Originals', getActiveCycle().unit, 'min');
@@ -1532,14 +1522,13 @@ check('auch Ersetzen lässt sich zurücknehmen', gleich(toDocs(appData), toDocs(
   appData.cycles.push(frei); appData.activeCycleId = 'F';
   currentView = 'settings';
   togglePlanMode();
-  check('Einschalten öffnet eine Woche mit Vorschlag aus dem bisherigen Training',
-    isPlanMode(frei) && !!el('weekEditor').innerHTML && weekDraft && weekDraft.items.length > 0);
-  eq('vorgeschlagene Tage', weekDraft.items, [{ exId: 'f1', days: [0, 4] }, { exId: 'f2', days: [2] }]);
-  weSave();
+  check('Einschalten legt einen Plan aus dem bisherigen Training an', isPlanMode(frei) && weekPlans(frei).length === 1);
+  eq('vorgeschlagene Tage', weekPlans(frei)[0].items, [{ exId: 'f1', days: [0, 4] }, { exId: 'f2', days: [2] }]);
   eq('gilt in allen Wochen', frei.weekAssign.filter(Boolean).length, 4);
+  check('und zeigt den Trainingsplan', currentView === 'plan');
   const ohneUebungen = neuerZyklus({ exercises: [] });
   togglePlanMode();
-  check('ohne Übungen: fertige Wochen werden angeboten', el('modalContent').innerHTML.includes('Wochen auswählen') && el('modalContent').innerHTML.includes('Belastungswoche'));
+  check('ohne Übungen: leeres Brett, keine fertigen Wochen', isPlanMode(ohneUebungen) && !weekPlans(ohneUebungen).length);
   appData.activeCycleId = 'F';
   togglePlanMode();
   check('Ausschalten', !isPlanMode(frei));
@@ -1606,14 +1595,20 @@ check('auch Ersetzen lässt sich zurücknehmen', gleich(toDocs(appData), toDocs(
 
   // Plan für jemand anderen
   const eigenAktiv = appData.activeCycleId;
-  el('draftWho').value = 'Mara'; el('draftWeeks').value = '6'; el('draftUnit').value = 'h'; el('draftFrom').value = 'tpl:einsteiger';
+  el('draftWho').value = 'Mara'; el('draftWeeks').value = '6'; el('draftUnit').value = 'h'; el('draftFrom').value = '';
   createDraft();
   const draft = appData.cycles.find(c => c.forOther === 'Mara');
   check('Entwurf angelegt, eigener Zyklus bleibt aktiv', draft && appData.activeCycleId === eigenAktiv && draft.name === 'Plan für Mara');
-  check('im Trainingsplan wird der Entwurf bearbeitet', getActiveCycle() === draft && el('planContent').innerHTML.includes('Plan für jemand anderen'));
-  eq('Entwurf in Stunden mit Vorlage', [draft.unit, weekPlans(draft).length, draft.weeks], ['h', 3, 6]);
-  switchView('dashboard');
-  check('anderer Tab: wieder der eigene Zyklus', getActiveCycle().id === eigenAktiv);
+  check('Entwurf öffnet sich auf eigener Seite', getActiveCycle() === draft && el('draftContent').innerHTML.includes('data-drop="bday:0"')
+    && el('draftTitle').textContent === 'Mara');
+  check('dort ohne Kalender und Ausschalten', (() => { const items = []; const orig = openMenu; openMenu = (a, it) => items.push(...it); openBoardMenu({}); openMenu = orig;
+    return !items.some(i => i.label === 'In den Kalender' || i.label === 'Wochenplan ausschalten'); })());
+  draft.exercises.push({ id: 'dx', name: 'Hangboard', categories: [], intensity: 1 });
+  boardAdd('dx', 1);
+  eq('Entwurf in Stunden, geplant', [draft.unit, weekPlans(draft).length, draft.weeks], ['h', 1, 6]);
+  check('eigener Zyklus unberührt', !appData.cycles.find(c => c.id === eigenAktiv).exercises.some(e => e.id === 'dx'));
+  closeDraft();
+  check('Fertig: wieder der eigene Zyklus', getActiveCycle().id === eigenAktiv);
   renderHistory();
   check('Entwurf erscheint nicht unter Zyklen', !el('historyContent').innerHTML.includes('Plan für Mara'), (h => h.slice(Math.max(0, h.indexOf('Plan für Mara') - 300), h.indexOf('Plan für Mara') + 20))(el('historyContent').innerHTML));
   renderSettings();

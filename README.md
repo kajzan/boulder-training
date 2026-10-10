@@ -12,7 +12,6 @@ Konto werden sie zusätzlich zwischen Geräten abgeglichen (siehe unten).
 | `index.html` | Grundgerüst der Seite |
 | `styles.css` | Gestaltung |
 | `app.js` | die gesamte Logik |
-| `templates.js` | Vorlagen für den Wochenplan – hier lassen sich die Pläne anpassen |
 | `planning.js` | Planung: Wochen, ihre Zuordnung zu Zykluswochen und das Repertoire |
 | `sync.js` | Abgleich-Modell: zerlegt die Daten in Einträge und führt Stände zusammen |
 | `cloud.js` | Konto und Synchronisation über Firebase |
@@ -38,14 +37,6 @@ Das zählt die Version in `version.js` und `sw.js` hoch und setzt Datum und Uhrz
 (deutsche Zeit). Beides steht unten in den Einstellungen. Der Service Worker
 liest dieselbe Datei; ohne neue Nummer behalten installierte Geräte unter
 Umständen den alten Stand.
-
-## Vorlagen anpassen
-
-Die Wochenplan-Vorlagen stehen in `templates.js`: je Vorlage Name, Zielgruppe,
-Wochenzahl und die Übungen mit Kategorien, Intensität, Wochentagen
-(0 = Montag) und Beschreibung. Die Wochenziele berechnet die App daraus im
-Rhythmus drei Aufbauwochen + eine Entlastungswoche. Änderungen wirken nur auf
-neu angelegte Zyklen.
 
 ## Tests
 

@@ -550,7 +550,6 @@ function formatDateRange(d1, d2) {
 let currentView = 'dashboard';
 
 function switchView(name) {
-  if (name !== 'plan') draftEditId = null;
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.querySelectorAll('.tab-btn').forEach((b, i) => {
     b.classList.toggle('active', ['dashboard','plan','assessment','history','settings'][i] === name);
@@ -561,6 +560,7 @@ function switchView(name) {
 }
 
 function render() {
+  if (draftEditId) { renderDraftScreen(); return; }
   if (currentView === 'dashboard') renderDashboard();
   if (currentView === 'plan') renderPlan();
   if (currentView === 'assessment') renderAssessment();
@@ -1417,7 +1417,10 @@ function renderPlan() {
     el.innerHTML = `<div class="empty"><div class="empty-icon">📋</div><div>Kein aktiver Zyklus.<br>Erstelle einen in den <strong>Einstellungen</strong>.</div></div>`;
     return;
   }
+  el.innerHTML = planBodyHtml(cycle);
+}
 
+function planBodyHtml(cycle) {
   const plan = isPlanMode(cycle);
 
   const planFrom = cycle.planAuthor || cycle.planNote
@@ -1427,12 +1430,17 @@ function renderPlan() {
       </div>`
     : '';
 
-  el.innerHTML = `
-    ${cycle.forOther ? `<div class="draft-bar">
-      <div><div class="draft-label">Plan für jemand anderen</div><div class="draft-name">${esc(cycle.name)}</div></div>
-      <button class="btn btn-primary btn-sm" onclick="openSharePlanModal()">Teilen</button>
-      <button class="btn btn-ghost btn-sm" onclick="closeDraft()">Fertig</button>
-    </div>` : ''}
+  if (plan) return `
+    ${isCyclePaused(cycle) ? `<div class="list-group" style="margin-bottom:12px">
+      <div class="list-row" onclick="resumeCycle()">
+        <span class="list-icon">${PAUSE_ICON}</span>
+        <div class="list-main"><div class="list-title">Training pausiert</div></div>
+        <span style="color:var(--accent);font-size:15px;flex-shrink:0">Fortsetzen</span>
+      </div></div>` : ''}
+    ${renderPlanning(cycle)}
+    ${planFrom}`;
+
+  return `
     ${isCyclePaused(cycle) ? `<div class="list-group" style="margin-bottom:16px">
       <div class="list-row" onclick="resumeCycle()">
         <span class="list-icon">${PAUSE_ICON}</span>
@@ -1446,7 +1454,7 @@ function renderPlan() {
     </div>
 
     ${cycle.exercises.length === 0
-      ? `<div class="card text-muted" style="text-align:center;padding:22px 16px">Noch keine Übungen.${plan ? ' Wähle unten fertige Wochen aus – die Übungen kommen mit.' : ' Füge deine erste hinzu – oder schalte unten den Wochenplan ein.'}</div>`
+      ? ''
       : (() => {
           const allCats = getAllCategoriesInCycle(cycle);
           return `<div id="exerciseList">` + cycle.exercises.map(ex => {
@@ -1470,9 +1478,7 @@ function renderPlan() {
           `}).join('') + `</div>`;
         })()
     }
-    ${plan ? renderPlanning(cycle) : ''}
 
-    ${plan ? '' : `
     <div class="section-hdr"><h2>Wochenziele</h2></div>
     <div class="card-title">${unitInfo(cycle).target}</div>
     <div class="target-grid">
@@ -1487,9 +1493,8 @@ function renderPlan() {
       }).join('')}
     </div>
     ${(cycle.weeks || 12) > 4 ? `<button class="btn btn-ghost btn-full btn-sm" style="margin-top:10px" onclick="repeatWeekTargets()">Woche 1–4 auf alle Wochen übertragen</button>` : ''}
-    `}
 
-    ${plan ? '' : `<div class="list-group" style="margin-top:20px">
+    <div class="list-group" style="margin-top:20px">
       <div class="list-row" onclick="togglePlanMode()">
         <span class="list-icon">${CALENDAR_ICON}</span>
         <div class="list-main"><div class="list-title">Wochenplan einschalten</div></div>
@@ -1500,7 +1505,7 @@ function renderPlan() {
         <div class="list-main"><div class="list-title">Plan teilen</div></div>
         <span class="chev">›</span>
       </div>` : ''}
-    </div>`}
+    </div>
   `;
 }
 
@@ -1576,7 +1581,10 @@ function applyExerciseForm(ex, form) {
   return ex;
 }
 
-function openAddExerciseModal() {
+let addExerciseDay = null;   // Tag, an dem die neue Übung gleich geplant wird
+
+function openAddExerciseModal(day) {
+  addExerciseDay = Number.isInteger(day) ? day : null;
   openModal(`
     <div class="modal-title">Übung hinzufügen</div>
     ${exerciseFormHtml('newEx', null)}
@@ -1592,10 +1600,12 @@ function addExercise() {
   const form = readExerciseForm('newEx');
   if (!form) return;
   const cycle = getActiveCycle();
-  cycle.exercises.push(applyExerciseForm({ id: newId() }, form));
+  const ex = applyExerciseForm({ id: newId() }, form);
+  cycle.exercises.push(ex);
   saveData();
   closeModal();
-  renderPlan();
+  if (addExerciseDay !== null && isPlanMode(cycle)) boardAdd(ex.id, addExerciseDay); else render();
+  addExerciseDay = null;
 }
 
 function openEditExerciseModal(exId) {
@@ -1617,6 +1627,7 @@ function openEditExerciseModal(exId) {
       <button class="btn btn-ghost" onclick="closeModal()">Abbrechen</button>
       <button class="btn btn-primary" onclick="saveExerciseEdit('${exId}')">Speichern</button>
     </div>
+    <button class="btn-link" style="color:var(--red)" onclick="deleteExercise('${exId}')">Übung löschen</button>
   `);
 }
 
@@ -1629,7 +1640,7 @@ function saveExerciseEdit(exId) {
   applyExerciseForm(ex, form);
   saveData();
   closeModal();
-  renderPlan();
+  render();
 }
 
 function deleteExercise(exId) {
@@ -1647,7 +1658,8 @@ function deleteExercise(exId) {
   // und aus den geplanten Wochen
   weekPlans(cycle).forEach(p => { p.items = p.items.filter(it => it.exId !== exId); });
   saveData();
-  renderPlan();
+  closeModal();
+  render();
 }
 
 // ═══════════════════════════════════════════════
@@ -1750,7 +1762,7 @@ function endExerciseDrag(e) {
   setTimeout(() => window.removeEventListener('click', swallowDragClick, true), 350);
   const ids = Array.from(s.parent.children).map(c => c.dataset.exid).filter(Boolean);
   reorderExercises(ids);
-  renderPlan();
+  render();
 }
 
 function swallowDragClick(e) {
@@ -1783,7 +1795,7 @@ function repeatWeekTargets() {
   const muster = cycle.weekTargets.slice(0, 4);
   cycle.weekTargets = Array.from({ length: n }, (_, i) => muster[i % 4] || 0);
   saveData();
-  renderPlan();
+  render();
 }
 
 function updateWeekTarget(weekIdx, val) {
@@ -1894,10 +1906,12 @@ function openCycleDetail(cycleId) {
 // ═══════════════════════════════════════════════
 // LOGBUCH
 // ═══════════════════════════════════════════════
-// appData.ascents: [{id, date, scaleId, grade, style, place, name?, note?}]
+// appData.ascents: [{id, date, scaleId, grade, style, tries?, name?, place?, note?}]
 // grade ist der Index in der Skala (wie bei Assessment-Tests), damit sich
-// Grade sortieren und zählen lassen.
-const ASCENT_STYLES = { flash: 'Flash', top: 'Top', project: 'Projekt' };
+// Grade sortieren und zählen lassen. style: 'flash' (erster Versuch) oder
+// 'top' (Redpoint, tries = Anzahl Versuche, wenn bekannt). Alte Einträge mit
+// 'project' bleiben erhalten, zählen aber nicht.
+const ASCENT_STYLES = { flash: 'Flash', top: 'Redpoint', project: 'Projekt' };
 const ASCENT_PLACES = { halle: 'Halle', board: 'Board', fels: 'Fels' };
 const LOG_PREVIEW = 10;
 let logShowAll = false;
@@ -1931,7 +1945,7 @@ function sortedAscents() {
     b.date.localeCompare(a.date) || String(b.id).localeCompare(String(a.id)));
 }
 
-// Pyramide je Skala: Flash und Top je Grad, vom höchsten Grad abwärts.
+// Pyramide je Skala: Flash und Redpoint je Grad, vom höchsten Grad abwärts.
 // Projekte zählen nicht – sie sind (noch) nicht geschafft.
 function gradePyramid(scaleId) {
   const counts = {};
@@ -1945,11 +1959,10 @@ function gradePyramid(scaleId) {
 }
 
 // ── Logbuch-Ansicht ──
-// Bewusst schlicht: Grad antippen, fertig. Ein Tipp trägt einen Top für
-// heute ein; mit "Flash" vorher als Flash. Gelöscht wird durch Antippen
-// eines Eintrags. Ort, Name und Projekte gibt es nicht mehr – ältere
-// Einträge damit bleiben erhalten, Projekte zählen nicht.
-let logFlash = false;
+// Grad antippen trägt ihn ein – als Flash oder Redpoint, je nach Schalter
+// oben (bleibt, bis man ihn umstellt). Ein Tipp auf einen Eintrag öffnet
+// ihn: Flash oder Redpoint, Versuche, Name (z.B. draußen am Fels), löschen.
+let logStyle = 'top';
 let logScaleSel = null;
 let logDate = null;          // null = heute
 let logAdded = null;         // zuletzt eingetragen – für die kurze Bestätigung
@@ -1973,17 +1986,29 @@ function renderPyramid(scaleId) {
   const shown = rows.slice(0, 6);
   const max = Math.max(...shown.map(r => r.flash + r.top));
   const total = rows.reduce((s, r) => s + r.flash + r.top, 0);
+  const flashes = rows.reduce((s, r) => s + r.flash, 0);
+  const topFlash = rows.find(r => r.flash);
   return `<div class="card">
     <div class="log-summary">
       <div><div class="log-big">${steps[rows[0].grade]}</div><div class="stat-lbl">Höchster Grad</div></div>
-      <div style="text-align:right"><div class="log-big">${total}</div><div class="stat-lbl">${total === 1 ? 'Boulder' : 'Boulder'} gesamt</div></div>
+      <div><div class="log-big flash">${topFlash ? steps[topFlash.grade] : '–'}</div><div class="stat-lbl">Höchster Flash</div></div>
+      <div style="text-align:right"><div class="log-big">${total}</div><div class="stat-lbl">${flashes} Flash</div></div>
     </div>
     ${shown.map(r => `<div class="pyr-row">
       <span class="pyr-grade">${steps[r.grade]}</span>
-      <span class="pyr-bar"><span style="width:${(r.flash + r.top) / max * 100}%"></span></span>
+      <span class="pyr-bar"><span class="f" style="width:${r.flash / max * 100}%"></span><span class="r" style="width:${r.top / max * 100}%"></span></span>
       <span class="pyr-count">${r.flash + r.top}</span>
     </div>`).join('')}
+    <div class="pyr-legend"><span><i class="f"></i>Flash</span><span><i class="r"></i>Redpoint</span></div>
   </div>`;
+}
+
+// Ein Eintrag als Knopf: Flash hervorgehoben, Redpoint mit Versuchen
+function ascentChip(a, extra = '') {
+  return `<button type="button" class="log-chip ${a.style === 'flash' ? 'flash' : ''} ${extra}" onclick="openAscent('${esc(a.id)}')">
+    ${a.style === 'flash' ? '<span class="log-flash">⚡</span>' : ''}<span>${esc(ascentGrade(a))}</span>${
+    a.style !== 'flash' && a.tries ? `<span class="log-tries">${a.tries}×</span>` : ''}${
+    a.name ? `<span class="log-chip-name">${esc(a.name)}</span>` : ''}</button>`;
 }
 
 function renderLogbook() {
@@ -2000,11 +2025,10 @@ function renderLogbook() {
     byDay.get(a.date).push(a);
   });
   const days = [...byDay.keys()].sort((x, y) => y.localeCompare(x));
-  const dayEntries = (byDay.get(day) || []).slice().sort((x, y) => y.grade - x.grade);
+  const dayEntries = (byDay.get(day) || []).slice().sort((x, y) => y.grade - x.grade || (x.style === 'flash' ? -1 : 1));
   const total = days.reduce((s, d) => s + byDay.get(d).length, 0);
-  const chip = a => `<button type="button" class="log-chip ${a.style === 'flash' ? 'flash' : ''} ${logAdded === a.id ? 'new' : ''}"
-      onclick="removeAscent('${esc(a.id)}')" title="Antippen zum Löschen">${esc(ascentGrade(a))}${a.style === 'flash' ? '<span class="log-flash">⚡</span>' : ''}</button>`;
   const dayLabel = d => d === today ? 'Heute' : d === addDays(today, -1) ? 'Gestern' : `${DAYS_DE[weekdayOf(d)]}, ${formatDay(d)}`;
+  const flashToday = dayEntries.filter(a => a.style === 'flash').length;
 
   return `
     <div class="section-hdr" style="margin-top:0"><h2>Logbuch</h2>
@@ -2012,17 +2036,20 @@ function renderLogbook() {
         `<button type="button" class="${k === scaleId ? 'on' : ''}" onclick="logScaleSel='${k}';renderHistory()">${k === 'font' ? 'Font' : k === 'vscale' ? 'V' : 'Halle'}</button>`).join('')}</div>
     </div>
 
-    <div class="card log-add">
+    <div class="card log-add ${logStyle === 'flash' ? 'is-flash' : ''}">
       <div class="log-add-hdr">
-        <span class="card-title" style="margin:0">${day === today ? 'Heute' : dayLabel(day)} geschafft</span>
-        <button type="button" class="log-flash-toggle ${logFlash ? 'on' : ''}" onclick="logFlash=!logFlash;renderHistory()">⚡ Flash</button>
+        <span class="card-title" style="margin:0">${dayLabel(day)}</span>
+        <div class="seg seg-mini log-style-seg">
+          <button type="button" class="${logStyle === 'flash' ? 'on flash' : ''}" onclick="logStyle='flash';renderHistory()">⚡ Flash</button>
+          <button type="button" class="${logStyle === 'top' ? 'on' : ''}" onclick="logStyle='top';renderHistory()">Redpoint</button>
+        </div>
       </div>
       <div class="log-grades" data-focus="${typical}">
         ${steps.map((g, i) => `<button type="button" class="log-grade" onclick="quickAddAscent(${i})">${g}</button>`).join('')}
       </div>
-      ${dayEntries.length ? `<div class="log-today">${dayEntries.map(chip).join('')}</div>` : ''}
+      ${dayEntries.length ? `<div class="log-today">${dayEntries.map(a => ascentChip(a, logAdded === a.id ? 'new' : '')).join('')}</div>` : ''}
       <div class="log-add-foot">
-        <span>${dayEntries.length ? `${dayEntries.length} ${day === today ? 'heute' : 'an diesem Tag'}` : ''}</span>
+        <span>${dayEntries.length ? `${dayEntries.length} Boulder${flashToday ? ` · <span class="flash-txt">${flashToday} Flash</span>` : ''}` : ''}</span>
         <label class="log-date">${day === today ? 'Anderer Tag' : 'Tag'}
           <input type="date" value="${day}" max="${today}" onchange="logDate=this.value===toDateStr(new Date())?null:this.value;renderHistory()">
         </label>
@@ -2066,6 +2093,7 @@ function renderLogHistory() {
   });
   const monthName = key => { const d = parseDate(key + '-01'); return d.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' }); };
   const label = d => d === today ? 'Heute' : `${DAYS_DE[weekdayOf(d)]}, ${formatDay(d)}`;
+  ascentFromHistory = true;
   box.innerHTML = `
     <div class="modal-title">Verlauf</div>
     ${months.map(m => `
@@ -2074,8 +2102,7 @@ function renderLogHistory() {
         ${m.days.map(d => `<div class="swipe-row" data-delete="removeAscentDay('${d}')"><div class="swipe-action">Löschen</div>
           <div class="log-day swipe-content">
           <div class="log-day-name">${label(d)} <span>${byDay.get(d).length} <button type="button" class="day-del" onclick="removeAscentDay('${d}')" aria-label="Ganzen Tag löschen">Tag löschen</button></span></div>
-          <div class="log-chips">${byDay.get(d).sort((x, y) => y.grade - x.grade).map(a => `<button type="button" class="log-chip ${a.style === 'flash' ? 'flash' : ''}"
-            onclick="removeAscent('${esc(a.id)}')">${esc(ascentGrade(a))}${a.style === 'flash' ? '<span class="log-flash">⚡</span>' : ''}</button>`).join('')}</div>
+          <div class="log-chips">${byDay.get(d).sort((x, y) => y.grade - x.grade).map(a => ascentChip(a)).join('')}</div>
         </div></div>`).join('')}
       </div>`).join('') || '<div class="text-muted">Noch keine Einträge.</div>'}
     <button class="btn btn-ghost btn-full" style="margin-top:14px" onclick="closeModal()">Fertig</button>`;
@@ -2091,14 +2118,83 @@ function removeAscentDay(date) {
 }
 
 function quickAddAscent(grade) {
-  const a = { id: newId(), date: logDate || toDateStr(new Date()), scaleId: logScale(), grade, style: logFlash ? 'flash' : 'top' };
+  const a = { id: newId(), date: logDate || toDateStr(new Date()), scaleId: logScale(), grade, style: logStyle === 'flash' ? 'flash' : 'top' };
   appData.ascents.push(a);
   logAdded = a.id;
-  logFlash = false;
   saveData();
   renderHistory();
   if (navigator.vibrate) navigator.vibrate(10);
   setTimeout(() => { if (logAdded === a.id) { logAdded = null; } }, 1500);
+}
+
+// ── Ein Eintrag im Detail ──
+let ascentFromHistory = false;   // zurück in den Verlauf statt ins Logbuch
+
+function openAscent(id) {
+  if (!document.getElementById('logHistory')) ascentFromHistory = false;
+  openModal(`<div id="ascentSheet" data-id="${esc(id)}"></div>`);
+  renderAscent(id);
+}
+
+function renderAscent(id) {
+  const box = document.getElementById('ascentSheet');
+  const a = appData.ascents.find(x => x.id === id);
+  if (!box || !a) return;
+  const steps = (SCALES[a.scaleId] || SCALES.font).steps;
+  const flash = a.style === 'flash';
+  box.innerHTML = `
+    <div class="asc-head">
+      <select class="asc-grade ${flash ? 'flash' : ''}" onchange="updateAscent('${esc(id)}', { grade: +this.value })" aria-label="Grad">
+        ${steps.map((g, i) => `<option value="${i}" ${i === a.grade ? 'selected' : ''}>${esc(g)}</option>`).join('')}
+      </select>
+      <span class="text-muted">${DAYS_FULL[weekdayOf(a.date)]}, ${formatDay(a.date)}</span>
+    </div>
+    <div class="seg asc-style">
+      <button type="button" class="${flash ? 'on flash' : ''}" onclick="updateAscent('${esc(id)}', { style: 'flash' })">⚡ Flash</button>
+      <button type="button" class="${flash ? '' : 'on'}" onclick="updateAscent('${esc(id)}', { style: 'top' })">Redpoint</button>
+    </div>
+    <div class="asc-tries ${flash ? 'off' : ''}">
+      <span>Versuche</span>
+      <button type="button" class="asc-step" onclick="stepTries('${esc(id)}', -1)" ${flash || !a.tries ? 'disabled' : ''} aria-label="Weniger">−</button>
+      <span class="asc-n">${flash ? '1' : a.tries || '–'}</span>
+      <button type="button" class="asc-step" onclick="stepTries('${esc(id)}', 1)" ${flash ? 'disabled' : ''} aria-label="Mehr">+</button>
+    </div>
+    <div class="field"><label>Name</label>
+      <input type="text" id="ascName" maxlength="60" value="${esc(a.name || '')}" placeholder="optional, z.B. Dachkante"
+        onkeydown="if(event.key==='Enter')this.blur()" onchange="updateAscent('${esc(id)}', { name: this.value }, true)"></div>
+    <div class="row">
+      <button class="btn btn-ghost" style="color:var(--red)" onclick="removeAscent('${esc(id)}')">Löschen</button>
+      <button class="btn btn-primary" onclick="closeAscent('${esc(id)}')">Fertig</button>
+    </div>`;
+}
+
+function updateAscent(id, change, quiet) {
+  const a = appData.ascents.find(x => x.id === id);
+  if (!a) return;
+  if ('grade' in change) a.grade = change.grade;
+  if ('style' in change) {
+    a.style = change.style;
+    if (a.style === 'flash') delete a.tries;
+  }
+  if ('tries' in change) { if (change.tries) a.tries = change.tries; else delete a.tries; }
+  if ('name' in change) { const n = String(change.name || '').trim().slice(0, 60); if (n) a.name = n; else delete a.name; }
+  saveData();
+  if (!quiet) renderAscent(id);
+}
+
+// Redpoint heißt: mindestens zwei Versuche. Unter 2 heißt "nicht gezählt".
+function stepTries(id, d) {
+  const a = appData.ascents.find(x => x.id === id);
+  if (!a || a.style === 'flash') return;
+  const n = (a.tries || 1) + d;
+  updateAscent(id, { tries: n < 2 ? 0 : Math.min(n, 999) });
+}
+
+function closeAscent(id) {
+  const inp = document.getElementById('ascName');
+  if (inp) updateAscent(id, { name: inp.value }, true);
+  closeModal();
+  if (ascentFromHistory) setTimeout(openLogHistory, 250);
 }
 
 function removeAscent(id) {
@@ -2107,6 +2203,7 @@ function removeAscent(id) {
   if (!confirm(`${ascentGrade(a)}${a.style === 'flash' ? ' (Flash)' : ''} vom ${formatDay(a.date)} löschen?`)) return;
   appData.ascents = appData.ascents.filter(x => x.id !== id);
   saveData();
+  if (document.getElementById('ascentSheet')) { closeModal(); if (ascentFromHistory) setTimeout(openLogHistory, 250); return; }
   renderHistory();
   renderLogHistory();
 }
@@ -2183,7 +2280,7 @@ function renderSettings() {
         <div class="swipe-action">Löschen</div>
         <div class="swipe-content list-row" onclick="editDraft('${c.id}')">
           <div class="list-main"><div class="list-title">${esc(c.name)}</div>
-            <div class="list-sub">${c.weeks || 12} Wochen · ${weekPlans(c).length} ${weekPlans(c).length === 1 ? 'Wochenart' : 'Wochenarten'}</div></div>
+            <div class="list-sub">${c.weeks || 12} Wochen · ${(c.weekAssign || []).filter(Boolean).length} geplant</div></div>
           <button class="del-btn" onclick="event.stopPropagation();deleteDraft('${c.id}')" aria-label="${esc(c.name)} löschen">×</button>
         </div>
       </div>`).join('')}
@@ -2282,9 +2379,6 @@ function openNewCycleModal(mode) {
       <label>Start mit</label>
       <select id="copyFromCycle" onchange="onCopySelect(true)">
         <option value="">Leer</option>
-        <optgroup label="Vorlagen">
-          ${PLAN_TEMPLATES.map(t => `<option value="tpl:${t.id}">${esc(t.name)}</option>`).join('')}
-        </optgroup>
         ${otherCycles.length ? `<optgroup label="Kopie von">
           ${otherCycles.map(c => `<option value="${c.id}">${esc(c.name)} (${c.exercises.length} Übungen, ${c.weeks||12} Wo.)</option>`).join('')}
         </optgroup>` : ''}
@@ -2308,46 +2402,23 @@ function openNewCycleModal(mode) {
   onCopySelect();
 }
 
-function getTemplate(value) {
-  if (!value || !value.startsWith('tpl:')) return null;
-  return PLAN_TEMPLATES.find(t => t.id === value.slice(4)) || null;
-}
-
-// Wert einer Vorlagen-Übung in der gewählten Einheit
-function templateAmount(ex, unit) {
-  return convertAmount(ex.intensity, 'int', unit);
-}
-
 // changed: true, wenn die Auswahl gerade geändert wurde (dann Wochenzahl und
 // Art übernehmen), sonst nur den Hinweis auffrischen.
 function onCopySelect(changed) {
   const value = document.getElementById('copyFromCycle')?.value;
   const info = document.getElementById('copyInfo');
   const wInput = document.getElementById('newCycleWeeks');
-  const modeSel = document.getElementById('newCycleMode');
-  const tpl = getTemplate(value);
-  const src = !tpl && value ? appData.cycles.find(c => c.id === value) : null;
-  if (changed && tpl) {
-    if (wInput) wInput.value = tpl.weeks;
-    if (modeSel) modeSel.value = 'plan';
-  }
+  const src = value ? appData.cycles.find(c => c.id === value) : null;
   if (changed && src && wInput) wInput.value = src.weeks || 12;
   // Die Werte einer Kopie stehen in der Einheit des Originals
   if (changed && src) pickSeg('newCycleUnit', cycleUnit(src));
   if (!info) return;
-  if (tpl) {
-    info.innerHTML = `${esc(tpl.level)}<br>${tpl.exercises.length} Übungen in ${tpl.plan.length} Wochen: ${tpl.plan.map(w => esc(w.name)).join(', ')}. Ein Vorschlag – alles lässt sich danach anpassen.`;
-  } else if (src) {
-    info.textContent = `Übungen, geplante Wochen, Wochenziele und Wochenanzahl werden übernommen. Gezählt wird wie dort in ${unitInfo(src).name}.`;
-  } else {
-    info.textContent = '';
-  }
+  info.textContent = src ? `${src.exercises.length} Übungen · ${src.weeks || 12} Wochen · ${unitInfo(src).name}` : '';
 }
 
 function createCycle() {
   const copyFromId = document.getElementById('copyFromCycle')?.value;
-  const tpl = getTemplate(copyFromId);
-  const name = document.getElementById('newCycleName')?.value?.trim() || (tpl ? tpl.name.split(' · ')[0] : '');
+  const name = document.getElementById('newCycleName')?.value?.trim();
   const date = document.getElementById('newCycleDate')?.value;
   const weeksRaw = document.getElementById('newCycleWeeks')?.value;
   const weeks = Math.max(1, Math.min(52, parseInt(weeksRaw) || 12));
@@ -2359,9 +2430,7 @@ function createCycle() {
   const unit = document.getElementById('newCycleUnit')?.dataset?.val;
   if (unit && unit !== 'int' && CYCLE_UNITS[unit]) cycle.unit = unit;
 
-  if (tpl) {
-    applyTemplate(cycle, tpl);
-  } else if (copyFromId) {
+  if (copyFromId) {
     const src = appData.cycles.find(c => c.id === copyFromId);
     if (src) {
       const idMap = {};
@@ -2380,9 +2449,7 @@ function createCycle() {
   appData.activeCycleId = cycle.id;
   saveData();
   closeModal();
-  render();
-  // Leerer Wochenplan: gleich fertige Wochen zur Auswahl anbieten
-  if (isPlanMode(cycle) && !cycle.exercises.length) setTimeout(() => { switchView('plan'); openAddWeekSheet(); }, 300);
+  if (isPlanMode(cycle)) switchView('plan'); else render();
 }
 
 // Kopie einer Übung mit neuer ID – für Vorlagen, kopierte Zyklen und
@@ -2413,8 +2480,7 @@ function openNewDraftModal() {
     </div>
     <div class="field"><label>Start mit</label>
       <select id="draftFrom">
-        <option value="">Leer – Wochen auswählen</option>
-        <optgroup label="Vorlagen">${PLAN_TEMPLATES.map(t => `<option value="tpl:${t.id}">${esc(t.name)}</option>`).join('')}</optgroup>
+        <option value="">Leer</option>
         ${own.length ? `<optgroup label="Kopie von">${own.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</optgroup>` : ''}
       </select>
     </div>
@@ -2433,9 +2499,7 @@ function createDraft() {
   cycle.forOther = who || '?';
   cycle.mode = 'plan';
   if (unit !== 'int') cycle.unit = unit;
-  const tpl = getTemplate(from);
-  if (tpl) applyTemplate(cycle, tpl);
-  else if (from) {
+  if (from) {
     const src = appData.cycles.find(c => c.id === from);
     if (src) {
       const idMap = {};
@@ -2448,27 +2512,40 @@ function createDraft() {
   saveData();
   closeModal();
   editDraft(cycle.id);
-  if (!cycle.exercises.length) setTimeout(openAddWeekSheet, 300);
 }
 
+// Pläne für andere öffnen sich auf einer eigenen Seite über der App – klar
+// getrennt vom eigenen Training
 function editDraft(id) {
-  switchView('plan');
   draftEditId = id;
+  document.getElementById('draftScreen')?.classList.add('open');
   render();
 }
 
 function closeDraft() {
   draftEditId = null;
-  switchView('settings');
+  document.getElementById('draftScreen')?.classList.remove('open');
+  closeMenu();
+  render();
+}
+
+function renderDraftScreen() {
+  const cycle = getActiveCycle();
+  const box = document.getElementById('draftContent');
+  if (!cycle || !box) { closeDraft(); return; }
+  const title = document.getElementById('draftTitle');
+  if (title) title.textContent = cycle.forOther && cycle.forOther !== '?' ? cycle.forOther : cycle.name;
+  const sub = document.getElementById('draftSub');
+  if (sub) sub.textContent = `${cycle.weeks || 12} Wochen · ${unitInfo(cycle).name}`;
+  box.innerHTML = planBodyHtml(cycle);
 }
 
 function deleteDraft(id) {
   const c = appData.cycles.find(x => x.id === id);
   if (!c || !confirm(`„${c.name}" löschen?`)) { render(); return; }
   appData.cycles = appData.cycles.filter(x => x.id !== id);
-  if (draftEditId === id) draftEditId = null;
   saveData();
-  render();
+  if (draftEditId === id) closeDraft(); else render();
 }
 
 function togglePlanMode() {
@@ -3875,6 +3952,7 @@ function openModal(content) {
 function closeModal() {
   document.getElementById('modalOverlay').classList.remove('open');
   if (reloadPending) { location.reload(); return; }
+  if (draftEditId) { renderDraftScreen(); return; }
   if (currentView === 'dashboard') renderDashboard();
   if (currentView === 'assessment') renderAssessment();
   if (currentView === 'history') renderHistory();

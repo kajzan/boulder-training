@@ -26,6 +26,15 @@ const note = (scenario, msg) => { problems.push(`[${scenario}] ${msg}`); };
 
   // Hilfsfunktionen in der Seite
   await page.addScriptTag({ content: `
+    // Ein Beispielplan: Aufbau in drei von vier Wochen, jede 4. Entlastung
+    window.__demoPlan = function (c) {
+      c.mode = 'plan';
+      c.exercises = c.exercises.concat([{ id: 'd1', name: 'Limit', categories: ['Kraft'], intensity: 3 },
+        { id: 'd2', name: 'Volumen', categories: ['Technik'], intensity: 2.5 }, { id: 'd3', name: 'Ausgleich', categories: [], intensity: 1 }]);
+      c.weekPlans = [{ id: 'DA', name: 'Aufbau', items: [{ exId: 'd1', days: [0] }, { exId: 'd2', days: [2] }, { exId: 'd3', days: [0, 4] }] },
+        { id: 'DE', name: 'Entlastung', items: [{ exId: 'd2', days: [0, 4], amount: 1.5 }] }];
+      c.weekAssign = Array.from({ length: c.weeks || 12 }, (_, i) => i % 4 === 3 ? 'DE' : 'DA');
+    };
     window.__check = function () {
       const out = [];
       const d = getAppData();
@@ -107,37 +116,48 @@ const note = (scenario, msg) => { problems.push(`[${scenario}] ${msg}`); };
     await page.evaluate(() => {
       const c = getActiveCycle();
       c.mode = 'plan';
-      openWeekEditor(null); weAdd(0, c.exercises[2].id); dndDrop({ kind: 'ex', exId: c.exercises[0].id }, 'day:2'); weSave();
+      boardAdd(c.exercises[2].id, 0); dndDrop({ kind: 'bex', exId: c.exercises[0].id }, 'bday:2');
       deleteExercise(c.exercises[2].id);
     });
   });
 
-  // ── 4. Vorlagen über alle Einheiten und Längen ──
-  for (const unit of ['int', 'min', 'h']) for (const weeks of [1, 4, 12, 52]) for (const tpl of ['einsteiger', 'fortgeschritten', 'fingerkraft']) {
-    await step(`vorlage ${tpl} ${unit} ${weeks}w`, async () => {
-      await page.evaluate(({ unit, weeks, tpl }) => {
+  // ── 4. Neue Zyklen über alle Einheiten und Längen, planen am Brett ──
+  for (const unit of ['int', 'min', 'h']) for (const weeks of [1, 4, 12, 52]) {
+    await step(`brett ${unit} ${weeks}w`, async () => {
+      await page.evaluate(({ unit, weeks }) => {
         __fresh();
         const el = id => document.getElementById(id);
         openNewCycleModal('plan');
-        el('newCycleName').value = 'V'; el('newCycleWeeks').value = String(weeks);
-        el('copyFromCycle').value = 'tpl:' + tpl; pickSeg('newCycleUnit', unit);
+        el('newCycleName').value = 'V'; el('newCycleWeeks').value = String(weeks); pickSeg('newCycleUnit', unit);
         createCycle();
-      }, { unit, weeks, tpl });
-      const r = await page.evaluate(() => { const c = getActiveCycle(); return { u: c.unit || 'int', t: getWeekTarget(c, 0), n: c.weekAssign.length }; });
-      if (r.u !== unit) note(`vorlage ${tpl} ${unit} ${weeks}w`, 'Einheit ' + r.u);
-      if (!(r.t > 0)) note(`vorlage ${tpl} ${unit} ${weeks}w`, 'Wochenziel 1 = ' + r.t);
+        const c = getActiveCycle();
+        openAddExerciseModal(3); el('newExName').value = 'Bouldern'; el('newExInt').value = unit === 'min' ? '90' : '2'; addExercise();
+        openBoardMenu(document.body); document.querySelector('.pop-item') && document.querySelector('.pop-item').click();
+        closeMenu();
+        assignWeeks(Array.from({ length: weeks }, (_, i) => i), c.weekAssign[boardWeek(c)]);
+      }, { unit, weeks });
+      const r = await page.evaluate(() => { const c = getActiveCycle(); return { u: c.unit || 'int', t: getWeekTarget(c, 0), n: c.weekAssign.filter(Boolean).length, w: c.weeks }; });
+      if (r.u !== unit) note(`brett ${unit} ${weeks}w`, 'Einheit ' + r.u);
+      if (!(r.t > 0)) note(`brett ${unit} ${weeks}w`, 'Wochenziel 1 = ' + r.t);
+      if (r.n !== r.w) note(`brett ${unit} ${weeks}w`, 'zugeordnet ' + r.n + ' von ' + r.w);
     });
   }
 
-  // ── 5. Fertige Wochen ankreuzen, mehrfach, ausmalen, wischen ──
-  await step('presets', async () => {
+  // ── 5. Am Brett: ziehen, über Wochen ziehen, nur diese Woche, tauschen, Papierkorb ──
+  await step('brett', async () => {
     await page.evaluate(() => {
       __fresh();
-      const c = getDefaultCycle('P', 12); c.mode = 'plan'; getAppData().cycles.push(c); getAppData().activeCycleId = c.id; saveData();
-      switchView('plan'); openAddWeekSheet();
-      weekPresets().forEach(p => togglePick(p.key));     // alle ankreuzen, auch Gleichnamige aus mehreren Vorlagen
-      addPickedWeeks();
-      dndDrop({ kind: 'week', plan: weekPlans(c)[1].id }, 'week:11', [0, 11]); assignWeeks([3], null);
+      const c = getDefaultCycle('P', 12); getAppData().cycles.push(c); getAppData().activeCycleId = c.id;
+      __demoPlan(c); c.weekAssign = Array(12).fill(null); saveData();
+      switchView('plan');
+      boardSelect(0);
+      dndDrop({ kind: 'bex', exId: 'd1' }, 'bday:0'); dndDrop({ kind: 'bex', exId: 'd2' }, 'bday:2'); dndDrop({ kind: 'bex', exId: 'd2', from: 2 }, 'bday:3');
+      dndDrop({ kind: 'week', plan: c.weekAssign[0], from: 0 }, 'week:11', [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+      boardSelect(3); boardScope = 'one'; boardSwap('d1', 0, 'd3');
+      boardSelect(5); dndDrop({ kind: 'bex', exId: 'd2', from: 3 }, 'trash');
+      boardSelect(11); assignWeeks([11], null);
+      boardStep(1); boardStep(-20);
+      c.weekPlans.forEach(p => { if (!p.items.length) throw new Error('leerer Plan bleibt: ' + p.name); });
     });
   });
 
@@ -150,9 +170,9 @@ const note = (scenario, msg) => { problems.push(`[${scenario}] ${msg}`); };
   await step('repertoire', async () => {
     await page.evaluate(() => {
       const c = getActiveCycle();
-      openWeekEditor(weekPlans(c)[0].id); weToLibrary(); weToLibrary(); closeModal();
+      saveToLibrary(weekPlans(c)[0].id); saveToLibrary(weekPlans(c)[0].id);
       const c2 = getDefaultCycle('R', 3); c2.unit = 'min'; c2.mode = 'plan'; getAppData().cycles.push(c2); getAppData().activeCycleId = c2.id; saveData();
-      addPresetWeek(c2, weekPresets().find(p => p.lib));
+      useLibraryWeek(getAppData().weekLibrary[0].id); openLibrarySheet();
       saveData();
       deleteLibraryWeek(getAppData().weekLibrary[0].id);
     });
@@ -193,7 +213,7 @@ const note = (scenario, msg) => { problems.push(`[${scenario}] ${msg}`); };
     await page.evaluate(async () => {
       __fresh();
       const c = getDefaultCycle('S', 8); getAppData().cycles.push(c); getAppData().activeCycleId = c.id;
-      applyTemplate(c, PLAN_TEMPLATES[2]); saveData();
+      __demoPlan(c); saveData();
       const plan = await decodePlan(planLink(await encodePlan(planFromCycle(c, 'A "B" <C>', 'Note'))));
       openPlanPreview(plan, true);
       startImportedPlan();
@@ -250,7 +270,7 @@ const note = (scenario, msg) => { problems.push(`[${scenario}] ${msg}`); };
       const c = getActiveCycle() || (() => { const x = getDefaultCycle('L', 2); getAppData().cycles.push(x); getAppData().activeCycleId = x.id; return x; })();
       c.exercises.push({ id: 'lang', name: 'X'.repeat(200) + "'\"<>", categories: ['<i>'], intensity: 0 });
       c.mode = 'plan';
-      openWeekEditor(null); weekDraft.name = "Woche 'mit' \"Zeichen\" <b>"; weAdd(0, 'lang'); weSave();
+      boardAdd('lang', 0); weekPlanById(c, c.weekAssign[boardWeek(c)]).name = "Woche 'mit' \"Zeichen\" <b>";
       saveData(); render();
     });
   });
@@ -264,8 +284,7 @@ const note = (scenario, msg) => { problems.push(`[${scenario}] ${msg}`); };
       for (let w = 0; w < 3; w++) { c.sessions[addDays(c.startDate, w * 7)] = [{ exId: 'a' }]; c.sessions[addDays(c.startDate, w * 7 + 2)] = [{ exId: 'b' }]; }
       getAppData().cycles.push(c); getAppData().activeCycleId = c.id; saveData();
       switchView('settings'); togglePlanMode();
-      if (!weekDraft || weekDraft.items.length !== 2) throw new Error('kein Vorschlag: ' + JSON.stringify(weekDraft && weekDraft.items));
-      weSave();
+      if (weekPlans(c).length !== 1 || weekPlans(c)[0].items.length !== 2) throw new Error('kein Vorschlag: ' + JSON.stringify(weekPlans(c)));
       togglePlanMode(); togglePlanMode();   // aus und wieder an: keine zweite Woche
       if (weekPlans(c).length !== 1) throw new Error('Wochen nach aus/an: ' + weekPlans(c).length);
     });
@@ -276,7 +295,7 @@ const note = (scenario, msg) => { problems.push(`[${scenario}] ${msg}`); };
     await page.evaluate(() => {
       __fresh();
       const c = getDefaultCycle('E', 1); getAppData().cycles.push(c); getAppData().activeCycleId = c.id;
-      applyTemplate(c, PLAN_TEMPLATES[0]); saveData();
+      __demoPlan(c); saveData();
       pauseCycle(); render(); resumeCycle();
       openWeekModal(0); openDayModal(getWeekDates(c, 0)[3], 0);
     });
@@ -306,13 +325,18 @@ const note = (scenario, msg) => { problems.push(`[${scenario}] ${msg}`); };
     await page.click('.choice-card:has-text("Mit Wochenplan")');
     await page.fill('#newCycleName', 'UI');
     await page.click('button:text-is("Starten")');
-    await page.waitForSelector('#modalContent >> text=Wochen auswählen', { timeout: 5000 });
-    await page.click('#modalContent .list-row:has-text("Aufbauwoche") >> nth=1');
-    await page.click('#modalContent .list-row:has-text("Entlastungswoche") >> nth=1');
-    await page.click('#modalContent .sheet-actions .btn-primary');
-    await page.waitForTimeout(400);
-    const r = await page.evaluate(() => { const c = getActiveCycle(); return [weekPlans(c).map(p => p.name).join(','), c.weekAssign.filter(Boolean).length, c.exercises.length]; });
-    if (r[0] !== 'Aufbauwoche,Entlastungswoche' || r[1] !== 12) throw new Error('Ergebnis ' + JSON.stringify(r));
+    await page.waitForSelector('#planContent .pb', { timeout: 5000 });
+    await page.click('#planContent .we-token.add');
+    await page.fill('#newExName', 'Bouldern'); await page.fill('#newExInt', '3');
+    await page.click('#modalContent button:text-is("Hinzufügen")');
+    await page.waitForTimeout(300);
+    await page.click('#planContent .pb-day >> nth=1 >> .pb-plus');
+    await page.click('.pop-menu .pop-item:has-text("Bouldern")');
+    await page.click('#planContent .pb-head .icon-btn');
+    await page.click('.pop-menu .pop-item:has-text("Auf alle Wochen übertragen")');
+    await page.waitForTimeout(300);
+    const r = await page.evaluate(() => { const c = getActiveCycle(); return [weekPlans(c).length, c.weekAssign.filter(Boolean).length, c.exercises.length]; });
+    if (r[0] !== 1 || r[1] !== 12 || r[2] !== 1) throw new Error('Ergebnis ' + JSON.stringify(r));
     await page.click('.tab-btn:nth-child(1)');
     await page.waitForTimeout(200);
   });
@@ -330,7 +354,7 @@ const note = (scenario, msg) => { problems.push(`[${scenario}] ${msg}`); };
     await page.evaluate(() => {
       __fresh();
       const c = getDefaultCycle('M', 4); c.mode = 'plan'; c.startDate = addDays(toDateStr(new Date()), -3);
-      getAppData().cycles.push(c); getAppData().activeCycleId = c.id; applyTemplate(c, PLAN_TEMPLATES[1]); saveData();
+      getAppData().cycles.push(c); getAppData().activeCycleId = c.id; __demoPlan(c); saveData();
       const w = getWeekDates(c, 1);
       moveTrainingDay(w[0], w[6]); moveTrainingDay(w[6], getWeekDates(c, 2)[0]);   // auch über die Woche hinaus
       openWeekModal(1); startMoveDay(1, w[2]); finishMoveDay(1, w[3]);
@@ -345,7 +369,7 @@ const note = (scenario, msg) => { problems.push(`[${scenario}] ${msg}`); };
       const el = id => document.getElementById(id);
       openNewDraftModal(); el('draftWho').value = '<Kim>'; el('draftFrom').value = ''; createDraft();
       closeModal();
-      addPresetWeek(getActiveCycle(), weekPresets()[0]); saveData(); render();
+      const d = getActiveCycle(); d.exercises.push({ id: 'dx', name: 'Hang', categories: [], intensity: 1 }); boardAdd('dx', 2); render();
       switchView('dashboard'); switchView('settings');
       openNewDraftModal(); el('draftWho').value = ''; el('draftFrom').value = getAppData().cycles[0].id; createDraft();
       closeDraft();
